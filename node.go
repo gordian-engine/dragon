@@ -162,12 +162,13 @@ func (n *Node) accept(ctx context.Context, ql *quic.Listener) {
 		n.log.Info("Connection accepted")
 		n.wg.Add(1)
 		go n.handleDatagrams(ctx, conn)
-
 	}
 }
 
 // handleDatagrams handles incoming datagrams for the given connection.
 // It runs in a dedicated goroutine spawned from [(*Node).accept].
+//
+// We don't yet have datagram support but it will be added soon.
 func (n *Node) handleDatagrams(ctx context.Context, conn quic.Connection) {
 	defer n.wg.Done()
 
@@ -200,14 +201,17 @@ func (n *Node) handleDatagrams(ctx context.Context, conn quic.Connection) {
 
 // DialPeer opens a QUIC connection to the given address.
 //
-// Note, this is probably the wrong API, but it works for initial testing.
-// Nodes should not be interested in simply opening a QUIC connection to a peer;
-// instead they should be using an appropriate HyParView message.
-func (n *Node) DialPeer(ctx context.Context, addr net.Addr) (quic.Connection, error) {
-	conn, err := n.qt.Dial(ctx, addr, n.tlsConf, n.quicConf)
+// Once the dial completes, in standard behavior,
+// the client will send call [(*Connection.Join)] to join the network,
+// or the client will send a Neighbor message to create a pairing.
+func (n *Node) DialPeer(ctx context.Context, addr net.Addr) (*Connection, error) {
+	qc, err := n.qt.Dial(ctx, addr, n.tlsConf, n.quicConf)
 	if err != nil {
 		return nil, fmt.Errorf("DialPeer: dial failed: %w", err)
 	}
 
-	return conn, nil
+	return &Connection{
+		log:  n.log.With("remote_addr", qc.RemoteAddr().String()),
+		conn: qc,
+	}, nil
 }
