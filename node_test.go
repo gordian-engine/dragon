@@ -60,6 +60,8 @@ func TestNode_Dial(t *testing.T) {
 	defer cancel()
 
 	nw := dragontest.NewNetwork(t, ctx, dcatest.FastConfig(), dcatest.FastConfig())
+	defer nw.Wait()
+	defer cancel()
 
 	conn, err := nw.Nodes[0].Node.DialPeer(ctx, nw.Nodes[1].UDP.LocalAddr())
 	require.NoError(t, err)

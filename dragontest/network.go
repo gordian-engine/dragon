@@ -99,3 +99,9 @@ func NewNetwork(t *testing.T, ctx context.Context, cfgs ...dcatest.CAConfig) *Ne
 		Nodes: nodes,
 	}
 }
+
+func (n *Network) Wait() {
+	for _, node := range n.Nodes {
+		node.Node.Wait()
+	}
+}
