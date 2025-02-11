@@ -138,10 +138,16 @@ func TestNode_Join(t *testing.T) {
 		}
 	}()
 
+	// Not closed yet, of course.
+	require.NoError(t, conn.ClosedError())
+
 	require.NoError(t, conn.Join(ctx))
 
 	// Short delay to allow background work to happen on the join request.
 	time.Sleep(50 * time.Millisecond)
 
-	// TODO: assert that each side has the peer in the active set.
+	// Currently we have hardcoded the join request to be denied.
+	require.Error(t, conn.ClosedError())
+
+	// TODO: assert that each side has the peer in the active set, instead.
 }

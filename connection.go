@@ -80,3 +80,9 @@ func (c *Connection) Join(ctx context.Context) error {
 func (c *Connection) Close(code uint64, reason string) error {
 	return c.qConn.CloseWithError(quic.ApplicationErrorCode(code), reason)
 }
+
+// ClosedError returns nil if the connection is still alive,
+// or an error indicating why the connection is closed.
+func (c *Connection) ClosedError() error {
+	return context.Cause(c.qConn.Context())
+}

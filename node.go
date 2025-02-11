@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"dragon.example/dragon/internal/dk"
 	"github.com/quic-go/quic-go"
 )
 
@@ -17,6 +18,8 @@ import (
 // It contains a QUIC listener, and a number of live connections to other nodes.
 type Node struct {
 	log *slog.Logger
+
+	k *dk.Kernel
 
 	wg sync.WaitGroup
 
@@ -133,8 +136,12 @@ func NewNode(ctx context.Context, log *slog.Logger, cfg NodeConfig) (*Node, erro
 		return nil, fmt.Errorf("failed to set up QUIC listener: %w", err)
 	}
 
+	kCfg := dk.KernelConfig{}
+
 	n := &Node{
 		log: log,
+
+		k: dk.NewKernel(ctx, log.With("node_sys", "kernel"), kCfg),
 
 		qt: qt,
 
@@ -157,6 +164,7 @@ func NewNode(ctx context.Context, log *slog.Logger, cfg NodeConfig) (*Node, erro
 // Wait blocks until the node has finished all background work.
 func (n *Node) Wait() {
 	n.wg.Wait()
+	n.k.Wait()
 }
 
 // acceptConnections handles incoming new connections to our listener.
@@ -193,48 +201,44 @@ func (n *Node) acceptConnections(ctx context.Context, ql *quic.Listener) {
 		}
 
 		// The pending connection succeeded.
-		// TODO: here, we should send the connection to a central coordinating goroutine,
-		// which will decide how we respond,
-		// and whether the connection should be promoted to the active view.
 		if len(pc.joinAddr) > 0 {
-			n.log.Info("TODO: handle the incoming join message")
-		} else {
-			n.log.Info("TODO: it must be a neighbor message?")
-		}
-	}
-}
+			respCh := make(chan dk.JoinResponse, 1)
+			req := dk.JoinRequest{
+				Resp: respCh,
+			}
 
-// handleIncomingDatagrams handles incoming datagrams for the given connection.
-// It runs in a dedicated goroutine spawned from [(*Node).accept].
-//
-// We don't yet have datagram support but it will be added soon.
-func (n *Node) handleIncomingDatagrams(ctx context.Context, conn *Connection) {
-	defer n.wg.Done()
-
-	log := conn.log.With("handler", "datagrams")
-
-	for {
-		b, err := conn.qConn.ReceiveDatagram(ctx)
-		if err != nil {
-			if ctx.Err() != nil {
-				log.Info("Context finished while handling datagrams", "cause", context.Cause(ctx))
+			select {
+			case n.k.JoinRequests <- req:
+				// Okay.
+			case <-ctx.Done():
+				n.log.Info("Accept loop quitting due to context cancellation during join request", "cause", context.Cause(ctx))
 				return
 			}
 
-			// Otherwise not a context error.
-			// Looking through the v0.49 quic-go code,
-			// it looks like the only errors possible are datagrams disabled
-			// (which we should not get since we asserted them enabled during node setup),
-			// or the connection being closed explicitly.
-			// I am pretty sure the close error will never be nil.
-			// But if that is wrong, then we will need to separate handle
-			// the returned byte slice being nil.
-			log.Info("Error receiving datagram; goroutine stopping", "err", err)
-			return
-		}
+			select {
+			case resp := <-respCh:
+				if !pc.handleJoinDecision(ctx, resp.Decision) {
+					n.log.Info(
+						"Accept loop quitting due to context cancellation while handling join decision",
+						"cause", context.Cause(ctx),
+					)
+					return
+				}
 
-		// TODO: actually do things with the datagram here.
-		log.Info("Got datagram successfully", "msg", string(b))
+				// Since the pending connection handled the join decision,
+				// we either closed the connection and are discarding it,
+				// or the connection has an outgoing neighbor request.
+
+				// TODO: In the latter case, we need to continue blocking,
+				// since we are consuming a pending connection slot.
+			case <-ctx.Done():
+				n.log.Info("Accept loop quitting due to context cancellation during join response", "cause", context.Cause(ctx))
+				return
+			}
+
+		} else {
+			n.log.Info("TODO: it must be a neighbor message?")
+		}
 	}
 }
 

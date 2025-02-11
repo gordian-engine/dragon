@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"dragon.example/dragon/internal/dk"
 	"dragon.example/dragon/internal/dproto"
 	"github.com/quic-go/quic-go"
 )
@@ -89,4 +90,23 @@ func (c *pendingConnection) handleJoin(addrSz uint8) error {
 	c.joinAddr = string(addrBuf)
 
 	return nil
+}
+
+func (c *pendingConnection) handleJoinDecision(ctx context.Context, d dk.JoinDecision) (ok bool) {
+	switch d {
+	case dk.AcceptJoinDecision:
+		c.log.Info("TODO: handle accept join decision")
+		return false
+	case dk.DisconnectJoinDecision:
+		// We can just close the connection outright.
+		// Since we haven't peered, we have not yet set up the disconnect stream.
+		if err := c.qConn.CloseWithError(quic.ApplicationErrorCode(1), "TODO"); err != nil {
+			c.log.Info("Error closing remote connection", "err", err)
+		}
+		return true
+	default:
+		panic(fmt.Errorf(
+			"BUG: invalid join decision value: %d", d,
+		))
+	}
 }
