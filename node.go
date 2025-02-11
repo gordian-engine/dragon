@@ -246,15 +246,15 @@ func (n *Node) acceptConnections(ctx context.Context, ql *quic.Listener) {
 // which is expected to be another DRAGON participant.
 //
 // Once the dial completes, in standard behavior,
-// the client will send call [(*Connection.Join)] to join the network,
+// the client will send call [(*UnpeeredConnection.Join)] to join the network,
 // or the client will send a Neighbor message to create a pairing.
-func (n *Node) DialPeer(ctx context.Context, addr net.Addr) (*Connection, error) {
+func (n *Node) DialPeer(ctx context.Context, addr net.Addr) (*UnpeeredConnection, error) {
 	qc, err := n.qt.Dial(ctx, addr, n.tlsConf, n.quicConf)
 	if err != nil {
 		return nil, fmt.Errorf("DialPeer: dial failed: %w", err)
 	}
 
-	return &Connection{
+	return &UnpeeredConnection{
 		log:   n.log.With("remote_addr", qc.RemoteAddr().String()),
 		qConn: qc,
 

@@ -10,10 +10,12 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-// Connection is a peer-to-peer connection in the network.
+// UnpeeredConnection is an initialized connection in the network.
+// We have opened a QUIC connection to another node,
+// but we have not yet established the protocol-level peering.
 //
-// Create a Connection through [(*Node).DialPeer].
-type Connection struct {
+// Create an UnpeeredConnection through [(*Node).DialPeer].
+type UnpeeredConnection struct {
 	log   *slog.Logger
 	qConn quic.Connection
 
@@ -22,12 +24,13 @@ type Connection struct {
 	node *Node
 }
 
-// Join sends a Join message to the connected peer.
-// This is expected to be the first method called on a new connection.
-// It does not happen automatically after [(*Node).DialPeer],
-// so that the protocol has the option to create other peering types.
+// Join sends a Join message to the remote peer.
+// This is expected to be the first method called on a new UnpeeredConnection.
+// It does not happen automatically after [(*Node).DialPeer];
+// in other cases, the first method could be a neighbor request.
 //
-// Calling Join sets up multiple QUIC streams to handle protocol messages.
+// Calling Join sets up the admission QUIC stream to handle requests
+// related to admission into the peer-to-peer network.
 //
 // If the Join message reaches the contact node successfully,
 // the contact node may send a Neighbor request,
@@ -35,7 +38,7 @@ type Connection struct {
 // other nodes may themselves send Neighbor requests.
 //
 // There is no explicit acknowledgement to a Join request.
-func (c *Connection) Join(ctx context.Context) error {
+func (c *UnpeeredConnection) Join(ctx context.Context) error {
 	// The peer who opened the connection is considered the client.
 	// On attempting to join, we open a bidirectional stream for
 	// Join and Neighbor streams.
@@ -77,12 +80,12 @@ func (c *Connection) Join(ctx context.Context) error {
 // According to the quic docs, this supposed to not be called concurrently with other functions.
 // The docs also state the reason will be sent to the peer,
 // so presumably that is why the Close method must require the argument.
-func (c *Connection) Close(code uint64, reason string) error {
+func (c *UnpeeredConnection) Close(code uint64, reason string) error {
 	return c.qConn.CloseWithError(quic.ApplicationErrorCode(code), reason)
 }
 
 // ClosedError returns nil if the connection is still alive,
 // or an error indicating why the connection is closed.
-func (c *Connection) ClosedError() error {
+func (c *UnpeeredConnection) ClosedError() error {
 	return context.Cause(c.qConn.Context())
 }
