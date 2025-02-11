@@ -1,4 +1,4 @@
-package dpmsg
+package dproto
 
 // MessageType is a single byte header indicating the type of message.
 type MessageType byte

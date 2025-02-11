@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"time"
 
-	"dragon.example/dragon/internal/dpmsg"
+	"dragon.example/dragon/internal/dproto"
 	"github.com/quic-go/quic-go"
 )
 
@@ -40,7 +40,7 @@ func (c *Connection) Join(ctx context.Context) error {
 	// On attempting to join, we open a bidirectional stream for
 	// Join and Neighbor streams.
 
-	jm := dpmsg.JoinMessage{
+	jm := dproto.JoinMessage{
 		Addr: "TODO",
 	}
 	msg := jm.OpenStreamAndJoinBytes()
@@ -53,7 +53,7 @@ func (c *Connection) Join(ctx context.Context) error {
 
 	// Set write deadline, so that we don't block for a long time
 	// in case writing the stream blocks for whatever reason.
-	if err := admStream.SetWriteDeadline(time.Now().Add(dpmsg.OpenStreamTimeout)); err != nil {
+	if err := admStream.SetWriteDeadline(time.Now().Add(dproto.OpenStreamTimeout)); err != nil {
 		return fmt.Errorf("Join: failed to set stream deadline: %w", err)
 	}
 

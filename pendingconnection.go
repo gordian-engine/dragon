@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"time"
 
-	"dragon.example/dragon/internal/dpmsg"
+	"dragon.example/dragon/internal/dproto"
 	"github.com/quic-go/quic-go"
 )
 
@@ -28,6 +28,7 @@ func (c *pendingConnection) handleIncomingStreamHandshake(ctx context.Context) e
 	// then they will open an Admission stream first.
 	s, err := c.qConn.AcceptStream(ctx)
 	if err != nil {
+		// Possibly a context error, but that will be handled higher in the stack.
 		return fmt.Errorf("failed to accept stream: %w", err)
 	}
 
@@ -35,7 +36,7 @@ func (c *pendingConnection) handleIncomingStreamHandshake(ctx context.Context) e
 	// Ensure we understand the steam type the client is requesting.
 	var streamHeader [2]byte
 
-	if err := s.SetReadDeadline(time.Now().Add(dpmsg.OpenStreamTimeout)); err != nil {
+	if err := s.SetReadDeadline(time.Now().Add(dproto.OpenStreamTimeout)); err != nil {
 		return fmt.Errorf("failed to set read deadline on stream: %w", err)
 	}
 
@@ -43,20 +44,20 @@ func (c *pendingConnection) handleIncomingStreamHandshake(ctx context.Context) e
 		return fmt.Errorf("failed to read stream header: %w", err)
 	}
 
-	if streamHeader[0] != dpmsg.CurrentProtocolVersion {
+	if streamHeader[0] != dproto.CurrentProtocolVersion {
 		return fmt.Errorf("received unexpected protocol version %d in stream header", streamHeader[0])
 	}
 
 	switch streamHeader[1] {
-	case dpmsg.AdmissionStreamType:
+	case dproto.AdmissionStreamType:
 		c.admissionStream = s
-		return c.handleStartAdmissionStream(ctx)
+		return c.handleStartAdmissionStream()
 	default:
 		return fmt.Errorf("unknown stream type %d", streamHeader[1])
 	}
 }
 
-func (c *pendingConnection) handleStartAdmissionStream(ctx context.Context) error {
+func (c *pendingConnection) handleStartAdmissionStream() error {
 	// We have accepted a new QUIC connection, the initial stream handshake was right,
 	// and now we have to parse the first message from the remote client.
 	// The first two bytes should be a type and a length.
@@ -67,8 +68,10 @@ func (c *pendingConnection) handleStartAdmissionStream(ctx context.Context) erro
 	}
 
 	switch tl[0] {
-	case byte(dpmsg.JoinMessageType):
+	case byte(dproto.JoinMessageType):
 		return c.handleJoin(tl[1])
+
+	// TODO: handle neighbor message type.
 
 	default:
 		return fmt.Errorf("invalid admission stream message type: %d", tl[0])

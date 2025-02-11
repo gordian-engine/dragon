@@ -1,4 +1,4 @@
-package dpmsg
+package dproto
 
 // The current protocol version.
 // We don't support multiple versions yet,

@@ -1,4 +1,4 @@
-package dpmsg
+package dproto
 
 import "time"
 
