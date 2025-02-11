@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"net"
 	"testing"
+	"time"
 
 	"dragon.example/dragon"
 	"dragon.example/dragon/dca/dcatest"
@@ -116,4 +117,31 @@ func TestNode_Dial_unrecognizedCert(t *testing.T) {
 			require.Nil(t, conn)
 		})
 	})
+}
+
+func TestNode_Join(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	nw := dragontest.NewNetwork(t, ctx, dcatest.FastConfig(), dcatest.FastConfig())
+	defer nw.Wait()
+	defer cancel()
+
+	conn, err := nw.Nodes[0].Node.DialPeer(ctx, nw.Nodes[1].UDP.LocalAddr())
+	require.NoError(t, err)
+
+	defer func() {
+		if err := conn.Close(1, "TODO"); err != nil {
+			t.Logf("closing connection: %v", err)
+		}
+	}()
+
+	require.NoError(t, conn.Join(ctx))
+
+	// Short delay to allow background work to happen on the join request.
+	time.Sleep(50 * time.Millisecond)
+
+	// TODO: assert that each side has the peer in the active set.
 }

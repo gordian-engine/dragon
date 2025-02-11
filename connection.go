@@ -14,12 +14,20 @@ import (
 //
 // Create a Connection through [(*Node).DialPeer].
 type Connection struct {
-	log  *slog.Logger
-	conn quic.Connection
+	log   *slog.Logger
+	qConn quic.Connection
+
+	streams streams
+
+	node *Node
 }
 
 // Join sends a Join message to the connected peer.
-// This is expected to be the first message sent on a new connection.
+// This is expected to be the first method called on a new connection.
+// It does not happen automatically after [(*Node).DialPeer],
+// so that the protocol has the option to create other peering types.
+//
+// Calling Join sets up multiple QUIC streams to handle protocol messages.
 //
 // If the Join message reaches the contact node successfully,
 // the contact node may send a Neighbor request,
@@ -28,33 +36,40 @@ type Connection struct {
 //
 // There is no explicit acknowledgement to a Join request.
 func (c *Connection) Join(ctx context.Context) error {
-	// Unidirectional stream because we don't expect a response.
-	s, err := c.conn.OpenUniStream()
+	// The peer who opened the connection is considered the client.
+	// On attempting to join, we open a bidirectional stream for
+	// Join and Neighbor streams.
+
+	jm := dpmsg.JoinMessage{
+		Addr: "TODO",
+	}
+	msg := jm.OpenStreamAndJoinBytes()
+
+	admStream, err := c.qConn.OpenStream()
 	if err != nil {
 		return fmt.Errorf("Join: failed to open stream: %w", err)
 	}
+	c.streams.Admission = admStream
 
-	defer func() {
-		if err := s.Close(); err != nil {
-			c.log.Info("Error closing join stream", "err", err)
-		}
-	}()
-
-	// This is a reliable stream, so set a write deadline.
-	// The upcoming write will block,
-	// so setting the deadline avoids having to run another goroutine to manage this.
-	// Moreover, the quic.SendStream docs say not to call Close concurrently with Write.
-	if err := s.SetWriteDeadline(time.Now().Add(time.Second)); err != nil {
+	// Set write deadline, so that we don't block for a long time
+	// in case writing the stream blocks for whatever reason.
+	if err := admStream.SetWriteDeadline(time.Now().Add(dpmsg.OpenStreamTimeout)); err != nil {
 		return fmt.Errorf("Join: failed to set stream deadline: %w", err)
 	}
 
-	// TLV-encode the join message.
-	msg := []byte{byte(dpmsg.JoinMessageType), 0}
-	if _, err := s.Write(msg); err != nil {
-		return fmt.Errorf("Join: failed to write message: %w", err)
+	// Send both the open stream header and the join message.
+	if _, err := admStream.Write(msg); err != nil {
+		return fmt.Errorf("Join: failed to write stream header and join message: %w", err)
 	}
 
-	// The stream is closed from the early defer, so we are done here.
+	// Now we have to wait.
+	// We expect one of two outcomes on this stream once we've sent the join message:
+	//  1. The remote end closes because they will not accept us into their active set right now.
+	//  2. The remote end sends us a Neighbor message, and we have to ack it.
+	//
+	// And regardless of this stream,
+	// the remote end should begin sending ForwardJoin messages out to the network,
+	// so hopefully we get some new incoming Neighbor requests soon.
 	return nil
 }
 
@@ -63,5 +78,5 @@ func (c *Connection) Join(ctx context.Context) error {
 // The docs also state the reason will be sent to the peer,
 // so presumably that is why the Close method must require the argument.
 func (c *Connection) Close(code uint64, reason string) error {
-	return c.conn.CloseWithError(quic.ApplicationErrorCode(code), reason)
+	return c.qConn.CloseWithError(quic.ApplicationErrorCode(code), reason)
 }

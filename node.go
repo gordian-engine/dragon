@@ -31,6 +31,11 @@ type NodeConfig struct {
 	UDPConn *net.UDPConn
 	QUIC    *quic.Config
 	TLS     *tls.Config
+
+	// The maximum number of incoming connections that can be live
+	// but which have not yet resolved into a peering or have been closed.
+	// If zero, a reasonable default will be used.
+	IncomingPendingConnections uint8
 }
 
 // DefaultQUICConfig is the default QUIC configuration for a [NodeConfig].
@@ -39,7 +44,7 @@ func DefaultQUICConfig() *quic.Config {
 		// Skip: GetConfigForClient: don't need it yet.
 		// Skip: Versions: maybe we force this to the current version, if there is a good reason to avoid older versions?
 
-		// Defaults to 5 otherwise, which is far higher latency than
+		// Defaults to 5 otherwise, which is far higher latency than we probably need.
 		HandshakeIdleTimeout: 2 * time.Second,
 
 		// Skip: MaxIdleTimeout: defaults to 30s of no activity whatsoever before closing a connection.
@@ -136,8 +141,16 @@ func NewNode(ctx context.Context, log *slog.Logger, cfg NodeConfig) (*Node, erro
 		quicConf: cfg.QUIC,
 		tlsConf:  cfg.TLS,
 	}
-	n.wg.Add(1)
-	go n.accept(ctx, ql)
+
+	nPending := cfg.IncomingPendingConnections
+	if nPending == 0 {
+		nPending = 4
+	}
+
+	n.wg.Add(int(nPending))
+	for range nPending {
+		go n.acceptConnections(ctx, ql)
+	}
 	return n, nil
 }
 
@@ -146,12 +159,14 @@ func (n *Node) Wait() {
 	n.wg.Wait()
 }
 
-// accept handles incoming new connections to our listener.
-func (n *Node) accept(ctx context.Context, ql *quic.Listener) {
+// acceptConnections handles incoming new connections to our listener.
+// This runs in multiple, independent goroutines,
+// effectively limiting the number of pending connections.
+func (n *Node) acceptConnections(ctx context.Context, ql *quic.Listener) {
 	defer n.wg.Done()
 
 	for {
-		conn, err := ql.Accept(ctx)
+		qc, err := ql.Accept(ctx)
 		if err != nil {
 			if errors.Is(context.Cause(ctx), err) {
 				n.log.Info("Accept loop quitting due to context cancellation", "cause", context.Cause(ctx))
@@ -159,23 +174,47 @@ func (n *Node) accept(ctx context.Context, ql *quic.Listener) {
 			}
 		}
 
+		// TODO: this should have some early rate-limiting based on remote identity.
+
 		n.log.Info("Connection accepted")
-		n.wg.Add(1)
-		go n.handleDatagrams(ctx, conn)
+
+		pc := &pendingConnection{
+			log:   n.log.With("remote_conn", qc.RemoteAddr().String()),
+			qConn: qc,
+		}
+		if err := pc.handleIncomingStreamHandshake(ctx); err != nil {
+			pc.log.Info("Failed to handle incoming stream handshake", "err", err)
+
+			if err := qc.CloseWithError(1, "TODO: REASON"); err != nil {
+				pc.log.Debug("Failed to send close message to peer", "err", err)
+			}
+
+			continue
+		}
+
+		// The pending connection succeeded.
+		// TODO: here, we should send the connection to a central coordinating goroutine,
+		// which will decide how we respond,
+		// and whether the connection should be promoted to the active view.
+		if len(pc.joinAddr) > 0 {
+			n.log.Info("TODO: handle the incoming join message")
+		} else {
+			n.log.Info("TODO: it must be a neighbor message?")
+		}
 	}
 }
 
-// handleDatagrams handles incoming datagrams for the given connection.
+// handleIncomingDatagrams handles incoming datagrams for the given connection.
 // It runs in a dedicated goroutine spawned from [(*Node).accept].
 //
 // We don't yet have datagram support but it will be added soon.
-func (n *Node) handleDatagrams(ctx context.Context, conn quic.Connection) {
+func (n *Node) handleIncomingDatagrams(ctx context.Context, conn *Connection) {
 	defer n.wg.Done()
 
-	log := n.log.With("handler", "datagrams")
+	log := conn.log.With("handler", "datagrams")
 
 	for {
-		b, err := conn.ReceiveDatagram(ctx)
+		b, err := conn.qConn.ReceiveDatagram(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				log.Info("Context finished while handling datagrams", "cause", context.Cause(ctx))
@@ -199,7 +238,8 @@ func (n *Node) handleDatagrams(ctx context.Context, conn quic.Connection) {
 	}
 }
 
-// DialPeer opens a QUIC connection to the given address.
+// DialPeer opens a QUIC connection to the given address,
+// which is expected to be another DRAGON participant.
 //
 // Once the dial completes, in standard behavior,
 // the client will send call [(*Connection.Join)] to join the network,
@@ -211,7 +251,9 @@ func (n *Node) DialPeer(ctx context.Context, addr net.Addr) (*Connection, error)
 	}
 
 	return &Connection{
-		log:  n.log.With("remote_addr", qc.RemoteAddr().String()),
-		conn: qc,
+		log:   n.log.With("remote_addr", qc.RemoteAddr().String()),
+		qConn: qc,
+
+		node: n,
 	}, nil
 }
