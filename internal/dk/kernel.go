@@ -2,7 +2,10 @@ package dk
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+
+	"dragon.example/dragon/deval"
 )
 
 type Kernel struct {
@@ -10,10 +13,13 @@ type Kernel struct {
 
 	JoinRequests chan JoinRequest
 
+	pe deval.PeerEvaluator
+
 	done chan struct{}
 }
 
 type KernelConfig struct {
+	PeerEvaluator         deval.PeerEvaluator
 	TargetActiveViewSize  int
 	TargetPassiveViewSize int
 }
@@ -23,6 +29,8 @@ func NewKernel(ctx context.Context, log *slog.Logger, cfg KernelConfig) *Kernel 
 		log: log,
 
 		JoinRequests: make(chan JoinRequest),
+
+		pe: cfg.PeerEvaluator,
 
 		done: make(chan struct{}),
 	}
@@ -48,9 +56,24 @@ func (k *Kernel) mainLoop(ctx context.Context) {
 		case req := <-k.JoinRequests:
 			// Assume that the response channel is buffered.
 
-			// TODO: actually consider the input before deciding.
+			d := k.pe.ConsiderJoin(ctx, req.Peer)
+
+			var kd JoinDecision
+			switch d {
+			case deval.DisconnectAndIgnoreJoinDecision, deval.DisconnectAndForwardJoinDecision:
+				kd = DisconnectJoinDecision
+			case deval.AcceptJoinDecision:
+				kd = AcceptJoinDecision
+			default:
+				panic(fmt.Errorf(
+					"BUG: PeerEvaluator.ConsiderJoin returned illegal JoinDecision %d", d,
+				))
+			}
+
+			// TODO: handle disconnect and forward case, and accept case
+
 			req.Resp <- JoinResponse{
-				Decision: DisconnectJoinDecision,
+				Decision: kd,
 			}
 		}
 	}

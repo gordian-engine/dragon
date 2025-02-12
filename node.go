@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"dragon.example/dragon/deval"
 	"dragon.example/dragon/internal/dk"
 	"github.com/quic-go/quic-go"
 )
@@ -39,6 +40,9 @@ type NodeConfig struct {
 	// but which have not yet resolved into a peering or have been closed.
 	// If zero, a reasonable default will be used.
 	IncomingPendingConnections uint8
+
+	// Determines the behavior of choosing to accept peer connections.
+	PeerEvaluator deval.PeerEvaluator
 }
 
 // DefaultQUICConfig is the default QUIC configuration for a [NodeConfig].
@@ -94,9 +98,16 @@ func DefaultQUICConfig() *quic.Config {
 // The ctx parameter controls the lifecycle of the Node;
 // cancel the context to stop the node,
 // and then use [(*Node).Wait] to block until all background work has completed.
+//
+// NewNode returns runtime errors that happen during initialization.
+// Configuration errors cause a panic.
 func NewNode(ctx context.Context, log *slog.Logger, cfg NodeConfig) (*Node, error) {
 	if !cfg.QUIC.EnableDatagrams {
 		panic(errors.New("gblockdist.Node requires QUIC datagrams; set cfg.Quic.EnableDatagrams=true"))
+	}
+
+	if cfg.PeerEvaluator == nil {
+		panic(errors.New("NodeConfig.PeerEvaluator may not be nil"))
 	}
 
 	// We are using a quic Transport directly here in order to have
@@ -136,7 +147,9 @@ func NewNode(ctx context.Context, log *slog.Logger, cfg NodeConfig) (*Node, erro
 		return nil, fmt.Errorf("failed to set up QUIC listener: %w", err)
 	}
 
-	kCfg := dk.KernelConfig{}
+	kCfg := dk.KernelConfig{
+		PeerEvaluator: cfg.PeerEvaluator,
+	}
 
 	n := &Node{
 		log: log,
@@ -202,8 +215,14 @@ func (n *Node) acceptConnections(ctx context.Context, ql *quic.Listener) {
 
 		// The pending connection succeeded.
 		if len(ic.joinAddr) > 0 {
+			peer := deval.Peer{
+				TLS:        qc.ConnectionState().TLS,
+				LocalAddr:  qc.LocalAddr(),
+				RemoteAddr: qc.RemoteAddr(),
+			}
 			respCh := make(chan dk.JoinResponse, 1)
 			req := dk.JoinRequest{
+				Peer: peer,
 				Resp: respCh,
 			}
 

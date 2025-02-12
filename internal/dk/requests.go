@@ -1,6 +1,9 @@
 package dk
 
+import "dragon.example/dragon/deval"
+
 type JoinRequest struct {
+	Peer deval.Peer
 	Resp chan JoinResponse
 }
 

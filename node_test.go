@@ -9,6 +9,7 @@ import (
 
 	"dragon.example/dragon"
 	"dragon.example/dragon/dca/dcatest"
+	"dragon.example/dragon/deval/devaltest"
 	"dragon.example/dragon/dragontest"
 	"dragon.example/dragon/internal/dtest"
 	"github.com/stretchr/testify/require"
@@ -44,9 +45,10 @@ func TestNewNode(t *testing.T) {
 
 	log := dtest.NewLogger(t)
 	n, err := dragon.NewNode(ctx, log, dragon.NodeConfig{
-		UDPConn: uc,
-		QUIC:    dragon.DefaultQUICConfig(),
-		TLS:     &tc,
+		UDPConn:       uc,
+		QUIC:          dragon.DefaultQUICConfig(),
+		TLS:           &tc,
+		PeerEvaluator: devaltest.DenyingPeerEvaluator{},
 	})
 
 	require.NoError(t, err)
@@ -62,7 +64,7 @@ func TestNode_Dial_ok(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	nw := dragontest.NewNetwork(t, ctx, dcatest.FastConfig(), dcatest.FastConfig())
+	nw := dragontest.NewDefaultNetwork(t, ctx, dcatest.FastConfig(), dcatest.FastConfig())
 	defer nw.Wait()
 	defer cancel()
 
@@ -78,11 +80,11 @@ func TestNode_Dial_unrecognizedCert(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		nw := dragontest.NewNetwork(t, ctx, dcatest.FastConfig(), dcatest.FastConfig())
+		nw := dragontest.NewDefaultNetwork(t, ctx, dcatest.FastConfig(), dcatest.FastConfig())
 		defer nw.Wait()
 		defer cancel()
 
-		out := dragontest.NewNetwork(t, ctx, dcatest.FastConfig())
+		out := dragontest.NewDefaultNetwork(t, ctx, dcatest.FastConfig())
 		defer out.Wait()
 		defer cancel()
 
@@ -97,11 +99,11 @@ func TestNode_Dial_unrecognizedCert(t *testing.T) {
 		defer cancel()
 
 		cfg1, cfg2 := dcatest.FastConfig(), dcatest.FastConfig()
-		nw12 := dragontest.NewNetwork(t, ctx, cfg1, cfg2)
+		nw12 := dragontest.NewDefaultNetwork(t, ctx, cfg1, cfg2)
 		defer nw12.Wait()
 		defer cancel()
 
-		nw123 := dragontest.NewNetwork(t, ctx, cfg1, cfg2, dcatest.FastConfig())
+		nw123 := dragontest.NewDefaultNetwork(t, ctx, cfg1, cfg2, dcatest.FastConfig())
 		defer nw123.Wait()
 		defer cancel()
 
@@ -119,13 +121,24 @@ func TestNode_Dial_unrecognizedCert(t *testing.T) {
 	})
 }
 
-func TestNode_Join(t *testing.T) {
+func TestNode_Join_deny(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	nw := dragontest.NewNetwork(t, ctx, dcatest.FastConfig(), dcatest.FastConfig())
+	nw := dragontest.NewNetwork(
+		t, ctx,
+		[]dcatest.CAConfig{dcatest.FastConfig(), dcatest.FastConfig()},
+		func(_ int, c dragontest.NodeConfig) dragon.NodeConfig {
+			out := c.ToDragonNodeConfig()
+
+			// Explicitly deny any join requests.
+			out.PeerEvaluator = devaltest.DenyingPeerEvaluator{}
+
+			return out
+		},
+	)
 	defer nw.Wait()
 	defer cancel()
 
@@ -148,6 +161,4 @@ func TestNode_Join(t *testing.T) {
 
 	// Currently we have hardcoded the join request to be denied.
 	require.Error(t, conn.ClosedError())
-
-	// TODO: assert that each side has the peer in the active set, instead.
 }
