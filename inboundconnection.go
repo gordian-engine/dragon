@@ -11,9 +11,9 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-// pendingConnection is an accepted QUIC connection
+// inboundConnection is an accepted QUIC connection
 // that has not yet resolved or been closed.
-type pendingConnection struct {
+type inboundConnection struct {
 	log   *slog.Logger
 	qConn quic.Connection
 
@@ -22,7 +22,7 @@ type pendingConnection struct {
 	joinAddr string
 }
 
-func (c *pendingConnection) handleIncomingStreamHandshake(ctx context.Context) error {
+func (c *inboundConnection) handleIncomingStreamHandshake(ctx context.Context) error {
 	// We have just accepted an incoming QUIC connection,
 	// so now we need to handle an incoming stream.
 	// If the remote client is following the protocol,
@@ -58,7 +58,7 @@ func (c *pendingConnection) handleIncomingStreamHandshake(ctx context.Context) e
 	}
 }
 
-func (c *pendingConnection) handleStartAdmissionStream() error {
+func (c *inboundConnection) handleStartAdmissionStream() error {
 	// We have accepted a new QUIC connection, the initial stream handshake was right,
 	// and now we have to parse the first message from the remote client.
 	// The first two bytes should be a type and a length.
@@ -79,7 +79,7 @@ func (c *pendingConnection) handleStartAdmissionStream() error {
 	}
 }
 
-func (c *pendingConnection) handleJoin(addrSz uint8) error {
+func (c *inboundConnection) handleJoin(addrSz uint8) error {
 	addrBuf := make([]byte, addrSz)
 
 	if _, err := c.admissionStream.Read(addrBuf[:]); err != nil {
@@ -92,11 +92,11 @@ func (c *pendingConnection) handleJoin(addrSz uint8) error {
 	return nil
 }
 
-func (c *pendingConnection) handleJoinDecision(ctx context.Context, d dk.JoinDecision) (ok bool) {
+func (c *inboundConnection) handleJoinDecision(ctx context.Context, d dk.JoinDecision) (ok bool) {
 	switch d {
 	case dk.AcceptJoinDecision:
 		c.log.Info("TODO: handle accept join decision")
-		return false
+		return true
 	case dk.DisconnectJoinDecision:
 		// We can just close the connection outright.
 		// Since we haven't peered, we have not yet set up the disconnect stream.
@@ -108,5 +108,14 @@ func (c *pendingConnection) handleJoinDecision(ctx context.Context, d dk.JoinDec
 		panic(fmt.Errorf(
 			"BUG: invalid join decision value: %d", d,
 		))
+	}
+}
+
+func (c *inboundConnection) AsAwaitingNeighborReply() *awaitingNeighborReplyConnection {
+	return &awaitingNeighborReplyConnection{
+		log:   c.log,
+		qConn: c.qConn,
+
+		admissionStream: c.admissionStream,
 	}
 }

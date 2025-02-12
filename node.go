@@ -186,22 +186,22 @@ func (n *Node) acceptConnections(ctx context.Context, ql *quic.Listener) {
 
 		n.log.Info("Connection accepted")
 
-		pc := &pendingConnection{
+		ic := &inboundConnection{
 			log:   n.log.With("remote_conn", qc.RemoteAddr().String()),
 			qConn: qc,
 		}
-		if err := pc.handleIncomingStreamHandshake(ctx); err != nil {
-			pc.log.Info("Failed to handle incoming stream handshake", "err", err)
+		if err := ic.handleIncomingStreamHandshake(ctx); err != nil {
+			ic.log.Info("Failed to handle incoming stream handshake", "err", err)
 
 			if err := qc.CloseWithError(1, "TODO: REASON"); err != nil {
-				pc.log.Debug("Failed to send close message to peer", "err", err)
+				ic.log.Debug("Failed to send close message to peer", "err", err)
 			}
 
 			continue
 		}
 
 		// The pending connection succeeded.
-		if len(pc.joinAddr) > 0 {
+		if len(ic.joinAddr) > 0 {
 			respCh := make(chan dk.JoinResponse, 1)
 			req := dk.JoinRequest{
 				Resp: respCh,
@@ -217,7 +217,7 @@ func (n *Node) acceptConnections(ctx context.Context, ql *quic.Listener) {
 
 			select {
 			case resp := <-respCh:
-				if !pc.handleJoinDecision(ctx, resp.Decision) {
+				if !ic.handleJoinDecision(ctx, resp.Decision) {
 					n.log.Info(
 						"Accept loop quitting due to context cancellation while handling join decision",
 						"cause", context.Cause(ctx),
@@ -225,12 +225,30 @@ func (n *Node) acceptConnections(ctx context.Context, ql *quic.Listener) {
 					return
 				}
 
-				// Since the pending connection handled the join decision,
+				// Since the inbound connection handled the join decision,
 				// we either closed the connection and are discarding it,
 				// or the connection has an outgoing neighbor request.
 
-				// TODO: In the latter case, we need to continue blocking,
-				// since we are consuming a pending connection slot.
+				if resp.Decision == dk.AcceptJoinDecision {
+					// We have to continue blocking while we wait for the neighbor reply,
+					// so that we continue to consume one of the pending connection slots.
+					ac := ic.AsAwaitingNeighborReply()
+					if err := ac.AwaitNeighborReply(ctx); err != nil {
+						ac.log.Info("Failed while waiting for neighbor reply", "err", err)
+
+						if err := qc.CloseWithError(1, "TODO: REASON"); err != nil {
+							ic.log.Debug("Failed to send close message to peer", "err", err)
+						}
+
+						continue
+					}
+
+					// TODO:
+
+					panic("TODO: handle accept case")
+				}
+
+				continue
 			case <-ctx.Done():
 				n.log.Info("Accept loop quitting due to context cancellation during join response", "cause", context.Cause(ctx))
 				return
