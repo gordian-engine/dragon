@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"dragon.example/dragon/deval"
 	"dragon.example/dragon/internal/dk"
 	"dragon.example/dragon/internal/dproto"
 	"github.com/quic-go/quic-go"
@@ -18,9 +19,27 @@ type inboundConnection struct {
 	log   *slog.Logger
 	qConn quic.Connection
 
+	k *dk.Kernel
+
 	admissionStream quic.Stream
 
 	joinAddr string
+}
+
+func (c *inboundConnection) HandleIncomingStream(ctx context.Context) error {
+	if err := c.handleIncomingStreamHandshake(ctx); err != nil {
+		// Error already wrapped properly.
+		return err
+	}
+
+	if len(c.joinAddr) > 0 {
+		// We have a join message.
+
+		// Assume non-nil error was already wrapped properly.
+		return c.handleJoinRequest(ctx)
+	}
+
+	panic(fmt.Errorf("TODO: handle neighbor message on incoming stream"))
 }
 
 func (c *inboundConnection) handleIncomingStreamHandshake(ctx context.Context) error {
@@ -71,7 +90,18 @@ func (c *inboundConnection) handleStartAdmissionStream() error {
 
 	switch tl[0] {
 	case byte(dproto.JoinMessageType):
-		return c.handleJoin(tl[1])
+		addrBuf := make([]byte, tl[1])
+
+		if _, err := io.ReadFull(c.admissionStream, addrBuf[:]); err != nil {
+			return fmt.Errorf("failed to read address from client's join message: %w", err)
+		}
+
+		// Now, we have a join message that is the right size.
+		// The kernel is going to be responsible for deciding
+		// whether we actually accept this join.
+		c.joinAddr = string(addrBuf)
+
+		return nil
 
 	// TODO: handle neighbor message type.
 
@@ -80,17 +110,114 @@ func (c *inboundConnection) handleStartAdmissionStream() error {
 	}
 }
 
-func (c *inboundConnection) handleJoin(addrSz uint8) error {
-	addrBuf := make([]byte, addrSz)
-
-	if _, err := io.ReadFull(c.admissionStream, addrBuf[:]); err != nil {
-		return fmt.Errorf("failed to read address from client's join message: %w", err)
+func (c *inboundConnection) handleJoinRequest(ctx context.Context) error {
+	peer := deval.Peer{
+		TLS:        c.qConn.ConnectionState().TLS,
+		LocalAddr:  c.qConn.LocalAddr(),
+		RemoteAddr: c.qConn.RemoteAddr(),
+	}
+	respCh := make(chan dk.JoinResponse, 1)
+	req := dk.JoinRequest{
+		Peer: peer,
+		Resp: respCh,
 	}
 
-	// Now, we have a valid join message.
-	c.joinAddr = string(addrBuf)
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf(
+			"context cancelled while sending join request to kernel: %w", context.Cause(ctx),
+		)
+	case c.k.JoinRequests <- req:
+		// Okay.
+	}
 
-	return nil
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf(
+			"context cancelled while awaiting join response from kernel: %w", context.Cause(ctx),
+		)
+	case resp := <-respCh:
+		// The kernel responded with the decision on what to do with the incoming join.
+		if err := c.handleJoinDecision(resp.Decision); err != nil {
+			return fmt.Errorf(
+				"failed while handling join decision %v: %w",
+				resp.Decision, err,
+			)
+		}
+
+		// Since the inbound connection handled the join decision,
+		// we either closed the connection and are discarding it,
+		// or the connection has an outgoing neighbor request.
+
+		if resp.Decision == dk.DisconnectJoinDecision {
+			// Then we already closed the connection,
+			// so we can stop here.
+			return nil
+		}
+
+		if resp.Decision != dk.AcceptJoinDecision {
+			panic(fmt.Errorf(
+				"IMPOSSIBLE: kernel returned invalid join decision %v", resp.Decision,
+			))
+		}
+
+		// It was an accept decision,
+		// so we already sent a Neighbor request to the peer.
+		// Now we have to block waiting for the neighbor reply.
+		ac := c.AsAwaitingNeighborReply()
+		if err := ac.AwaitNeighborReply(ctx); err != nil {
+			return fmt.Errorf("failed waiting for neighbor reply: %w", err)
+		}
+
+		// Now we have the neighbor reply,
+		// so we have to initialize the remaining streams,
+		// which is our counter-acknowledgement that fully initializes the connection.
+		if err := ac.FinishInitializingStreams(ctx); err != nil {
+			return fmt.Errorf("failed initializing streams to finalize peering: %w", err)
+		}
+
+		// Finally, the streams are initialized,
+		// so we can pass the connection to the kernel now.
+		pResp := make(chan dk.NewPeeringResponse, 1)
+		req := dk.NewPeeringRequest{
+			QuicConn: ac.qConn,
+
+			AdmissionStream:  ac.admissionStream,
+			DisconnectStream: ac.disconnectStream,
+			ShuffleStream:    ac.shuffleStream,
+
+			Resp: pResp,
+		}
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf(
+				"context cancelled while sending peering request to kernel: %w",
+				context.Cause(ctx),
+			)
+
+		case c.k.NewPeeringRequests <- req:
+			// Okay.
+		}
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf(
+				"context cancelled while awaiting peering response from kernel: %w",
+				context.Cause(ctx),
+			)
+		case resp := <-pResp:
+			if resp.RejectReason != "" {
+				// Last minute issue with adding the connection.
+				// We are going to close the connection directly here.
+				if err := c.qConn.CloseWithError(1, "TODO: peering rejected: "+resp.RejectReason); err != nil {
+					ac.log.Debug("Failed to close connection", "err", err)
+				}
+			}
+
+			return nil
+		}
+	}
 }
 
 func (c *inboundConnection) handleJoinDecision(d dk.JoinDecision) error {
@@ -99,10 +226,11 @@ func (c *inboundConnection) handleJoinDecision(d dk.JoinDecision) error {
 		return c.sendNeighborRequest()
 	case dk.DisconnectJoinDecision:
 		// We can just close the connection outright.
-		// Since we haven't peered, we have not yet set up the disconnect stream.
 		if err := c.qConn.CloseWithError(quic.ApplicationErrorCode(1), "TODO (inboundConnection.handleJoinDecision)"); err != nil {
 			c.log.Info("Error closing remote connection", "err", err)
 		}
+
+		// And we return nil here since the connection has been successfully handled.
 		return nil
 	default:
 		panic(fmt.Errorf(
