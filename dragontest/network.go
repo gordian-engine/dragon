@@ -145,6 +145,7 @@ func NewNetwork(
 				},
 			},
 
+			// TODO: this isn't going to work with dynamic certificate sets.
 			RootCAs: tp.Pool,
 		}
 

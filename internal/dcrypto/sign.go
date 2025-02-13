@@ -73,3 +73,37 @@ func getCurveHasher(curve elliptic.Curve) crypto.Hash {
 		panic(fmt.Errorf("BUG: unknown curve %v for ECDSA private key", curve))
 	}
 }
+
+func VerifySignatureWithTLSCert(
+	msg []byte,
+	cert *x509.Certificate,
+	sig []byte,
+) error {
+	switch k := cert.PublicKey.(type) {
+	case *rsa.PublicKey:
+		hasher := getRSAHasher(cert.SignatureAlgorithm)
+		h := hasher.New()
+		h.Write(msg)
+		hash := h.Sum(nil)
+		return rsa.VerifyPKCS1v15(k, hasher, hash, sig)
+
+	case ed25519.PublicKey:
+		if !ed25519.Verify(k, msg, sig) {
+			return errors.New("invalid ed25519 signature")
+		}
+		return nil
+
+	case *ecdsa.PublicKey:
+		hasher := getCurveHasher(k.Curve)
+		h := hasher.New()
+		h.Write(msg)
+		hash := h.Sum(nil)
+		if !ecdsa.VerifyASN1(k, hash, sig) {
+			return errors.New("invalid ed25519 signature")
+		}
+		return nil
+
+	default:
+		panic(fmt.Errorf("unrecognized TLS public key type %T", k))
+	}
+}

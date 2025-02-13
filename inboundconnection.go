@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"dragon.example/dragon/deval"
+	"dragon.example/dragon/internal/dcrypto"
 	"dragon.example/dragon/internal/dk"
 	"dragon.example/dragon/internal/dproto"
 	"github.com/quic-go/quic-go"
@@ -98,12 +99,40 @@ func (c *inboundConnection) handleStartAdmissionStream() error {
 			return fmt.Errorf("failed to decode join message from admission stream: %w", err)
 		}
 
+		// We've successfully parsed the join message.
+		// It's easier to validate the timestamp first.
+		t, err := time.Parse(time.RFC3339, jm.Timestamp)
+		if err != nil {
+			return fmt.Errorf("invalid join message: invalid timestamp: %w", err)
+		}
+
+		const graceBefore = 2 * time.Second
+		now := time.Now() // Single syscall for current time.
+		if now.Before(t.Add(-graceBefore)) {
+			return fmt.Errorf("invalid join message: timestamp %s too far in future", jm.Timestamp)
+		}
+
+		const graceAfter = 10 * time.Second
+		if now.After(t.Add(graceAfter)) {
+			return fmt.Errorf("invalid join message: timestamp %s too far in past", jm.Timestamp)
+		}
+
+		// TODO: there are unresolved certificate issues preventing this from working.
+		if false {
+			// The timestamp checked out, so now validate the signature.
+			if err := dcrypto.VerifySignatureWithTLSCert(
+				jm.AppendSignContent(nil),
+				c.qConn.ConnectionState().TLS.PeerCertificates[0],
+				jm.Signature,
+			); err != nil {
+				return fmt.Errorf("invalid join message: bad signature: %w", err)
+			}
+		}
+
 		// Now, we have a join message that is the right size.
 		// The kernel is going to be responsible for deciding
 		// whether we actually accept this join.
 		c.joinAddr = jm.Addr
-
-		// TODO: validate timestamp and signature.
 
 		return nil
 

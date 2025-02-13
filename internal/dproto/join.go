@@ -107,9 +107,29 @@ func (m *JoinMessage) Decode(r io.Reader) error {
 
 	// Determine both sizes.
 	addrSize := int(buf[0])
+
+	// Nobody in their right mind would use a single character hostname
+	// and a single-digit port for this service.
+	// Pick 4 to require at least a double digit port.
+	const minAddrSize = 4
+	if addrSize < minAddrSize {
+		return fmt.Errorf(
+			"invalid format: address size must be at least %d (got %d)",
+			minAddrSize, addrSize,
+		)
+	}
+
 	sigSize := int(binary.BigEndian.Uint16(buf[1:]))
 
-	// Only allocate one byte buffer since all values are going to be copied to strings.
+	// I don't know what this actually should be,
+	// but put a reasonably estimated cap on signature size,
+	// so we can prevent reading 65k-sized signatures from a malicious remote.
+	const maxAllowedSigSize = 2048
+	if sigSize > maxAllowedSigSize {
+		return fmt.Errorf("invalid format: signature size %d too large", sigSize)
+	}
+
+	// Only allocate one byte buffer since the first two values are going to be copied to strings.
 	valBuf := make([]byte, 0, max(addrSize, joinMessageTimestampLen, sigSize))
 
 	if _, err := io.ReadFull(r, valBuf[:addrSize]); err != nil {
@@ -121,6 +141,9 @@ func (m *JoinMessage) Decode(r io.Reader) error {
 		return fmt.Errorf("failed to read join message timestamp: %w", err)
 	}
 	m.Timestamp = string(valBuf[:joinMessageTimestampLen])
+
+	// We could potentially parse and validate the timestamp now,
+	// but we will leave that to the caller.
 
 	if _, err := io.ReadFull(r, valBuf[:sigSize]); err != nil {
 		return fmt.Errorf("failed to read join message signature: %w", err)
