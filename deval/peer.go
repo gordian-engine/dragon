@@ -25,7 +25,11 @@ type PeerEvaluator interface {
 	// should be disconnected without forwarding,
 	// disconnected with forwarding,
 	// or responded to with a neighbor request.
-	ConsiderJoin(context.Context, Peer) JoinDecision
+	//
+	// If the returned error is non-nil,
+	// the decision is treated as [DisconnectAndIgnoreJoinDecision]
+	// regardless of the actual value.
+	ConsiderJoin(context.Context, Peer) (JoinDecision, error)
 }
 
 // JoinDecision is the outcome of [PeerEvaluator.ConsiderJoin].
