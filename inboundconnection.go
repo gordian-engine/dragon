@@ -3,6 +3,7 @@ package dragon
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"time"
 
@@ -41,7 +42,7 @@ func (c *inboundConnection) handleIncomingStreamHandshake(ctx context.Context) e
 		return fmt.Errorf("failed to set read deadline on stream: %w", err)
 	}
 
-	if _, err := s.Read(streamHeader[:]); err != nil {
+	if _, err := io.ReadFull(s, streamHeader[:]); err != nil {
 		return fmt.Errorf("failed to read stream header: %w", err)
 	}
 
@@ -64,7 +65,7 @@ func (c *inboundConnection) handleStartAdmissionStream() error {
 	// The first two bytes should be a type and a length.
 
 	var tl [2]byte
-	if _, err := c.admissionStream.Read(tl[:]); err != nil {
+	if _, err := io.ReadFull(c.admissionStream, tl[:]); err != nil {
 		return fmt.Errorf("failed to read first admission stream message: %w", err)
 	}
 
@@ -82,7 +83,7 @@ func (c *inboundConnection) handleStartAdmissionStream() error {
 func (c *inboundConnection) handleJoin(addrSz uint8) error {
 	addrBuf := make([]byte, addrSz)
 
-	if _, err := c.admissionStream.Read(addrBuf[:]); err != nil {
+	if _, err := io.ReadFull(c.admissionStream, addrBuf[:]); err != nil {
 		return fmt.Errorf("failed to read address from client's join message: %w", err)
 	}
 

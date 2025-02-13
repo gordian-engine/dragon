@@ -3,6 +3,7 @@ package dragon
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"time"
 
@@ -85,7 +86,7 @@ func (c *UnpeeredConnection) Join(ctx context.Context) error {
 
 	// The neighbor request is just the single byte.
 	var nReq [1]byte
-	if _, err := admStream.Read(nReq[:]); err != nil {
+	if _, err := io.ReadFull(admStream, nReq[:]); err != nil {
 		return fmt.Errorf("Join: failed to read neighbor reply: %w", err)
 	}
 
@@ -174,7 +175,7 @@ func (c *UnpeeredConnection) acceptProtocolStreams(ctx context.Context) error {
 	}
 
 	var header [2]byte
-	if _, err := s.Read(header[:]); err != nil {
+	if _, err := io.ReadFull(s, header[:]); err != nil {
 		return fmt.Errorf("failed to read stream header: %w", err)
 	}
 
@@ -204,7 +205,7 @@ func (c *UnpeeredConnection) acceptProtocolStreams(ctx context.Context) error {
 		return fmt.Errorf("failed to set read deadline on stream: %w", err)
 	}
 
-	if _, err := s.Read(header[:]); err != nil {
+	if _, err := io.ReadFull(s, header[:]); err != nil {
 		return fmt.Errorf("failed to read stream header: %w", err)
 	}
 

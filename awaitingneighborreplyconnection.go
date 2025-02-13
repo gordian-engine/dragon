@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"time"
 
@@ -39,7 +40,7 @@ func (c *awaitingNeighborReplyConnection) AwaitNeighborReply(ctx context.Context
 	}
 
 	var tl [2]byte
-	if _, err := s.Read(tl[:]); err != nil {
+	if _, err := io.ReadFull(s, tl[:]); err != nil {
 		return fmt.Errorf("failed to receive neighbor reply message: %w", err)
 	}
 
