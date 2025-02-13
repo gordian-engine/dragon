@@ -2,11 +2,14 @@ package dragon
 
 import (
 	"context"
+	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"time"
 
+	"dragon.example/dragon/internal/dcrypto"
 	"dragon.example/dragon/internal/dk"
 	"dragon.example/dragon/internal/dproto"
 	"github.com/quic-go/quic-go"
@@ -25,7 +28,7 @@ type UnpeeredConnection struct {
 	disconnectStream quic.Stream
 	shuffleStream    quic.Stream
 
-	k *dk.Kernel
+	n *Node
 }
 
 // Join sends a Join message to the remote peer.
@@ -44,12 +47,19 @@ type UnpeeredConnection struct {
 // There is no explicit acknowledgement to a Join request.
 func (c *UnpeeredConnection) Join(ctx context.Context) error {
 	// The peer who opened the connection is considered the client.
-	// On attempting to join, we open a bidirectional stream for
-	// Join and Neighbor streams.
+	// On attempting to join, we open a bidirectional admission stream.
+	// The first message on the stream must be Join or Neighbor;
+	// in this method, the message is Join of course.
 
 	jm := dproto.JoinMessage{
-		Addr: "TODO",
+		Addr: c.n.advertiseAddr,
 	}
+	jm.SetTimestamp(time.Now())
+
+	if err := c.signJoinMessage(&jm); err != nil {
+		return fmt.Errorf("Join: failed to sign join message: %w", err)
+	}
+
 	msg := jm.OpenStreamAndJoinBytes()
 
 	admStream, err := c.qConn.OpenStream()
@@ -89,6 +99,9 @@ func (c *UnpeeredConnection) Join(ctx context.Context) error {
 	if _, err := io.ReadFull(admStream, nReq[:]); err != nil {
 		return fmt.Errorf("Join: failed to read neighbor reply: %w", err)
 	}
+	if nReq[0] != byte(dproto.NeighborMessageType) {
+		return fmt.Errorf("Join: expected neighbor message but got %d", nReq)
+	}
 
 	// After receiving the neighbor request, we can send our reply.
 	// TODO: this should consult the kernel to determine
@@ -125,7 +138,7 @@ func (c *UnpeeredConnection) Join(ctx context.Context) error {
 	case <-ctx.Done():
 		return context.Cause(ctx)
 
-	case c.k.NewPeeringRequests <- req:
+	case c.n.k.NewPeeringRequests <- req:
 		// Okay.
 	}
 
@@ -230,6 +243,31 @@ func (c *UnpeeredConnection) acceptProtocolStreams(ctx context.Context) error {
 	// and we didn't get an error sending them,
 	// so we should be safe to assume the remote end is still connected.
 
+	return nil
+}
+
+func (c *UnpeeredConnection) signJoinMessage(jm *dproto.JoinMessage) error {
+	if len(c.n.tlsConf.Certificates) == 0 {
+		return errors.New("no certificates found in TLS configuration")
+	}
+
+	joinSignContent := jm.AppendSignContent(nil)
+
+	cert := c.n.tlsConf.Certificates[0]
+	if cert.Leaf == nil {
+		leaf, err := x509.ParseCertificate(cert.Certificate[0])
+		if err != nil {
+			return fmt.Errorf("failed to parse certificate to sign join message: %w", err)
+		}
+		cert.Leaf = leaf
+	}
+
+	sig, err := dcrypto.SignMessageWithTLSCert(joinSignContent, cert)
+	if err != nil {
+		return fmt.Errorf("failed to sign join message: %w", err)
+	}
+
+	jm.Signature = sig
 	return nil
 }
 

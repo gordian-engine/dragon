@@ -50,6 +50,8 @@ func TestNewNode(t *testing.T) {
 		QUIC:          dragon.DefaultQUICConfig(),
 		TLS:           &tc,
 		PeerEvaluator: devaltest.DenyingPeerEvaluator{},
+
+		AdvertiseAddr: uc.LocalAddr().String(),
 	})
 
 	require.NoError(t, err)

@@ -28,6 +28,8 @@ type Node struct {
 
 	quicConf *quic.Config
 	tlsConf  *tls.Config
+
+	advertiseAddr string
 }
 
 // NodeConfig is the configuration for a [Node].
@@ -35,6 +37,10 @@ type NodeConfig struct {
 	UDPConn *net.UDPConn
 	QUIC    *quic.Config
 	TLS     *tls.Config
+
+	// The address to advertise for this Node
+	// when sending out a Join message.
+	AdvertiseAddr string
 
 	// The maximum number of incoming connections that can be live
 	// but which have not yet resolved into a peering or have been closed.
@@ -103,7 +109,12 @@ func DefaultQUICConfig() *quic.Config {
 // Configuration errors cause a panic.
 func NewNode(ctx context.Context, log *slog.Logger, cfg NodeConfig) (*Node, error) {
 	if !cfg.QUIC.EnableDatagrams {
-		panic(errors.New("gblockdist.Node requires QUIC datagrams; set cfg.Quic.EnableDatagrams=true"))
+		// We aren't actually forcing this yet.
+		// It's possible this may only be an application-level concern.
+		panic(errors.New("QUIC datagrams must be enabled; set cfg.Quic.EnableDatagrams=true"))
+	}
+	if cfg.AdvertiseAddr == "" {
+		panic(errors.New("cfg.AdvertiseAddr must not be empty"))
 	}
 
 	if cfg.PeerEvaluator == nil {
@@ -160,6 +171,8 @@ func NewNode(ctx context.Context, log *slog.Logger, cfg NodeConfig) (*Node, erro
 
 		quicConf: cfg.QUIC,
 		tlsConf:  cfg.TLS,
+
+		advertiseAddr: cfg.AdvertiseAddr,
 	}
 
 	nPending := cfg.IncomingPendingConnections
@@ -239,7 +252,7 @@ func (n *Node) DialPeer(ctx context.Context, addr net.Addr) (*UnpeeredConnection
 		log:   n.log.With("remote_addr", qc.RemoteAddr().String()),
 		qConn: qc,
 
-		k: n.k,
+		n: n,
 	}, nil
 }
 

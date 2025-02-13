@@ -83,30 +83,34 @@ func (c *inboundConnection) handleStartAdmissionStream() error {
 	// and now we have to parse the first message from the remote client.
 	// The first two bytes should be a type and a length.
 
-	var tl [2]byte
-	if _, err := io.ReadFull(c.admissionStream, tl[:]); err != nil {
+	var typeBuf [1]byte
+	if _, err := io.ReadFull(c.admissionStream, typeBuf[:]); err != nil {
 		return fmt.Errorf("failed to read first admission stream message: %w", err)
 	}
 
-	switch tl[0] {
+	switch typeBuf[0] {
 	case byte(dproto.JoinMessageType):
-		addrBuf := make([]byte, tl[1])
+		// TODO: do we need to set another read timeout here,
+		// or is it okay to rely on the already-set timeout?
 
-		if _, err := io.ReadFull(c.admissionStream, addrBuf[:]); err != nil {
-			return fmt.Errorf("failed to read address from client's join message: %w", err)
+		var jm dproto.JoinMessage
+		if err := jm.Decode(c.admissionStream); err != nil {
+			return fmt.Errorf("failed to decode join message from admission stream: %w", err)
 		}
 
 		// Now, we have a join message that is the right size.
 		// The kernel is going to be responsible for deciding
 		// whether we actually accept this join.
-		c.joinAddr = string(addrBuf)
+		c.joinAddr = jm.Addr
+
+		// TODO: validate timestamp and signature.
 
 		return nil
 
 	// TODO: handle neighbor message type.
 
 	default:
-		return fmt.Errorf("invalid admission stream message type: %d", tl[0])
+		return fmt.Errorf("invalid admission stream message type: %d", typeBuf[0])
 	}
 }
 

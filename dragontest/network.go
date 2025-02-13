@@ -66,6 +66,8 @@ func (c NodeConfig) ToDragonNodeConfig() dragon.NodeConfig {
 		UDPConn: c.udpConn,
 		QUIC:    c.QUIC,
 		TLS:     c.TLS,
+
+		AdvertiseAddr: c.udpConn.LocalAddr().String(),
 	}
 }
 
