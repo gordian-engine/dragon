@@ -9,6 +9,7 @@ import (
 
 	"dragon.example/dragon"
 	"dragon.example/dragon/dca/dcatest"
+	"dragon.example/dragon/deval"
 	"dragon.example/dragon/deval/devaltest"
 	"dragon.example/dragon/dragontest"
 	"dragon.example/dragon/internal/dtest"
@@ -154,11 +155,66 @@ func TestNode_Join_deny(t *testing.T) {
 	// Not closed yet, of course.
 	require.NoError(t, conn.ClosedError())
 
+	// And no active views yet.
+	require.Zero(t, nw.Nodes[0].Node.ActiveViewSize())
+	require.Zero(t, nw.Nodes[1].Node.ActiveViewSize())
+
+	// Join fails due to being denied.
+	require.Error(t, conn.Join(ctx))
+
+	// And no active views were added.
+	require.Zero(t, nw.Nodes[0].Node.ActiveViewSize())
+	require.Zero(t, nw.Nodes[1].Node.ActiveViewSize())
+}
+
+func TestNode_Join_accept(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	nw := dragontest.NewNetwork(
+		t, ctx,
+		[]dcatest.CAConfig{dcatest.FastConfig(), dcatest.FastConfig()},
+		func(_ int, c dragontest.NodeConfig) dragon.NodeConfig {
+			out := c.ToDragonNodeConfig()
+
+			// Explicitly accept join requests.
+			out.PeerEvaluator = &devaltest.StaticPeerEvaluator{
+				ConsiderJoinDecision: deval.AcceptJoinDecision,
+			}
+
+			return out
+		},
+	)
+	defer nw.Wait()
+	defer cancel()
+
+	conn, err := nw.Nodes[0].Node.DialPeer(ctx, nw.Nodes[1].UDP.LocalAddr())
+	require.NoError(t, err)
+
+	defer func() {
+		if err := conn.Close(1, "TODO (test)"); err != nil {
+			t.Logf("closing connection: %v", err)
+		}
+	}()
+
+	// Not closed yet, of course.
+	require.NoError(t, conn.ClosedError())
+
+	// And no active views yet.
+	require.Zero(t, nw.Nodes[0].Node.ActiveViewSize())
+	require.Zero(t, nw.Nodes[1].Node.ActiveViewSize())
+
 	require.NoError(t, conn.Join(ctx))
 
 	// Short delay to allow background work to happen on the join request.
 	time.Sleep(50 * time.Millisecond)
 
-	// Currently we have hardcoded the join request to be denied.
-	require.Error(t, conn.ClosedError())
+	// The connection did not get closed, because the server should be accepting the request.
+	require.NoError(t, conn.ClosedError())
+
+	// Now both nodes report 1 active view member.
+	require.Equal(t, 1, nw.Nodes[0].Node.ActiveViewSize())
+	require.Equal(t, 1, nw.Nodes[1].Node.ActiveViewSize())
 }

@@ -11,9 +11,15 @@ import (
 type Kernel struct {
 	log *slog.Logger
 
-	JoinRequests chan JoinRequest
+	JoinRequests       chan JoinRequest
+	NewPeeringRequests chan NewPeeringRequest
 
 	pe deval.PeerEvaluator
+
+	// TODO: we won't keep this,
+	// but it is a convenient placeholder for test for now.
+	activeViewSize      int
+	activeViewSizeCheck chan chan int
 
 	done chan struct{}
 }
@@ -28,7 +34,10 @@ func NewKernel(ctx context.Context, log *slog.Logger, cfg KernelConfig) *Kernel 
 	k := &Kernel{
 		log: log,
 
-		JoinRequests: make(chan JoinRequest),
+		JoinRequests:       make(chan JoinRequest),
+		NewPeeringRequests: make(chan NewPeeringRequest),
+
+		activeViewSizeCheck: make(chan chan int),
 
 		pe: cfg.PeerEvaluator,
 
@@ -54,8 +63,6 @@ func (k *Kernel) mainLoop(ctx context.Context) {
 			return
 
 		case req := <-k.JoinRequests:
-			// Assume that the response channel is buffered.
-
 			d := k.pe.ConsiderJoin(ctx, req.Peer)
 
 			var kd JoinDecision
@@ -70,11 +77,37 @@ func (k *Kernel) mainLoop(ctx context.Context) {
 				))
 			}
 
-			// TODO: handle disconnect and forward case, and accept case
+			// TODO: handle disconnect and forward case, and accept case.
 
+			// Assume the response channel is buffered.
 			req.Resp <- JoinResponse{
 				Decision: kd,
 			}
+
+		case req := <-k.NewPeeringRequests:
+			// TODO: there is a chance we could turn down the peering,
+			// for instance if there were so many in flight that
+			// this one no longer met conditions to enter active view.
+			//
+			// But at this stage, we'll just treat it like an uncondtional add.
+
+			// For now, just for test, we increment the fake active view size.
+			// We still need to figure out the internal API
+			// for managing active and passive views.
+			k.activeViewSize++
+
+			// Assume the response channel is buffered.
+			req.Resp <- NewPeeringResponse{}
+
+		case ch := <-k.activeViewSizeCheck:
+			ch <- k.activeViewSize
 		}
 	}
+}
+
+// GetActiveViewSize is a temporary method to shim tests.
+func (k *Kernel) GetActiveViewSize() int {
+	ch := make(chan int, 1)
+	k.activeViewSizeCheck <- ch
+	return <-ch
 }

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"dragon.example/dragon/internal/dk"
 	"dragon.example/dragon/internal/dproto"
 	"github.com/quic-go/quic-go"
 )
@@ -19,9 +20,11 @@ type UnpeeredConnection struct {
 	log   *slog.Logger
 	qConn quic.Connection
 
-	streams streams
+	admissionStream  quic.Stream
+	disconnectStream quic.Stream
+	shuffleStream    quic.Stream
 
-	node *Node
+	k *dk.Kernel
 }
 
 // Join sends a Join message to the remote peer.
@@ -52,12 +55,12 @@ func (c *UnpeeredConnection) Join(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("Join: failed to open stream: %w", err)
 	}
-	c.streams.Admission = admStream
+	c.admissionStream = admStream
 
 	// Set write deadline, so that we don't block for a long time
 	// in case writing the stream blocks for whatever reason.
 	if err := admStream.SetWriteDeadline(time.Now().Add(dproto.OpenStreamTimeout)); err != nil {
-		return fmt.Errorf("Join: failed to set stream deadline: %w", err)
+		return fmt.Errorf("Join: failed to set stream write deadline: %w", err)
 	}
 
 	// Send both the open stream header and the join message.
@@ -65,7 +68,6 @@ func (c *UnpeeredConnection) Join(ctx context.Context) error {
 		return fmt.Errorf("Join: failed to write stream header and join message: %w", err)
 	}
 
-	// Now we have to wait.
 	// We expect one of two outcomes on this stream once we've sent the join message:
 	//  1. The remote end closes because they will not accept us into their active set right now.
 	//  2. The remote end sends us a Neighbor message, and we have to ack it.
@@ -73,6 +75,160 @@ func (c *UnpeeredConnection) Join(ctx context.Context) error {
 	// And regardless of this stream,
 	// the remote end should begin sending ForwardJoin messages out to the network,
 	// so hopefully we get some new incoming Neighbor requests soon.
+	//
+	// Attempt to read from the stream,
+	// optimistically looking for a neighbor message.
+
+	if err := admStream.SetReadDeadline(time.Now().Add(dproto.AwaitNeighborTimeout)); err != nil {
+		return fmt.Errorf("Join: failed to set stream read deadline: %w", err)
+	}
+
+	// The neighbor request is just the single byte.
+	var nReq [1]byte
+	if _, err := admStream.Read(nReq[:]); err != nil {
+		return fmt.Errorf("Join: failed to read neighbor reply: %w", err)
+	}
+
+	// After receiving the neighbor request, we can send our reply.
+	// TODO: this should consult the kernel to determine
+	// if we actually do want to accept the neighbor;
+	// if this was the slowest of several responders,
+	// we could have filled our active set already, for instance.
+	nReply := dproto.NeighborReplyMessage{Accepted: true}
+
+	if err := admStream.SetWriteDeadline(time.Now().Add(dproto.OpenStreamTimeout)); err != nil {
+		return fmt.Errorf("Join: failed to set stream write deadline: %w", err)
+	}
+	if _, err := admStream.Write(nReply.Bytes()); err != nil {
+		return fmt.Errorf("Join: failed to send neighbor response: %w", err)
+	}
+
+	if err := c.acceptProtocolStreams(ctx); err != nil {
+		return fmt.Errorf("Join: accepting protocol streams: %w", err)
+	}
+
+	// Since we have accepted the protocol streams successfully,
+	// we can inform the kernel that we have a peering.
+
+	pResp := make(chan dk.NewPeeringResponse, 1)
+	req := dk.NewPeeringRequest{
+		QuicConn: c.qConn,
+
+		AdmissionStream:  c.admissionStream,
+		DisconnectStream: c.disconnectStream,
+		ShuffleStream:    c.shuffleStream,
+
+		Resp: pResp,
+	}
+	select {
+	case <-ctx.Done():
+		return context.Cause(ctx)
+
+	case c.k.NewPeeringRequests <- req:
+		// Okay.
+	}
+
+	select {
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	case resp := <-pResp:
+		if resp.RejectReason != "" {
+			// Last minute issue with adding the connection.
+			if err := c.qConn.CloseWithError(1, "TODO: peering rejected: "+resp.RejectReason); err != nil {
+				c.log.Debug("Failed to close connection", "err", err)
+			}
+
+			return fmt.Errorf("failed to join due to kernel rejecting peering: %s", resp.RejectReason)
+		}
+
+		// Otherwise it was accepted, and the Join is complete.
+		return nil
+	}
+}
+
+func (c *UnpeeredConnection) acceptProtocolStreams(ctx context.Context) error {
+	// The main thing I don't like about this method is that
+	// we are completely ignoring the primary stream at this point.
+	//
+	// Secondarily, this pattern doesn't scale beyond two streams,
+	// and we are definitely going to need more streams
+	// for application-layer messages.
+	//
+	// It seems like we could optimistically run stream handler goroutines
+	// as we iterate through this, though.
+
+	// Set the deadline once because we are going to use it a few times.
+	deadline := time.Now().Add(dproto.ReceiveInitialStreamsTimeout)
+
+	ctx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+
+	// The two streams could start in any order.
+	s, err := c.qConn.AcceptStream(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to accept first stream: %w", err)
+	}
+
+	if err := s.SetReadDeadline(deadline); err != nil {
+		return fmt.Errorf("failed to set read deadline on stream: %w", err)
+	}
+
+	var header [2]byte
+	if _, err := s.Read(header[:]); err != nil {
+		return fmt.Errorf("failed to read stream header: %w", err)
+	}
+
+	if header[0] != dproto.CurrentProtocolVersion {
+		return fmt.Errorf("received unexpected protocol version %d in stream header", header[0])
+	}
+
+	var expSecondType byte
+	switch header[1] {
+	case byte(dproto.DisconnectStreamType):
+		c.disconnectStream = s
+		expSecondType = byte(dproto.ShuffleStreamType)
+	case byte(dproto.ShuffleStreamType):
+		c.shuffleStream = s
+		expSecondType = byte(dproto.DisconnectStreamType)
+	default:
+		return fmt.Errorf("received unexpected stream type %d", header[1])
+	}
+
+	// Now we know what type to expect for the second stream.
+	s, err = c.qConn.AcceptStream(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to accept second stream: %w", err)
+	}
+
+	if err := s.SetReadDeadline(deadline); err != nil {
+		return fmt.Errorf("failed to set read deadline on stream: %w", err)
+	}
+
+	if _, err := s.Read(header[:]); err != nil {
+		return fmt.Errorf("failed to read stream header: %w", err)
+	}
+
+	if header[0] != dproto.CurrentProtocolVersion {
+		return fmt.Errorf("received unexpected protocol version %d in stream header", header[0])
+	}
+
+	if header[1] != expSecondType {
+		return fmt.Errorf("expected second stream to be of type %d, got %d", expSecondType, header[1])
+	}
+
+	switch header[1] {
+	case byte(dproto.DisconnectStreamType):
+		c.disconnectStream = s
+	case byte(dproto.ShuffleStreamType):
+		c.shuffleStream = s
+	default:
+		panic(fmt.Errorf("IMPOSSIBLE: headers mishandled, accepted stream type %d", header[1]))
+	}
+
+	// We've set both the disconnect and shuffle streams,
+	// and we didn't get an error sending them,
+	// so we should be safe to assume the remote end is still connected.
+
 	return nil
 }
 

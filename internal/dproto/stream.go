@@ -42,3 +42,13 @@ const (
 // OpenStreamTimeout is the write timeout when sending the stream type header.
 // This is a constant for now, but it should be configurable.
 const OpenStreamTimeout = time.Second
+
+// ReceiveInitialStreamsTimeout is the read timeout for accepting the extra streams
+// following reception of a positive neighbor reply.
+// This is a constant for now, but it should be configurable.
+const ReceiveInitialStreamsTimeout = time.Second
+
+// ReceiveInitialStreamsTimeout is the write timeout for accepting the extra streams
+// following reception of a positive neighbor reply.
+// This is a constant for now, but it should be configurable.
+const InitializeStreamsTimeout = time.Second

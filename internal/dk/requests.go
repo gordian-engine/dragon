@@ -1,12 +1,20 @@
 package dk
 
-import "dragon.example/dragon/deval"
+import (
+	"dragon.example/dragon/deval"
+	"github.com/quic-go/quic-go"
+)
 
+// JoinRequest is sent from the outer Node to the [Kernel],
+// so that the Kernel can determine if we should
+// ignore, reject, or accept the join request.
 type JoinRequest struct {
 	Peer deval.Peer
 	Resp chan JoinResponse
 }
 
+// JoinResponse is the response from the [Kernel] to the Node,
+// indicating whether the join is acceptable.
 type JoinResponse struct {
 	Decision JoinDecision
 }
@@ -25,3 +33,35 @@ const (
 	// Kernel is responsible for handling forward join requests.
 	AcceptJoinDecision
 )
+
+// NewPeeringRequest is sent from the outer Node to the [Kernel],
+// telling the Kernel to add this peer to the active set.
+//
+// There are three circumstances where this can happen:
+//  1. We were (re-)joining the p2p network,
+//     and so we sent a Join message to another node.
+//     That node we contacted, responded on the same connection
+//     with a Neighbor message, and we completed that handshake.
+//  2. Regardless of whether the node we contacted in 1 made a Neighbor request,
+//     it send a Forward Join message to its active view peers
+//     and one of them opened a connection to us,
+//     and sent us a Neighbor request.
+//  3. We were in another node's passive view,
+//     and that node needed a new connection,
+//     so they connected to us and directly opened sent a Neighbor message.
+type NewPeeringRequest struct {
+	QuicConn quic.Connection
+
+	AdmissionStream, DisconnectStream, ShuffleStream quic.Stream
+
+	Resp chan NewPeeringResponse
+}
+
+// NewPeeringResponse is the response from the [Kernel] to the Node,
+// indicating whether the peering was accepted into the active set.
+//
+// If RejectReason is empty, the peering was accepted.
+// Otherwise, the RejectReason can be sent to the remote peer.
+type NewPeeringResponse struct {
+	RejectReason string
+}

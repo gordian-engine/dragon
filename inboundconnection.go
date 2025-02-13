@@ -54,7 +54,7 @@ func (c *inboundConnection) handleIncomingStreamHandshake(ctx context.Context) e
 		c.admissionStream = s
 		return c.handleStartAdmissionStream()
 	default:
-		return fmt.Errorf("unknown stream type %d", streamHeader[1])
+		return fmt.Errorf("unknown stream type %d for new incoming stream", streamHeader[1])
 	}
 }
 
@@ -92,23 +92,38 @@ func (c *inboundConnection) handleJoin(addrSz uint8) error {
 	return nil
 }
 
-func (c *inboundConnection) handleJoinDecision(ctx context.Context, d dk.JoinDecision) (ok bool) {
+func (c *inboundConnection) handleJoinDecision(d dk.JoinDecision) error {
 	switch d {
 	case dk.AcceptJoinDecision:
-		c.log.Info("TODO: handle accept join decision")
-		return true
+		return c.sendNeighborRequest()
 	case dk.DisconnectJoinDecision:
 		// We can just close the connection outright.
 		// Since we haven't peered, we have not yet set up the disconnect stream.
-		if err := c.qConn.CloseWithError(quic.ApplicationErrorCode(1), "TODO"); err != nil {
+		if err := c.qConn.CloseWithError(quic.ApplicationErrorCode(1), "TODO (inboundConnection.handleJoinDecision)"); err != nil {
 			c.log.Info("Error closing remote connection", "err", err)
 		}
-		return true
+		return nil
 	default:
 		panic(fmt.Errorf(
 			"BUG: invalid join decision value: %d", d,
 		))
 	}
+}
+
+func (c *inboundConnection) sendNeighborRequest() error {
+	s := c.admissionStream
+	if err := s.SetWriteDeadline(time.Now().Add(dproto.NeighborRequestTimeout)); err != nil {
+		return fmt.Errorf("failed to set write deadline for stream: %w", err)
+	}
+
+	// The neighbor request has no value,
+	// so we will only send the type header.
+	t := [1]byte{byte(dproto.NeighborMessageType)}
+	if _, err := s.Write(t[:]); err != nil {
+		return fmt.Errorf("failed to send neighbor request: %w", err)
+	}
+
+	return nil
 }
 
 func (c *inboundConnection) AsAwaitingNeighborReply() *awaitingNeighborReplyConnection {

@@ -197,12 +197,12 @@ func (n *Node) acceptConnections(ctx context.Context, ql *quic.Listener) {
 
 		// TODO: this should have some early rate-limiting based on remote identity.
 
-		n.log.Info("Connection accepted")
-
 		ic := &inboundConnection{
 			log:   n.log.With("remote_conn", qc.RemoteAddr().String()),
 			qConn: qc,
 		}
+		ic.log.Info("Connection accepted")
+
 		if err := ic.handleIncomingStreamHandshake(ctx); err != nil {
 			ic.log.Info("Failed to handle incoming stream handshake", "err", err)
 
@@ -215,6 +215,8 @@ func (n *Node) acceptConnections(ctx context.Context, ql *quic.Listener) {
 
 		// The pending connection succeeded.
 		if len(ic.joinAddr) > 0 {
+			// TODO: this branch is way too long and needs to be extracted to its own method.
+
 			peer := deval.Peer{
 				TLS:        qc.ConnectionState().TLS,
 				LocalAddr:  qc.LocalAddr(),
@@ -236,12 +238,26 @@ func (n *Node) acceptConnections(ctx context.Context, ql *quic.Listener) {
 
 			select {
 			case resp := <-respCh:
-				if !ic.handleJoinDecision(ctx, resp.Decision) {
-					n.log.Info(
-						"Accept loop quitting due to context cancellation while handling join decision",
-						"cause", context.Cause(ctx),
+				// The kernel responded with the decision on what to do with the incoming join.
+				if err := ic.handleJoinDecision(resp.Decision); err != nil {
+					ic.log.Info(
+						"Failed while handling join decision",
+						"decision", resp.Decision,
+						"err", err,
 					)
-					return
+					if err := qc.CloseWithError(1, "TODO: REASON"); err != nil {
+						ic.log.Debug("Failed to send close message to peer", "err", err)
+					}
+
+					if cause := context.Cause(ctx); cause != nil {
+						n.log.Info(
+							"Accept loop quitting due to context cancellation while handling join decision",
+							"cause", cause,
+						)
+						return
+					}
+
+					continue
 				}
 
 				// Since the inbound connection handled the join decision,
@@ -249,22 +265,80 @@ func (n *Node) acceptConnections(ctx context.Context, ql *quic.Listener) {
 				// or the connection has an outgoing neighbor request.
 
 				if resp.Decision == dk.AcceptJoinDecision {
+					// The kernel said to accept, so the incomingConnection wrapper
+					// sent out a Neighbor request to the peer.
+					//
 					// We have to continue blocking while we wait for the neighbor reply,
 					// so that we continue to consume one of the pending connection slots.
 					ac := ic.AsAwaitingNeighborReply()
 					if err := ac.AwaitNeighborReply(ctx); err != nil {
 						ac.log.Info("Failed while waiting for neighbor reply", "err", err)
 
-						if err := qc.CloseWithError(1, "TODO: REASON"); err != nil {
-							ic.log.Debug("Failed to send close message to peer", "err", err)
+						if err := qc.CloseWithError(1, "TODO (AwaitNeighborReply)"); err != nil {
+							ac.log.Debug("Failed to send close message to peer", "err", err)
 						}
 
 						continue
 					}
 
-					// TODO:
+					// We got the neighbor reply,
+					// so now it is our turn to initialize the streams,
+					// indicating our acknowledgement of the reply.
+					if err := ac.FinishInitializingStreams(ctx); err != nil {
+						ac.log.Info("Failed to finish initializing streams", "err", err)
 
-					panic("TODO: handle accept case")
+						if err := qc.CloseWithError(1, "TODO (FinishInitializingStreams)"); err != nil {
+							ac.log.Debug("Failed to send close message to peer", "err", err)
+						}
+
+						continue
+					}
+
+					// The streams are fully intialized,
+					// so we can pass the connection to the kernel now.
+					pResp := make(chan dk.NewPeeringResponse, 1)
+					req := dk.NewPeeringRequest{
+						QuicConn: qc,
+
+						AdmissionStream:  ac.admissionStream,
+						DisconnectStream: ac.disconnectStream,
+						ShuffleStream:    ac.shuffleStream,
+
+						Resp: pResp,
+					}
+
+					select {
+					case <-ctx.Done():
+						ac.log.Info(
+							"Context cancelled while sending peering request to kernel",
+							"cause", context.Cause(ctx),
+						)
+						return
+
+					case n.k.NewPeeringRequests <- req:
+						// Okay.
+					}
+
+					select {
+					case <-ctx.Done():
+						ac.log.Info(
+							"Context cancelled while awaiting peering response from kernel",
+							"cause", context.Cause(ctx),
+						)
+						return
+					case resp := <-pResp:
+						if resp.RejectReason != "" {
+							// Last minute issue with adding the connection.
+							if err := qc.CloseWithError(1, "TODO: peering rejected: "+resp.RejectReason); err != nil {
+								ac.log.Debug("Failed to close connection", "err", err)
+							}
+
+							continue
+						}
+
+						// Otherwise it was accepted, and the Join is complete.
+						continue
+					}
 				}
 
 				continue
@@ -283,7 +357,7 @@ func (n *Node) acceptConnections(ctx context.Context, ql *quic.Listener) {
 // which is expected to be another DRAGON participant.
 //
 // Once the dial completes, in standard behavior,
-// the client will send call [(*UnpeeredConnection.Join)] to join the network,
+// the client will call [(*UnpeeredConnection.Join)] to join the network,
 // or the client will send a Neighbor message to create a pairing.
 func (n *Node) DialPeer(ctx context.Context, addr net.Addr) (*UnpeeredConnection, error) {
 	qc, err := n.qt.Dial(ctx, addr, n.tlsConf, n.quicConf)
@@ -295,6 +369,10 @@ func (n *Node) DialPeer(ctx context.Context, addr net.Addr) (*UnpeeredConnection
 		log:   n.log.With("remote_addr", qc.RemoteAddr().String()),
 		qConn: qc,
 
-		node: n,
+		k: n.k,
 	}, nil
+}
+
+func (n *Node) ActiveViewSize() int {
+	return n.k.GetActiveViewSize()
 }
