@@ -247,13 +247,14 @@ func (c *UnpeeredConnection) acceptProtocolStreams(ctx context.Context) error {
 }
 
 func (c *UnpeeredConnection) signJoinMessage(jm *dproto.JoinMessage) error {
-	if len(c.n.tlsConf.Certificates) == 0 {
+	tlsConf := c.n.baseTLSConf
+	if len(tlsConf.Certificates) == 0 {
 		return errors.New("no certificates found in TLS configuration")
 	}
 
 	joinSignContent := jm.AppendSignContent(nil)
 
-	cert := c.n.tlsConf.Certificates[0]
+	cert := tlsConf.Certificates[0]
 	if cert.Leaf == nil {
 		leaf, err := x509.ParseCertificate(cert.Certificate[0])
 		if err != nil {

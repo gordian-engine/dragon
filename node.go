@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"dragon.example/dragon/dca"
 	"dragon.example/dragon/deval"
 	"dragon.example/dragon/internal/dk"
 	"github.com/quic-go/quic-go"
@@ -26,10 +27,15 @@ type Node struct {
 
 	wg sync.WaitGroup
 
-	qt *quic.Transport
+	quicConf      *quic.Config
+	quicTransport *quic.Transport
+	quicListener  *quic.Listener
 
-	quicConf *quic.Config
-	tlsConf  *tls.Config
+	// This is a modified version of the TLS config provided via the Node config.
+	// We never use this directly, but we do clone it when we need TLS config.
+	baseTLSConf *tls.Config
+
+	caPool *dca.Pool
 
 	advertiseAddr string
 }
@@ -38,7 +44,10 @@ type Node struct {
 type NodeConfig struct {
 	UDPConn *net.UDPConn
 	QUIC    *quic.Config
-	TLS     *tls.Config
+
+	// The base TLS configuration to use.
+	// The Node will clone it and modify the clone.
+	TLS *tls.Config
 
 	InitialTrustedCAs []*x509.Certificate
 
@@ -136,7 +145,7 @@ func (c NodeConfig) validate(log *slog.Logger) {
 	}
 }
 
-func (c NodeConfig) customizedTLSConfig() *tls.Config {
+func (c NodeConfig) customizedTLSConfig(log *slog.Logger) *tls.Config {
 	// Assume we can't take ownership of the input TLS config,
 	// given that we are intending to modify it.
 	conf := c.TLS.Clone()
@@ -170,13 +179,17 @@ func (c NodeConfig) customizedTLSConfig() *tls.Config {
 	//
 	// To be clear, the underlying issue is certificates cannot be removed from a pool.
 	// We have to use a new TLS config with a different pool any time a certificate is removed.
-	pool := x509.NewCertPool()
-	for _, cert := range c.InitialTrustedCAs {
-		pool.AddCert(cert)
+
+	if conf.RootCAs != nil {
+		log.Warn("Node's TLS configuration had RootCAs set; those CAs will be ignored")
+	}
+	if conf.ClientCAs != nil {
+		log.Warn("Node's TLS configuration had ClientCAs set; those CAs will be ignored")
 	}
 
-	conf.RootCAs = pool
-	conf.ClientCAs = pool
+	emptyPool := x509.NewCertPool()
+	conf.RootCAs = emptyPool
+	conf.ClientCAs = emptyPool
 
 	return conf
 }
@@ -273,28 +286,28 @@ func NewNode(ctx context.Context, log *slog.Logger, cfg NodeConfig) (*Node, erro
 		// Skip: Tracer: we aren't interested in tracing quite yet.
 	}
 
-	tlsConf := cfg.customizedTLSConfig()
-
-	ql, err := qt.Listen(tlsConf, cfg.QUIC)
-	if err != nil {
-		return nil, fmt.Errorf("failed to set up QUIC listener: %w", err)
-	}
-
-	kCfg := dk.KernelConfig{
+	k := dk.NewKernel(ctx, log.With("node_sys", "kernel"), dk.KernelConfig{
 		PeerEvaluator: cfg.PeerEvaluator,
-	}
+	})
 
 	n := &Node{
 		log: log,
 
-		k: dk.NewKernel(ctx, log.With("node_sys", "kernel"), kCfg),
+		k: k,
 
-		qt: qt,
+		quicTransport: qt,
 
-		quicConf: cfg.QUIC,
-		tlsConf:  tlsConf,
+		quicConf:    cfg.QUIC,
+		baseTLSConf: cfg.customizedTLSConfig(log),
+
+		caPool: dca.NewPoolFromCerts(cfg.InitialTrustedCAs),
 
 		advertiseAddr: cfg.AdvertiseAddr,
+	}
+
+	if err := n.startListener(); err != nil {
+		// Assume error already wrapped.
+		return nil, err
 	}
 
 	nPending := cfg.IncomingPendingConnectionLimit
@@ -304,9 +317,50 @@ func NewNode(ctx context.Context, log *slog.Logger, cfg NodeConfig) (*Node, erro
 
 	n.wg.Add(int(nPending))
 	for range nPending {
-		go n.acceptConnections(ctx, ql)
+		go n.acceptConnections(ctx)
 	}
 	return n, nil
+}
+
+// startListener starts the QUIC listener
+// and assigns the listener to n.quicListener.
+func (n *Node) startListener() error {
+	// By setting GetConfigForClient on the TLS config for the listener,
+	// we can dynamically set the ClientCAs certificate pool
+	// any time a client connects.
+	tlsConf := n.baseTLSConf.Clone()
+	tlsConf.GetConfigForClient = n.getQUICListenerTLCConfig
+
+	ql, err := n.quicTransport.Listen(tlsConf, n.quicConf)
+	if err != nil {
+		return fmt.Errorf("failed to set up QUIC listener: %w", err)
+	}
+
+	n.quicListener = ql
+	return nil
+}
+
+// getQUICListenerTLCConfig is used as the GetConfigForClient callback
+// in the tls.Config that the QUIC listener uses.
+//
+// Dynamically retrieiving the TLS config allows us to have an up-to-date TLS config
+func (n *Node) getQUICListenerTLCConfig(_ *tls.ClientHelloInfo) (*tls.Config, error) {
+	// TOOD: right now we build a new TLS config for every incoming client connection,
+	// but we should be able to create a single shared instance
+	// that only gets updated once the dca.Pool is updated.
+	tlsConf := n.baseTLSConf.Clone()
+
+	// For the QUIC listener,
+	// we only need to set ClientCAs to verify incoming certificates;
+	// RootCAs would be for outgoing connections,
+	// and we do not initiate any outgoing connections from the listener.
+	//
+	// Alternatively, it might be possible to inspect the ClientHelloInfo
+	// to create a certificate pool that only supports the client's CA,
+	// but that probably wouldn't give us any measurable benefit.
+	tlsConf.ClientCAs = n.caPool.CertPool()
+
+	return tlsConf, nil
 }
 
 // Wait blocks until the node has finished all background work.
@@ -319,11 +373,11 @@ func (n *Node) Wait() {
 // This runs in multiple, independent goroutines,
 // effectively limiting the number of pending
 // (as in opened but not yet peered) connections.
-func (n *Node) acceptConnections(ctx context.Context, ql *quic.Listener) {
+func (n *Node) acceptConnections(ctx context.Context) {
 	defer n.wg.Done()
 
 	for {
-		qc, err := ql.Accept(ctx)
+		qc, err := n.quicListener.Accept(ctx)
 		if err != nil {
 			if errors.Is(context.Cause(ctx), err) {
 				n.log.Info("Accept loop quitting due to context cancellation", "cause", context.Cause(ctx))
@@ -365,7 +419,11 @@ func (n *Node) acceptConnections(ctx context.Context, ql *quic.Listener) {
 // the client will call [(*UnpeeredConnection.Join)] to join the network,
 // or the client will send a Neighbor message to create a pairing.
 func (n *Node) DialPeer(ctx context.Context, addr net.Addr) (*UnpeeredConnection, error) {
-	qc, err := n.qt.Dial(ctx, addr, n.tlsConf, n.quicConf)
+	// When dialing a peer, we need to use the most recent CA pool.
+	tlsConf := n.baseTLSConf.Clone()
+	tlsConf.RootCAs = n.caPool.CertPool()
+
+	qc, err := n.quicTransport.Dial(ctx, addr, tlsConf, n.quicConf)
 	if err != nil {
 		return nil, fmt.Errorf("DialPeer: dial failed: %w", err)
 	}
