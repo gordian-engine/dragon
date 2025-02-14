@@ -3,6 +3,7 @@ package dragontest
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"log/slog"
 	"net"
@@ -48,6 +49,9 @@ type NodeConfig struct {
 	// Possibly useful if you need to inspect the CA or leaf certificate details.
 	CA dcatest.CAConfig
 
+	// Initial trusted CAs to set on the outgoing [dragon.NodeConfig].
+	TrustedCAs []*x509.Certificate
+
 	// There is probably no circumstance where this should be modified,
 	// so leave it unexported and require use of ToDragonNodeConfig.
 	udpConn *net.UDPConn
@@ -68,6 +72,8 @@ func (c NodeConfig) ToDragonNodeConfig() dragon.NodeConfig {
 		TLS:     c.TLS,
 
 		AdvertiseAddr: c.udpConn.LocalAddr().String(),
+
+		InitialTrustedCAs: c.TrustedCAs,
 	}
 }
 
@@ -145,15 +151,20 @@ func NewNetwork(
 				},
 			},
 
-			// TODO: this isn't going to work with dynamic certificate sets.
-			RootCAs: tp.Pool,
+			ClientAuth: tls.RequireAndVerifyClientCert,
 		}
 
+		initialCAs := make([]*x509.Certificate, len(tp.CAs))
+		for i, ca := range tp.CAs {
+			initialCAs[i] = ca.Cert
+		}
 		nc := configCreator(i, NodeConfig{
 			udpConn: uc,
 			QUIC:    dragon.DefaultQUICConfig(),
 			TLS:     &tc,
 			CA:      cfgs[i],
+
+			TrustedCAs: initialCAs,
 		})
 
 		n, err := dragon.NewNode(ctx, log.With("node", i), nc)

@@ -125,10 +125,12 @@ func GenerateCA(cfg CAConfig) (*CA, error) {
 		NotBefore: time.Now().Add(-15 * time.Second),
 		NotAfter:  time.Now().Add(validFor),
 
-		KeyUsage: x509.KeyUsageKeyEncipherment |
-			x509.KeyUsageDigitalSignature |
-			x509.KeyUsageCertSign,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage: []x509.ExtKeyUsage{
+			// The CA needs every extended key usage that the leaf certificate will have.
+			x509.ExtKeyUsageServerAuth,
+			x509.ExtKeyUsageClientAuth,
+		},
 		BasicConstraintsValid: true,
 		IsCA:                  true,
 		MaxPathLen:            1,
@@ -227,9 +229,12 @@ func (ca *CA) CreateLeafCert(cfg LeafConfig) (*LeafCert, error) {
 		Subject:      name,
 		NotBefore:    time.Now().Add(-15 * time.Second),
 		NotAfter:     time.Now().Add(validFor),
-		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames:     cfg.DNSNames,
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageServerAuth,
+			x509.ExtKeyUsageClientAuth,
+		},
+		DNSNames: cfg.DNSNames,
 
 		// This is only intended to be used in local tests (for now at least),
 		// so just hardcode localhost for the IP address.

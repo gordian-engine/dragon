@@ -35,6 +35,8 @@ func TestNewNode(t *testing.T) {
 				PrivateKey:  leaf.PrivKey,
 			},
 		},
+
+		ClientAuth: tls.RequireAndVerifyClientCert,
 	}
 
 	uc, err := net.ListenUDP("udp", &net.UDPAddr{

@@ -3,10 +3,12 @@ package dragon
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
+	"slices"
 	"sync"
 	"time"
 
@@ -38,6 +40,8 @@ type NodeConfig struct {
 	QUIC    *quic.Config
 	TLS     *tls.Config
 
+	InitialTrustedCAs []*x509.Certificate
+
 	// The address to advertise for this Node
 	// when sending out a Join message.
 	AdvertiseAddr string
@@ -45,10 +49,136 @@ type NodeConfig struct {
 	// The maximum number of incoming connections that can be live
 	// but which have not yet resolved into a peering or have been closed.
 	// If zero, a reasonable default will be used.
-	IncomingPendingConnections uint8
+	IncomingPendingConnectionLimit uint8
 
 	// Determines the behavior of choosing to accept peer connections.
 	PeerEvaluator deval.PeerEvaluator
+}
+
+// validate panics if there are any illegal settings in the configuration.
+// It also warns about any suspect settings.
+func (c NodeConfig) validate(log *slog.Logger) {
+	if !c.QUIC.EnableDatagrams {
+		// We aren't actually forcing this yet.
+		// It's possible this may only be an application-level concern.
+		panic(errors.New("QUIC datagrams must be enabled; set NodeConfig.QUIC.EnableDatagrams=true"))
+	}
+
+	if c.TLS.ClientAuth != tls.RequireAndVerifyClientCert {
+		panic(errors.New(
+			"client certificates are required; set NodeConfig.TLS.ClientAuth = tls.RequireAndVerifyClientCert",
+		))
+	}
+
+	if c.AdvertiseAddr == "" {
+		panic(errors.New("NodeConfig.AdvertiseAddr must not be empty"))
+	}
+
+	if c.PeerEvaluator == nil {
+		panic(errors.New("NodeConfig.PeerEvaluator may not be nil"))
+	}
+
+	// Although we customize the TLS config later in the initialization flow,
+	// we don't touch the certificates.
+	// So it's fine to directly inspect them now,
+	// in order to helpfully log any obvious misconfigurations.
+
+	// For now we are assuming that the certificate is only set via
+	// the first entry in Certificates.
+	// We could be smarter about this, and consult the callback fields,
+	// which we may end up using anyway.
+	if len(c.TLS.Certificates) > 0 {
+		cert := c.TLS.Certificates[0]
+		if cert.Leaf == nil {
+			// The leaf field would be lazily initialized anyway,
+			// so we are just doing this work sooner than otherwise.
+			leaf, err := x509.ParseCertificate(cert.Certificate[0])
+			if err != nil {
+				panic(fmt.Errorf("failed to parse leaf certificate: %w", err))
+			}
+
+			cert.Leaf = leaf
+		}
+
+		// Timestamp validation.
+		now := time.Now()
+		if cert.Leaf.NotBefore.After(now) {
+			log.Error(
+				"Certificate's not before field is in the future",
+				"not_before", cert.Leaf.NotBefore,
+			)
+		}
+		if cert.Leaf.NotAfter.Before(now) {
+			log.Error(
+				"Certificate's not after field is in the past",
+				"not_after", cert.Leaf.NotAfter,
+			)
+		}
+
+		// Now, the trickier part, key usage.
+		if cert.Leaf.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
+			log.Error(
+				"Certificate is missing digital signature key usage; remotes may reject TLS communication",
+			)
+		}
+
+		if !slices.Contains(cert.Leaf.ExtKeyUsage, x509.ExtKeyUsageServerAuth) {
+			log.Error(
+				"Certificate is missing server authentication extended key usage; clients will reject TLS handshake",
+			)
+		}
+
+		if !slices.Contains(cert.Leaf.ExtKeyUsage, x509.ExtKeyUsageClientAuth) {
+			log.Error(
+				"Certificate is missing client authentication extended key usage; servers will reject TLS handshake",
+			)
+		}
+	}
+}
+
+func (c NodeConfig) customizedTLSConfig() *tls.Config {
+	// Assume we can't take ownership of the input TLS config,
+	// given that we are intending to modify it.
+	conf := c.TLS.Clone()
+
+	// The config has a set of initial trusted CAs.
+	// Build a certificate pool with only those CAs,
+	// and set that as both the serverside and clientside pool,
+	// so that it verifies the same whether we are initiating or receiving a connection.
+	//
+	// This is just the current simple strategy.
+	// There are two obvious ways to go from here to handle dynamic CA sets.
+	//
+	// 1. Have the server use GetConfigForClient, which will consult the dynamic CA set
+	//    based on the client hello info, decide whether to accept or reject,
+	//    and if accept then return a TLS config that has a pool only trusting
+	//    that particular client's CA.
+	//    For the client, the TLS configuration can be generated on demand
+	//    when we dial a peer, so we can set a different RootCAs pool.
+	// 2. Since we are using the quic.Transport, we could potentially
+	//    stop the listener (which does not affect running connections,
+	//    but may disconnect handshaking connections)
+	//    and restart it with an updated TLS config.
+	// 3. Much less obvious, we could use a single certificate pool,
+	//    but add every cert using the (*x509.CertPool).AddCertWithConstraint method,
+	//    which takes a callback to be evaluated any time the certificate
+	//    would be considered for validity.
+	//    The downside of this approach is that in a high churn set of CAs,
+	//    our certificate pool would never shrink.
+	//
+	// The first solution seems much more in line with the intended use of TLS configs.
+	//
+	// To be clear, the underlying issue is certificates cannot be removed from a pool.
+	// We have to use a new TLS config with a different pool any time a certificate is removed.
+	pool := x509.NewCertPool()
+	for _, cert := range c.InitialTrustedCAs {
+		pool.AddCert(cert)
+	}
+
+	conf.RootCAs = pool
+	conf.ClientCAs = pool
+
+	return conf
 }
 
 // DefaultQUICConfig is the default QUIC configuration for a [NodeConfig].
@@ -108,18 +238,8 @@ func DefaultQUICConfig() *quic.Config {
 // NewNode returns runtime errors that happen during initialization.
 // Configuration errors cause a panic.
 func NewNode(ctx context.Context, log *slog.Logger, cfg NodeConfig) (*Node, error) {
-	if !cfg.QUIC.EnableDatagrams {
-		// We aren't actually forcing this yet.
-		// It's possible this may only be an application-level concern.
-		panic(errors.New("QUIC datagrams must be enabled; set cfg.Quic.EnableDatagrams=true"))
-	}
-	if cfg.AdvertiseAddr == "" {
-		panic(errors.New("cfg.AdvertiseAddr must not be empty"))
-	}
-
-	if cfg.PeerEvaluator == nil {
-		panic(errors.New("NodeConfig.PeerEvaluator may not be nil"))
-	}
+	// Panic if there are any misconfigurations.
+	cfg.validate(log)
 
 	// We are using a quic Transport directly here in order to have
 	// finer control over connection behavior than a simple call to quic.Listen.
@@ -153,7 +273,9 @@ func NewNode(ctx context.Context, log *slog.Logger, cfg NodeConfig) (*Node, erro
 		// Skip: Tracer: we aren't interested in tracing quite yet.
 	}
 
-	ql, err := qt.Listen(cfg.TLS, cfg.QUIC)
+	tlsConf := cfg.customizedTLSConfig()
+
+	ql, err := qt.Listen(tlsConf, cfg.QUIC)
 	if err != nil {
 		return nil, fmt.Errorf("failed to set up QUIC listener: %w", err)
 	}
@@ -170,12 +292,12 @@ func NewNode(ctx context.Context, log *slog.Logger, cfg NodeConfig) (*Node, erro
 		qt: qt,
 
 		quicConf: cfg.QUIC,
-		tlsConf:  cfg.TLS,
+		tlsConf:  tlsConf,
 
 		advertiseAddr: cfg.AdvertiseAddr,
 	}
 
-	nPending := cfg.IncomingPendingConnections
+	nPending := cfg.IncomingPendingConnectionLimit
 	if nPending == 0 {
 		nPending = 4
 	}
