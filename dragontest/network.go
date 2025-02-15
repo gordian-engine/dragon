@@ -22,8 +22,6 @@ import (
 type Network struct {
 	Log *slog.Logger
 
-	Pool *dcatest.TrustPool
-
 	Nodes []NetworkNode
 }
 
@@ -119,11 +117,15 @@ func NewNetwork(
 
 	log := dtest.NewLogger(t)
 
-	tp, err := dcatest.NewTrustPool(cfgs...)
-	require.NoError(t, err)
+	cas := make([]*dcatest.CA, len(cfgs))
+	for i, cfg := range cfgs {
+		var err error
+		cas[i], err = dcatest.GenerateCA(cfg)
+		require.NoError(t, err)
+	}
 
 	nodes := make([]NetworkNode, len(cfgs))
-	for i, ca := range tp.CAs {
+	for i, ca := range cas {
 		// Create listener first.
 		uc, err := net.ListenUDP("udp", &net.UDPAddr{
 			IP:   net.IPv4(127, 0, 0, 1),
@@ -154,8 +156,8 @@ func NewNetwork(
 			ClientAuth: tls.RequireAndVerifyClientCert,
 		}
 
-		initialCAs := make([]*x509.Certificate, len(tp.CAs))
-		for i, ca := range tp.CAs {
+		initialCAs := make([]*x509.Certificate, len(cas))
+		for i, ca := range cas {
 			initialCAs[i] = ca.Cert
 		}
 		nc := configCreator(i, NodeConfig{
@@ -181,7 +183,6 @@ func NewNetwork(
 
 	return &Network{
 		Log:   log,
-		Pool:  tp,
 		Nodes: nodes,
 	}
 }

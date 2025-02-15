@@ -7,8 +7,9 @@ import (
 
 // Pool is a collection of CA certificates.
 type Pool struct {
-	mu  sync.RWMutex
-	cas map[string]*x509.Certificate
+	mu     sync.RWMutex
+	cas    map[string]*x509.Certificate
+	notify map[string]chan struct{}
 
 	lazyCertPool func() *x509.CertPool
 }
@@ -22,6 +23,8 @@ func NewPool() *Pool {
 func NewPoolFromCerts(certs []*x509.Certificate) *Pool {
 	p := &Pool{
 		cas: make(map[string]*x509.Certificate, len(certs)),
+
+		notify: make(map[string]chan struct{}),
 	}
 
 	for _, cert := range certs {
@@ -58,8 +61,14 @@ func (p *Pool) RemoveCA(cert *x509.Certificate) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	delete(p.cas, string(cert.Signature))
+	key := string(cert.Signature)
+	delete(p.cas, key)
 	p.lockedUpdateLazyCertPool()
+
+	if ch := p.notify[key]; ch != nil {
+		close(ch)
+		delete(p.notify, key)
+	}
 }
 
 // UpdateCAs replaces the entire CA set with the given certs.
@@ -73,6 +82,44 @@ func (p *Pool) UpdateCAs(certs []*x509.Certificate) {
 	}
 
 	p.lockedUpdateLazyCertPool()
+
+	// After updating, if there were any pending notifications
+	// corresponding to a now-missing certificate, then notify.
+	for key, ch := range p.notify {
+		if _, ok := p.cas[key]; ok {
+			// Key still exists, don't notify.
+			continue
+		}
+
+		// Key was removed, so notify and clear.
+		close(ch)
+		delete(p.notify, key)
+	}
+}
+
+// NotifyRemoval returns a channel that is closed if and when
+// the given CA is removed from the pool,
+// either directly through a call to [(*Pool).RemoveCA]
+// or indirectly by not being part of the new set in [(*Pool).UpdateCAs].
+func (p *Pool) NotifyRemoval(cert *x509.Certificate) <-chan struct{} {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// First, if we already have a notification for this certificate,
+	// return that same channel.
+	if ch := p.notify[string(cert.Signature)]; ch != nil {
+		return ch
+	}
+
+	// Otherwise, confirm that the certificate is known.
+	if _, ok := p.cas[string(cert.Signature)]; !ok {
+		return nil
+	}
+
+	// The certificate is indeed known, so we can make the notification.
+	ch := make(chan struct{})
+	p.notify[string(cert.Signature)] = ch
+	return ch
 }
 
 func (p *Pool) lockedUpdateLazyCertPool() {

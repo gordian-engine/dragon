@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"time"
 
+	"dragon.example/dragon/dca"
 	"dragon.example/dragon/internal/dcrypto"
 	"dragon.example/dragon/internal/dk"
 	"dragon.example/dragon/internal/dproto"
@@ -23,6 +24,8 @@ import (
 type UnpeeredConnection struct {
 	log   *slog.Logger
 	qConn quic.Connection
+
+	certRemoved <-chan struct{}
 
 	admissionStream  quic.Stream
 	disconnectStream quic.Stream
@@ -138,6 +141,9 @@ func (c *UnpeeredConnection) Join(ctx context.Context) error {
 	case <-ctx.Done():
 		return context.Cause(ctx)
 
+	case <-c.certRemoved:
+		return dca.ErrCertRemoved
+
 	case c.n.k.NewPeeringRequests <- req:
 		// Okay.
 	}
@@ -145,6 +151,10 @@ func (c *UnpeeredConnection) Join(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		return context.Cause(ctx)
+
+	case <-c.certRemoved:
+		return dca.ErrCertRemoved
+
 	case resp := <-pResp:
 		if resp.RejectReason != "" {
 			// Last minute issue with adding the connection.

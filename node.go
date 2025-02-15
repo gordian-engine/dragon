@@ -344,7 +344,8 @@ func (n *Node) startListener() error {
 // in the tls.Config that the QUIC listener uses.
 //
 // Dynamically retrieiving the TLS config allows us to have an up-to-date TLS config
-func (n *Node) getQUICListenerTLCConfig(_ *tls.ClientHelloInfo) (*tls.Config, error) {
+// any time an incoming connection arrives.
+func (n *Node) getQUICListenerTLCConfig(*tls.ClientHelloInfo) (*tls.Config, error) {
 	// TOOD: right now we build a new TLS config for every incoming client connection,
 	// but we should be able to create a single shared instance
 	// that only gets updated once the dca.Pool is updated.
@@ -420,6 +421,8 @@ func (n *Node) acceptConnections(ctx context.Context) {
 // or the client will send a Neighbor message to create a pairing.
 func (n *Node) DialPeer(ctx context.Context, addr net.Addr) (*UnpeeredConnection, error) {
 	// When dialing a peer, we need to use the most recent CA pool.
+	//
+	// We only have to set RootCAs, because this is an outgoing-only connection.
 	tlsConf := n.baseTLSConf.Clone()
 	tlsConf.RootCAs = n.caPool.CertPool()
 
@@ -428,14 +431,47 @@ func (n *Node) DialPeer(ctx context.Context, addr net.Addr) (*UnpeeredConnection
 		return nil, fmt.Errorf("DialPeer: dial failed: %w", err)
 	}
 
+	// Now that we have a raw connection to that peer,
+	// we need to ensure that we close it if that certificate is removed.
+	vcs := qc.ConnectionState().TLS.VerifiedChains
+	if len(vcs) == 0 {
+		panic(fmt.Errorf(
+			"IMPOSSIBLE: no verified chains after dialing remote host %q",
+			addr,
+		))
+	}
+	if len(vcs) > 1 {
+		panic(fmt.Errorf(
+			"TODO: handle multiple verified chains; dialing %q resulted in chains: %#v",
+			addr, vcs,
+		))
+	}
+
+	vc := vcs[0]
+	ca := vc[len(vc)-1]
+
+	notify := n.caPool.NotifyRemoval(ca)
+	if notify == nil {
+		panic(errors.New(
+			"BUG: failed to get notify removal channel after successful connection to peer",
+		))
+	}
+
 	return &UnpeeredConnection{
 		log:   n.log.With("remote_addr", qc.RemoteAddr().String()),
 		qConn: qc,
+
+		certRemoved: notify,
 
 		n: n,
 	}, nil
 }
 
+func (n *Node) UpdateCAs(certs []*x509.Certificate) {
+	n.caPool.UpdateCAs(certs)
+}
+
 func (n *Node) ActiveViewSize() int {
+	// Temporary shim for tests.
 	return n.k.GetActiveViewSize()
 }
