@@ -366,7 +366,10 @@ func (n *Node) Wait() {
 	n.k.Wait()
 }
 
-// acceptConnections handles incoming new connections to the node's listener.
+// acceptConnections accepts incoming connections,
+// does any required initialization work,
+// and informs the kernel of the finished connection upon success.
+//
 // This runs in multiple, independent goroutines,
 // effectively limiting the number of pending
 // (as in opened but not yet peered) connections.
@@ -377,35 +380,217 @@ func (n *Node) acceptConnections(ctx context.Context) {
 		qc, err := n.quicListener.Accept(ctx)
 		if err != nil {
 			if errors.Is(context.Cause(ctx), err) {
-				n.log.Info("Accept loop quitting due to context cancellation", "cause", context.Cause(ctx))
+				n.log.Info(
+					"Accept loop quitting due to context cancellation when accepting connection",
+					"cause", context.Cause(ctx),
+				)
 				return
 			}
+
+			// Debug-level because this could be spammy if we are getting a lot of garbage connections.
+			n.log.Debug(
+				"Failed to accept incoming connection",
+				"err", err,
+			)
+			continue
 		}
 
 		// TODO: this should have some early rate-limiting based on remote identity.
 
-		ic := &inboundConnection{
-			log:   n.log.With("remote_conn", qc.RemoteAddr().String()),
-			qConn: qc,
+		// TODO: update context to handle notify on certificate removal.
 
-			k: n.k,
+		p := dprotobootstrap.IncomingProtocol{
+			Log:  n.log.With("protocol", "incoming_bootstrap"),
+			Conn: qc,
+
+			Cfg: dprotobootstrap.IncomingConfig{
+				AcceptBootstrapStreamTimeout: time.Second,
+
+				ReadStreamHeaderTimeout: time.Second,
+
+				GraceBeforeJoinTimestamp: 2 * time.Second,
+				GraceAfterJoinTimestamp:  2 * time.Second,
+			},
 		}
-		ic.log.Info("Connection accepted")
 
-		if err := ic.HandleIncomingStream(ctx); err != nil {
-			ic.log.Info("Failed to handle incoming stream", "err", err)
-
-			// Since there was an error, try to close the connection.
-			if err := qc.CloseWithError(1, "TODO (inbound stream)"); err != nil {
-				ic.log.Debug("Failed to send close message to peer", "err", err)
-			}
-
-			// And if the error was context-related, stop now.
-			if cause := context.Cause(ctx); cause != nil && errors.Is(err, cause) {
-				n.log.Info("Accept loop quitting due to context cancellation", "cause", cause)
+		res, err := p.Run(ctx)
+		if err != nil {
+			if errors.Is(context.Cause(ctx), err) {
+				n.log.Info(
+					"Accept loop quitting due to context cancellation during incoming bootstrap",
+					"remote_addr", qc.RemoteAddr().String(),
+					"cause", context.Cause(ctx),
+				)
 				return
 			}
+
+			// Now info level should be okay since we got past TLS handshaking.
+			n.log.Info(
+				"Failed to handle incoming bootstrap",
+				"remote_addr", qc.RemoteAddr().String(),
+				"err", err,
+			)
+
+			if err := qc.CloseWithError(1, "TODO: error handling incoming bootstrap"); err != nil {
+				n.log.Info(
+					"Failed to close connection after failing to handle incoming bootstrap",
+					"remote_addr", qc.RemoteAddr().String(),
+					"err", err,
+				)
+			}
+			continue
 		}
+
+		if res.JoinAddr != "" {
+			if err := n.handleIncomingJoin(ctx, qc, res.AdmissionStream); err != nil {
+				// On error, assume we have to close the connection.
+				if errors.Is(context.Cause(ctx), err) {
+					n.log.Info(
+						"Accept loop quitting due to context cancellation during handling incoming join",
+						"remote_addr", qc.RemoteAddr().String(),
+						"cause", context.Cause(ctx),
+					)
+					return
+				}
+
+				if err := qc.CloseWithError(1, "TODO: error handling incoming join"); err != nil {
+					n.log.Info(
+						"Failed to close connection after failing to handle incoming join",
+						"remote_addr", qc.RemoteAddr().String(),
+						"err", err,
+					)
+				}
+			}
+
+			// Whether the join was handled successfully,
+			// or whether there was an error and we had to close the connection,
+			// we go ahead to the next iteration of accepting connections now.
+			continue
+		}
+	}
+}
+
+func (n *Node) handleIncomingJoin(
+	ctx context.Context, qc quic.Connection, qs quic.Stream,
+) error {
+	// Now we have the advertise address and an admission stream.
+	peer := deval.Peer{
+		TLS:        qc.ConnectionState().TLS,
+		LocalAddr:  qc.LocalAddr(),
+		RemoteAddr: qc.RemoteAddr(),
+	}
+	respCh := make(chan dk.JoinResponse, 1)
+	req := dk.JoinRequest{
+		Peer: peer,
+		Resp: respCh,
+	}
+
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf(
+			"context cancelled while sending join request to kernel: %w", context.Cause(ctx),
+		)
+	case n.k.JoinRequests <- req:
+		// Okay.
+	}
+
+	var resp dk.JoinResponse
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf(
+			"context cancelled while awaiting join response from kernel: %w", context.Cause(ctx),
+		)
+	case resp = <-respCh:
+		// Okay.
+	}
+
+	if resp.Decision == dk.DisconnectJoinDecision {
+		// The kernel may or may not be forwarding join to other peers.
+		// It doesn't make a difference here:
+		// we have to close the connection.
+		if err := qc.CloseWithError(1, "TODO: join request denied"); err != nil {
+			n.log.Info(
+				"Failed to close connection after denying join request",
+				"remote_addr", qc.RemoteAddr().String(),
+				"err", err,
+			)
+		}
+
+		// We've handled the join to completion.
+		return nil
+	}
+
+	// It wasn't a disconnect, so it must be an accept.
+	if resp.Decision != dk.AcceptJoinDecision {
+		panic(fmt.Errorf(
+			"IMPOSSIBLE: kernel returned invalid join decision %v", resp.Decision,
+		))
+	}
+
+	p := dprotobootstrap.AcceptJoinProtocol{
+		Log: n.log.With(
+			"protocol", "accept_join",
+			"remote_addr", qc.RemoteAddr().String(),
+		),
+
+		Cfg: dprotobootstrap.AcceptJoinConfig{
+			NeighborRequestTimeout:   100 * time.Millisecond,
+			NeighborReplyTimeout:     100 * time.Millisecond,
+			InitializeStreamsTimeout: 100 * time.Millisecond,
+		},
+
+		Conn: qc,
+
+		AdmissionStream: qs,
+	}
+
+	res, err := p.Run(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to accept join: %w", err)
+	}
+
+	// Finally, the streams are initialized,
+	// so we can pass the connection to the kernel now.
+	pResp := make(chan dk.NewPeeringResponse, 1)
+	pReq := dk.NewPeeringRequest{
+		QuicConn: qc,
+
+		AdmissionStream:  qs,
+		DisconnectStream: res.DisconnectStream,
+		ShuffleStream:    res.ShuffleStream,
+
+		Resp: pResp,
+	}
+
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf(
+			"context cancelled while sending peering request to kernel: %w",
+			context.Cause(ctx),
+		)
+
+	case n.k.NewPeeringRequests <- pReq:
+		// Okay.
+	}
+
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf(
+			"context cancelled while awaiting peering response from kernel: %w",
+			context.Cause(ctx),
+		)
+	case resp := <-pResp:
+		if resp.RejectReason != "" {
+			// Last minute issue with adding the connection.
+			// For now, just return the error, and the caller will close the connection.
+			return fmt.Errorf("kernel rejected finalized peering: %s", resp.RejectReason)
+		}
+
+		// Otherwise there was no reject reason,
+		// so the kernel accepted the peering.
+		// We are finished accepting this connection,
+		// and now the accept loop can continue.
+		return nil
 	}
 }
 
@@ -504,7 +689,7 @@ func (n *Node) bootstrapJoin(
 	ctx context.Context, qc quic.Connection,
 ) (dprotobootstrap.Result, error) {
 	p := dprotobootstrap.OutgoingJoinProtocol{
-		Log:  n.log.With("protocol", "bootstrap"),
+		Log:  n.log.With("protocol", "outgoing_join_bootstrap"),
 		Conn: qc,
 		Cfg: dprotobootstrap.OutgoingJoinConfig{
 			AdvertiseAddr: n.advertiseAddr,

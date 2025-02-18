@@ -21,9 +21,6 @@ type OutgoingJoinProtocol struct {
 	Conn quic.Connection
 
 	Cfg OutgoingJoinConfig
-
-	// The collection of streams that we produce during bootstrap.
-	Result Result
 }
 
 type OutgoingJoinConfig struct {
@@ -50,6 +47,14 @@ type OutgoingJoinConfig struct {
 	// How the admission determines current time.
 	// Defaults to [time.Now] if nil.
 	NowFn func() time.Time
+}
+
+func (c OutgoingJoinConfig) Now() time.Time {
+	if c.NowFn != nil {
+		return c.NowFn()
+	}
+
+	return time.Now()
 }
 
 // Result is the result of bootstrapping:

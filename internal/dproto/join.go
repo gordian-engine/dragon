@@ -27,6 +27,10 @@ func (m *JoinMessage) SetTimestamp(t time.Time) {
 	m.Timestamp = t.UTC().Format(time.RFC3339)
 }
 
+func (m JoinMessage) ParseTimestamp() (time.Time, error) {
+	return time.Parse(time.RFC3339, m.Timestamp)
+}
+
 // AppendSignContent appends the signing content to dst,
 // allowing the caller to control allocations.
 //

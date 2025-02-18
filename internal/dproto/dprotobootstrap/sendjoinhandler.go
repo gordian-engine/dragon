@@ -24,7 +24,7 @@ func (h sendJoinHandler) Handle(
 	jm := dproto.JoinMessage{
 		Addr: h.Cfg.AdvertiseAddr,
 	}
-	jm.SetTimestamp(h.Cfg.NowFn())
+	jm.SetTimestamp(h.Cfg.Now())
 
 	if err := h.signJoinMessage(&jm); err != nil {
 		return nil, fmt.Errorf("failed to sign join message: %w", err)
