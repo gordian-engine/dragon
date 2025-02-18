@@ -1,4 +1,4 @@
-package dprotobootstrap
+package dbsjoin
 
 import (
 	"context"
@@ -10,8 +10,8 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-// OutgoingJoinProtocol is the protocol initiated by a node joining the p2p network.
-type OutgoingJoinProtocol struct {
+// Protocol is the outgoing bootstrap protocol initiated by a node joining the p2p network.
+type Protocol struct {
 	Log *slog.Logger
 
 	// The underlying QUIC connection.
@@ -20,10 +20,10 @@ type OutgoingJoinProtocol struct {
 	// so we rely on the connection to create those streams.
 	Conn quic.Connection
 
-	Cfg OutgoingJoinConfig
+	Cfg Config
 }
 
-type OutgoingJoinConfig struct {
+type Config struct {
 	// The address to advertise on an outgoing join message.
 	// This should already be configured at the node level.
 	AdvertiseAddr string
@@ -49,7 +49,7 @@ type OutgoingJoinConfig struct {
 	NowFn func() time.Time
 }
 
-func (c OutgoingJoinConfig) Now() time.Time {
+func (c Config) Now() time.Time {
 	if c.NowFn != nil {
 		return c.NowFn()
 	}
@@ -73,7 +73,7 @@ type Result struct {
 // Run runs the bootstrap outgoing join protocol to completion.
 // If the error is nil,
 // the returned Result has all its streams populated.
-func (p *OutgoingJoinProtocol) Run(ctx context.Context) (Result, error) {
+func (p *Protocol) Run(ctx context.Context) (Result, error) {
 	var h streamHandler = sendJoinHandler{
 		OuterLog: p.Log,
 		Cfg:      &p.Cfg,

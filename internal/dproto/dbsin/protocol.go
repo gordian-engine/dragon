@@ -1,4 +1,4 @@
-package dprotobootstrap
+package dbsin
 
 import (
 	"context"
@@ -9,15 +9,15 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-type IncomingProtocol struct {
+type Protocol struct {
 	Log *slog.Logger
 
 	Conn quic.Connection
 
-	Cfg IncomingConfig
+	Cfg Config
 }
 
-type IncomingConfig struct {
+type Config struct {
 	// Timeout for waiting for the incoming connection to open the stream.
 	AcceptBootstrapStreamTimeout time.Duration
 
@@ -31,7 +31,7 @@ type IncomingConfig struct {
 	NowFn func() time.Time
 }
 
-func (c IncomingConfig) Now() time.Time {
+func (c Config) Now() time.Time {
 	if c.NowFn != nil {
 		return c.NowFn()
 	}
@@ -47,7 +47,7 @@ type IncomingResult struct {
 	// TODO: this will eventually hold a neighbor request too.
 }
 
-func (p *IncomingProtocol) Run(ctx context.Context) (IncomingResult, error) {
+func (p *Protocol) Run(ctx context.Context) (IncomingResult, error) {
 	var h incomingStreamHandler = acceptIncomingStreamHandler{
 		OuterLog: p.Log,
 		Cfg:      &p.Cfg,

@@ -1,4 +1,4 @@
-package dprotobootstrap
+package dbsin
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 // on a newly opened admission stream.
 type receiveAdmissionStreamHandler struct {
 	OuterLog *slog.Logger
-	Cfg      *IncomingConfig
+	Cfg      *Config
 }
 
 func (h receiveAdmissionStreamHandler) Handle(
@@ -34,7 +34,7 @@ func (h receiveAdmissionStreamHandler) Handle(
 	switch typeBuf[0] {
 	case byte(dproto.JoinMessageType):
 		// Returned error will be wrapped properly.
-		return h.handleJoinMessage(res)
+		return nil, h.handleJoinMessage(res)
 
 	// TODO: handle Neighbor message type.
 
@@ -45,17 +45,17 @@ func (h receiveAdmissionStreamHandler) Handle(
 
 func (h receiveAdmissionStreamHandler) handleJoinMessage(
 	res *IncomingResult,
-) (incomingStreamHandler, error) {
+) error {
 	// Still relying on the earlier set read deadline.
 	var jm dproto.JoinMessage
 	if err := jm.Decode(res.AdmissionStream); err != nil {
-		return nil, fmt.Errorf(
+		return fmt.Errorf(
 			"failed to decode join message from admission stream: %w", err,
 		)
 	}
 
 	if err := h.validateJoinMessage(jm); err != nil {
-		return nil, err
+		return err
 	}
 
 	// If the join message passed validation, we terminate the protocol here.
@@ -64,7 +64,7 @@ func (h receiveAdmissionStreamHandler) handleJoinMessage(
 	// (We do that work in the Node to avoid coupling the protocol handlers
 	// with the Node's kernel.)
 	res.JoinAddr = jm.Addr
-	return nil, nil
+	return nil
 }
 
 func (h receiveAdmissionStreamHandler) validateJoinMessage(jm dproto.JoinMessage) error {

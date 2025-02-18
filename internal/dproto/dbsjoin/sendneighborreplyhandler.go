@@ -1,4 +1,4 @@
-package dprotobootstrap
+package dbsjoin
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 
 type sendNeighborReplyHandler struct {
 	OuterLog *slog.Logger
-	Cfg      *OutgoingJoinConfig
+	Cfg      *Config
 }
 
 func (h sendNeighborReplyHandler) Handle(

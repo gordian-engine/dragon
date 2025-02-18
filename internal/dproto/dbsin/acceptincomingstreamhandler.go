@@ -1,4 +1,4 @@
-package dprotobootstrap
+package dbsin
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 // It expects the joining node to open the admission stream.
 type acceptIncomingStreamHandler struct {
 	OuterLog *slog.Logger
-	Cfg      *IncomingConfig
+	Cfg      *Config
 }
 
 func (h acceptIncomingStreamHandler) Handle(

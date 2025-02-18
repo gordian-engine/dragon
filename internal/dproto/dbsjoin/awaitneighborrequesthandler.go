@@ -1,4 +1,4 @@
-package dprotobootstrap
+package dbsjoin
 
 import (
 	"context"
@@ -17,7 +17,7 @@ import (
 // If that doesn't happen, we anticipate the neighbor to disconnect.
 type awaitNeighborRequestHandler struct {
 	OuterLog *slog.Logger
-	Cfg      *OutgoingJoinConfig
+	Cfg      *Config
 }
 
 func (h awaitNeighborRequestHandler) Handle(

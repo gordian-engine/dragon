@@ -1,4 +1,4 @@
-package dprotobootstrap
+package dbsjoin
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 type streamAcceptHandler struct {
 	OuterLog *slog.Logger
 
-	Cfg *OutgoingJoinConfig
+	Cfg *Config
 }
 
 func (h streamAcceptHandler) Handle(

@@ -15,7 +15,9 @@ import (
 	"dragon.example/dragon/dca"
 	"dragon.example/dragon/deval"
 	"dragon.example/dragon/internal/dk"
-	"dragon.example/dragon/internal/dproto/dprotobootstrap"
+	"dragon.example/dragon/internal/dproto/dbsaj"
+	"dragon.example/dragon/internal/dproto/dbsin"
+	"dragon.example/dragon/internal/dproto/dbsjoin"
 	"github.com/quic-go/quic-go"
 )
 
@@ -399,11 +401,11 @@ func (n *Node) acceptConnections(ctx context.Context) {
 
 		// TODO: update context to handle notify on certificate removal.
 
-		p := dprotobootstrap.IncomingProtocol{
+		p := dbsin.Protocol{
 			Log:  n.log.With("protocol", "incoming_bootstrap"),
 			Conn: qc,
 
-			Cfg: dprotobootstrap.IncomingConfig{
+			Cfg: dbsin.Config{
 				AcceptBootstrapStreamTimeout: time.Second,
 
 				ReadStreamHeaderTimeout: time.Second,
@@ -527,13 +529,13 @@ func (n *Node) handleIncomingJoin(
 		))
 	}
 
-	p := dprotobootstrap.AcceptJoinProtocol{
+	p := dbsaj.AcceptJoinProtocol{
 		Log: n.log.With(
 			"protocol", "accept_join",
 			"remote_addr", qc.RemoteAddr().String(),
 		),
 
-		Cfg: dprotobootstrap.AcceptJoinConfig{
+		Cfg: dbsaj.AcceptJoinConfig{
 			NeighborRequestTimeout:   100 * time.Millisecond,
 			NeighborReplyTimeout:     100 * time.Millisecond,
 			InitializeStreamsTimeout: 100 * time.Millisecond,
@@ -646,7 +648,7 @@ func (n *Node) DialAndJoin(ctx context.Context, addr net.Addr) error {
 	}
 
 	// The bootstrap process completed successfully,
-	// so now the  last step is to confirm peering with the kernel.
+	// so now the last step is to confirm peering with the kernel.
 	pResp := make(chan dk.NewPeeringResponse, 1)
 	req := dk.NewPeeringRequest{
 		QuicConn: qc,
@@ -687,18 +689,18 @@ func (n *Node) DialAndJoin(ctx context.Context, addr net.Addr) error {
 // bootstrapJoin bootstraps all protocol streams on the given connection.
 func (n *Node) bootstrapJoin(
 	ctx context.Context, qc quic.Connection,
-) (dprotobootstrap.Result, error) {
-	p := dprotobootstrap.OutgoingJoinProtocol{
-		Log:  n.log.With("protocol", "outgoing_join_bootstrap"),
+) (dbsjoin.Result, error) {
+	p := dbsjoin.Protocol{
+		Log:  n.log.With("protocol", "outgoing_bootstrap_join"),
 		Conn: qc,
-		Cfg: dprotobootstrap.OutgoingJoinConfig{
+		Cfg: dbsjoin.Config{
 			AdvertiseAddr: n.advertiseAddr,
 
-			// TODO: for now these are all hardcoded to 1s,
+			// TODO: for now these are all hardcoded,
 			// but they need to be configurable.
-			OpenStreamTimeout:    time.Second,
-			AwaitNeighborTimeout: time.Second,
-			AcceptStreamsTimeout: time.Second,
+			OpenStreamTimeout:    100 * time.Millisecond,
+			AwaitNeighborTimeout: 100 * time.Millisecond,
+			AcceptStreamsTimeout: 100 * time.Millisecond,
 
 			// TODO: we should probably not rely on
 			// this particular method of getting our certificate.
