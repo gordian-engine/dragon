@@ -2,6 +2,7 @@ package dbsin
 
 import (
 	"context"
+	"crypto/x509"
 	"fmt"
 	"log/slog"
 	"time"
@@ -9,10 +10,14 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
+// Protocol is the protocol for accepting an incoming connection,
+// before the first message has been sent on the bootstrap stream.
 type Protocol struct {
 	Log *slog.Logger
 
 	Conn quic.Connection
+
+	PeerCert *x509.Certificate
 
 	Cfg Config
 }
@@ -39,7 +44,7 @@ func (c Config) Now() time.Time {
 	return time.Now()
 }
 
-type IncomingResult struct {
+type Result struct {
 	AdmissionStream quic.Stream
 
 	JoinAddr string
@@ -47,13 +52,14 @@ type IncomingResult struct {
 	// TODO: this will eventually hold a neighbor request too.
 }
 
-func (p *Protocol) Run(ctx context.Context) (IncomingResult, error) {
+func (p *Protocol) Run(ctx context.Context) (Result, error) {
 	var h incomingStreamHandler = acceptIncomingStreamHandler{
 		OuterLog: p.Log,
+		PeerCert: p.PeerCert,
 		Cfg:      &p.Cfg,
 	}
 
-	var res IncomingResult
+	var res Result
 
 	for {
 		next, err := h.Handle(ctx, p.Conn, &res)
@@ -75,6 +81,6 @@ func (p *Protocol) Run(ctx context.Context) (IncomingResult, error) {
 }
 
 type incomingStreamHandler interface {
-	Handle(context.Context, quic.Connection, *IncomingResult) (incomingStreamHandler, error)
+	Handle(context.Context, quic.Connection, *Result) (incomingStreamHandler, error)
 	Name() string
 }

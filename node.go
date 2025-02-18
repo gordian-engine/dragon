@@ -405,6 +405,9 @@ func (n *Node) acceptConnections(ctx context.Context) {
 			Log:  n.log.With("protocol", "incoming_bootstrap"),
 			Conn: qc,
 
+			// The first element of PeerCertificates is supposed to be the leaf certificate.
+			PeerCert: qc.ConnectionState().TLS.PeerCertificates[0],
+
 			Cfg: dbsin.Config{
 				AcceptBootstrapStreamTimeout: time.Second,
 

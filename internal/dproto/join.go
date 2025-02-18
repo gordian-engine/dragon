@@ -15,6 +15,7 @@ type JoinMessage struct {
 	Addr string
 
 	// Timestamp is the RFC3339 timestamp when this join message was created and signed.
+	// Use the SetTimestamp method to ensure it is formatted correctly.
 	Timestamp string
 
 	// The cryptographic signature across the timestamp and address.

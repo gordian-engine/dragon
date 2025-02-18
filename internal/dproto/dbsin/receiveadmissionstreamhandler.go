@@ -2,6 +2,7 @@ package dbsin
 
 import (
 	"context"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,11 +16,12 @@ import (
 // on a newly opened admission stream.
 type receiveAdmissionStreamHandler struct {
 	OuterLog *slog.Logger
+	PeerCert *x509.Certificate
 	Cfg      *Config
 }
 
 func (h receiveAdmissionStreamHandler) Handle(
-	ctx context.Context, c quic.Connection, res *IncomingResult,
+	ctx context.Context, c quic.Connection, res *Result,
 ) (incomingStreamHandler, error) {
 	// Not setting a deadline on these reads;
 	// acceptIncomingStreamHandler set a read deadline
@@ -44,7 +46,7 @@ func (h receiveAdmissionStreamHandler) Handle(
 }
 
 func (h receiveAdmissionStreamHandler) handleJoinMessage(
-	res *IncomingResult,
+	res *Result,
 ) error {
 	// Still relying on the earlier set read deadline.
 	var jm dproto.JoinMessage
@@ -85,11 +87,11 @@ func (h receiveAdmissionStreamHandler) validateJoinMessage(jm dproto.JoinMessage
 
 	// TODO: there may still be unresolved certificate issues preventing this from working.
 	// Also we need to plumb the peer certificate through.
-	if false {
+	if true {
 		// The timestamp checked out, so now validate the signature.
 		if err := dcrypto.VerifySignatureWithTLSCert(
 			jm.AppendSignContent(nil),
-			nil, // Was previously: c.qConn.ConnectionState().TLS.PeerCertificates[0],
+			h.PeerCert,
 			jm.Signature,
 		); err != nil {
 			return fmt.Errorf("invalid join message: bad signature: %w", err)

@@ -2,6 +2,7 @@ package dbsin
 
 import (
 	"context"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,11 +15,12 @@ import (
 // It expects the joining node to open the admission stream.
 type acceptIncomingStreamHandler struct {
 	OuterLog *slog.Logger
+	PeerCert *x509.Certificate
 	Cfg      *Config
 }
 
 func (h acceptIncomingStreamHandler) Handle(
-	ctx context.Context, c quic.Connection, res *IncomingResult,
+	ctx context.Context, c quic.Connection, res *Result,
 ) (incomingStreamHandler, error) {
 	// There is no plain timeout for accepting a stream,
 	// so we have to use a context timeout for this.
@@ -50,6 +52,7 @@ func (h acceptIncomingStreamHandler) Handle(
 		res.AdmissionStream = s
 		return receiveAdmissionStreamHandler{
 			OuterLog: h.OuterLog,
+			PeerCert: h.PeerCert,
 			Cfg:      h.Cfg,
 		}, nil
 	default:
