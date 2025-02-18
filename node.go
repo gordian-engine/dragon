@@ -15,6 +15,7 @@ import (
 	"dragon.example/dragon/dca"
 	"dragon.example/dragon/deval"
 	"dragon.example/dragon/internal/dk"
+	"dragon.example/dragon/internal/dproto/dprotobootstrap"
 	"github.com/quic-go/quic-go"
 )
 
@@ -99,14 +100,9 @@ func (c NodeConfig) validate(log *slog.Logger) {
 	if len(c.TLS.Certificates) > 0 {
 		cert := c.TLS.Certificates[0]
 		if cert.Leaf == nil {
-			// The leaf field would be lazily initialized anyway,
-			// so we are just doing this work sooner than otherwise.
-			leaf, err := x509.ParseCertificate(cert.Certificate[0])
-			if err != nil {
-				panic(fmt.Errorf("failed to parse leaf certificate: %w", err))
-			}
-
-			cert.Leaf = leaf
+			panic(errors.New(
+				"BUG: TLS.Certificates[0].Leaf must be set (use x509.ParseCertificate if needed)",
+			))
 		}
 
 		// Timestamp validation.
@@ -465,6 +461,130 @@ func (n *Node) DialPeer(ctx context.Context, addr net.Addr) (*UnpeeredConnection
 
 		n: n,
 	}, nil
+}
+
+// DialAndJoin attempts to join the p2p network by sending a Join mesage to addr.
+//
+// If the contact node makes a neighbor request back and we successfully peer,
+// the returned error is nil.
+//
+// If the contact node disconnects, we have no indication of whether
+// they chose to forward the join message to their peers.
+// TODO: we should have DisconnectedError or something to specifically indicate
+// that semi-expected disconnect.
+func (n *Node) DialAndJoin(ctx context.Context, addr net.Addr) error {
+	tlsConf := n.baseTLSConf.Clone()
+	tlsConf.RootCAs = n.caPool.CertPool()
+
+	qc, err := n.quicTransport.Dial(ctx, addr, tlsConf, n.quicConf)
+	if err != nil {
+		return fmt.Errorf("DialAndJoin: dial failed: %w", err)
+	}
+
+	// Now that we have a raw connection to that peer,
+	// we need to ensure that we close it if that certificate is removed.
+	vcs := qc.ConnectionState().TLS.VerifiedChains
+	if len(vcs) == 0 {
+		panic(fmt.Errorf(
+			"IMPOSSIBLE: no verified chains after dialing remote host %q",
+			addr,
+		))
+	}
+	if len(vcs) > 1 {
+		panic(fmt.Errorf(
+			"TODO: handle multiple verified chains; dialing %q resulted in chains: %#v",
+			addr, vcs,
+		))
+	}
+
+	vc := vcs[0]
+	ca := vc[len(vc)-1]
+
+	notify := n.caPool.NotifyRemoval(ca)
+	if notify == nil {
+		panic(errors.New(
+			"BUG: failed to get notify removal channel after successful connection to peer",
+		))
+	}
+
+	// TODO: start a new goroutine for a context.WithCancelCause paired with notify.
+
+	res, err := n.bootstrapJoin(ctx, qc)
+	if err != nil {
+		return fmt.Errorf("DialAndJoin: failed to bootstrap: %w", err)
+	}
+
+	// The bootstrap process completed successfully,
+	// so now the  last step is to confirm peering with the kernel.
+	pResp := make(chan dk.NewPeeringResponse, 1)
+	req := dk.NewPeeringRequest{
+		QuicConn: qc,
+
+		AdmissionStream:  res.AdmissionStream,
+		DisconnectStream: res.DisconnectStream,
+		ShuffleStream:    res.ShuffleStream,
+
+		Resp: pResp,
+	}
+	select {
+	case <-ctx.Done():
+		return context.Cause(ctx)
+
+	case n.k.NewPeeringRequests <- req:
+		// Okay.
+	}
+
+	select {
+	case <-ctx.Done():
+		return context.Cause(ctx)
+
+	case resp := <-pResp:
+		if resp.RejectReason != "" {
+			// Last minute issue with adding the connection.
+			if err := qc.CloseWithError(1, "TODO: peering rejected: "+resp.RejectReason); err != nil {
+				n.log.Debug("Failed to close connection", "err", err)
+			}
+
+			return fmt.Errorf("failed to join due to kernel rejecting peering: %s", resp.RejectReason)
+		}
+
+		// Otherwise it was accepted, and the Join is complete.
+		return nil
+	}
+}
+
+// bootstrapJoin bootstraps all protocol streams on the given connection.
+func (n *Node) bootstrapJoin(
+	ctx context.Context, qc quic.Connection,
+) (dprotobootstrap.Result, error) {
+	p := dprotobootstrap.OutgoingJoinProtocol{
+		Log:  n.log.With("protocol", "bootstrap"),
+		Conn: qc,
+		Cfg: dprotobootstrap.OutgoingJoinConfig{
+			AdvertiseAddr: n.advertiseAddr,
+
+			// TODO: for now these are all hardcoded to 1s,
+			// but they need to be configurable.
+			OpenStreamTimeout:    time.Second,
+			AwaitNeighborTimeout: time.Second,
+			AcceptStreamsTimeout: time.Second,
+
+			// TODO: we should probably not rely on
+			// this particular method of getting our certificate.
+			Cert: n.baseTLSConf.Certificates[0],
+
+			// For now this is just hardcoded to time.Now,
+			// but maybe it makes sense to inject something else for tests.
+			NowFn: time.Now,
+		},
+	}
+
+	res, err := p.Run(ctx)
+	if err != nil {
+		return res, fmt.Errorf("bootstrap failed: %w", err)
+	}
+
+	return res, nil
 }
 
 func (n *Node) UpdateCAs(certs []*x509.Certificate) {

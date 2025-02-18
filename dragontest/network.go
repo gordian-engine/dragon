@@ -150,6 +150,10 @@ func NewNetwork(
 				{
 					Certificate: [][]byte{l.Cert.Raw},
 					PrivateKey:  l.PrivKey,
+
+					// Not strictly necessary to set the leaf field in general,
+					// but the Node in particular requires it to be set properly.
+					Leaf: l.Cert,
 				},
 			},
 

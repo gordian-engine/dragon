@@ -33,6 +33,7 @@ func TestNewNode(t *testing.T) {
 			{
 				Certificate: [][]byte{leaf.Cert.Raw},
 				PrivateKey:  leaf.PrivKey,
+				Leaf:        leaf.Cert,
 			},
 		},
 
@@ -126,6 +127,47 @@ func TestNode_Dial_unrecognizedCert(t *testing.T) {
 	})
 }
 
+func TestNode_DialAndJoin_unrecognizedCert(t *testing.T) {
+	t.Run("neither client nor server know each other", func(t *testing.T) {
+		t.Parallel()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		nw := dragontest.NewDefaultNetwork(t, ctx, dcatest.FastConfig(), dcatest.FastConfig())
+		defer nw.Wait()
+		defer cancel()
+
+		out := dragontest.NewDefaultNetwork(t, ctx, dcatest.FastConfig())
+		defer out.Wait()
+		defer cancel()
+
+		require.Error(t, out.Nodes[0].Node.DialAndJoin(ctx, nw.Nodes[0].UDP.LocalAddr()))
+	})
+
+	t.Run("one-way knowledge", func(t *testing.T) {
+		t.Parallel()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		cfg1, cfg2 := dcatest.FastConfig(), dcatest.FastConfig()
+		nw12 := dragontest.NewDefaultNetwork(t, ctx, cfg1, cfg2)
+		defer nw12.Wait()
+		defer cancel()
+
+		nw123 := dragontest.NewDefaultNetwork(t, ctx, cfg1, cfg2, dcatest.FastConfig())
+		defer nw123.Wait()
+		defer cancel()
+
+		t.Run("client knows server, but server does not know client", func(t *testing.T) {
+			require.Error(t, nw123.Nodes[2].Node.DialAndJoin(ctx, nw12.Nodes[1].UDP.LocalAddr()))
+		})
+
+		t.Run("server knows client, but client does not know server", func(t *testing.T) {
+			require.Error(t, nw12.Nodes[1].Node.DialAndJoin(ctx, nw123.Nodes[2].UDP.LocalAddr()))
+		})
+	})
+}
+
 func TestNode_Join_deny(t *testing.T) {
 	t.Parallel()
 
@@ -165,6 +207,40 @@ func TestNode_Join_deny(t *testing.T) {
 
 	// Join fails due to being denied.
 	require.Error(t, conn.Join(ctx))
+
+	// And no active views were added.
+	require.Zero(t, nw.Nodes[0].Node.ActiveViewSize())
+	require.Zero(t, nw.Nodes[1].Node.ActiveViewSize())
+}
+
+func TestNode_DialAndJoin_deny(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	nw := dragontest.NewNetwork(
+		t, ctx,
+		[]dcatest.CAConfig{dcatest.FastConfig(), dcatest.FastConfig()},
+		func(_ int, c dragontest.NodeConfig) dragon.NodeConfig {
+			out := c.ToDragonNodeConfig()
+
+			// Explicitly deny any join requests.
+			out.PeerEvaluator = devaltest.DenyingPeerEvaluator{}
+
+			return out
+		},
+	)
+	defer nw.Wait()
+	defer cancel()
+
+	// No active views before join.
+	require.Zero(t, nw.Nodes[0].Node.ActiveViewSize())
+	require.Zero(t, nw.Nodes[1].Node.ActiveViewSize())
+
+	// TLS should work but the request should be denied.
+	// TODO: it would be better to do a more specific error assertion here.
+	require.Error(t, nw.Nodes[0].Node.DialAndJoin(ctx, nw.Nodes[1].UDP.LocalAddr()))
 
 	// And no active views were added.
 	require.Zero(t, nw.Nodes[0].Node.ActiveViewSize())
@@ -217,6 +293,43 @@ func TestNode_Join_accept(t *testing.T) {
 
 	// The connection did not get closed, because the server should be accepting the request.
 	require.NoError(t, conn.ClosedError())
+
+	// Now both nodes report 1 active view member.
+	require.Equal(t, 1, nw.Nodes[0].Node.ActiveViewSize())
+	require.Equal(t, 1, nw.Nodes[1].Node.ActiveViewSize())
+}
+
+func TestNode_DialAndJoin_accept(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	nw := dragontest.NewNetwork(
+		t, ctx,
+		[]dcatest.CAConfig{dcatest.FastConfig(), dcatest.FastConfig()},
+		func(_ int, c dragontest.NodeConfig) dragon.NodeConfig {
+			out := c.ToDragonNodeConfig()
+
+			// Explicitly accept join requests.
+			out.PeerEvaluator = &devaltest.StaticPeerEvaluator{
+				ConsiderJoinDecision: deval.AcceptJoinDecision,
+			}
+
+			return out
+		},
+	)
+	defer nw.Wait()
+	defer cancel()
+
+	// No active views before joining.
+	require.Zero(t, nw.Nodes[0].Node.ActiveViewSize())
+	require.Zero(t, nw.Nodes[1].Node.ActiveViewSize())
+
+	require.NoError(t, nw.Nodes[0].Node.DialAndJoin(ctx, nw.Nodes[1].UDP.LocalAddr()))
+
+	// Short delay to allow background work to happen on the join request.
+	time.Sleep(50 * time.Millisecond)
 
 	// Now both nodes report 1 active view member.
 	require.Equal(t, 1, nw.Nodes[0].Node.ActiveViewSize())
