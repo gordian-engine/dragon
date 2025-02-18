@@ -409,60 +409,6 @@ func (n *Node) acceptConnections(ctx context.Context) {
 	}
 }
 
-// DialPeer opens a QUIC connection to the given address,
-// which is expected to be another DRAGON participant.
-//
-// Once the dial completes, in standard behavior,
-// the client will call [(*UnpeeredConnection.Join)] to join the network,
-// or the client will send a Neighbor message to create a pairing.
-func (n *Node) DialPeer(ctx context.Context, addr net.Addr) (*UnpeeredConnection, error) {
-	// When dialing a peer, we need to use the most recent CA pool.
-	//
-	// We only have to set RootCAs, because this is an outgoing-only connection.
-	tlsConf := n.baseTLSConf.Clone()
-	tlsConf.RootCAs = n.caPool.CertPool()
-
-	qc, err := n.quicTransport.Dial(ctx, addr, tlsConf, n.quicConf)
-	if err != nil {
-		return nil, fmt.Errorf("DialPeer: dial failed: %w", err)
-	}
-
-	// Now that we have a raw connection to that peer,
-	// we need to ensure that we close it if that certificate is removed.
-	vcs := qc.ConnectionState().TLS.VerifiedChains
-	if len(vcs) == 0 {
-		panic(fmt.Errorf(
-			"IMPOSSIBLE: no verified chains after dialing remote host %q",
-			addr,
-		))
-	}
-	if len(vcs) > 1 {
-		panic(fmt.Errorf(
-			"TODO: handle multiple verified chains; dialing %q resulted in chains: %#v",
-			addr, vcs,
-		))
-	}
-
-	vc := vcs[0]
-	ca := vc[len(vc)-1]
-
-	notify := n.caPool.NotifyRemoval(ca)
-	if notify == nil {
-		panic(errors.New(
-			"BUG: failed to get notify removal channel after successful connection to peer",
-		))
-	}
-
-	return &UnpeeredConnection{
-		log:   n.log.With("remote_addr", qc.RemoteAddr().String()),
-		qConn: qc,
-
-		certRemoved: notify,
-
-		n: n,
-	}, nil
-}
-
 // DialAndJoin attempts to join the p2p network by sending a Join mesage to addr.
 //
 // If the contact node makes a neighbor request back and we successfully peer,
