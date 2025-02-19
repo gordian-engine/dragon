@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/gordian-engine/dragon/dview"
+	"github.com/gordian-engine/dragon/internal/dps"
 )
 
 type Kernel struct {
@@ -15,6 +16,8 @@ type Kernel struct {
 	NewPeeringRequests chan NewPeeringRequest
 
 	vm dview.Manager
+
+	aps *dps.Active
 
 	activeViewSizeCheck chan chan int
 
@@ -38,6 +41,11 @@ func NewKernel(ctx context.Context, log *slog.Logger, cfg KernelConfig) *Kernel 
 		activeViewSizeCheck: make(chan chan int),
 
 		vm: cfg.ViewManager,
+		aps: dps.NewActivePeerSet(
+			ctx,
+			log.With("dk_sys", "active_peer_set"),
+			dps.ActiveConfig{},
+		),
 
 		done: make(chan struct{}),
 	}
@@ -49,6 +57,7 @@ func NewKernel(ctx context.Context, log *slog.Logger, cfg KernelConfig) *Kernel 
 
 func (k *Kernel) Wait() {
 	<-k.done
+	k.aps.Wait()
 }
 
 func (k *Kernel) mainLoop(ctx context.Context) {
@@ -105,6 +114,17 @@ func (k *Kernel) handleJoinRequest(ctx context.Context, req JoinRequest) {
 	req.Resp <- JoinResponse{
 		Decision: kd,
 	}
+
+	if d == dview.DisconnectAndIgnoreJoinDecision {
+		return
+	}
+
+	// We need to forward the join,
+	// which means we need to fan this out to every active peer.
+	// The set of active peers is distinct from the view manager's list of TLS states,
+	// as we need to interact with the admission stream on each connection set.
+
+	// TODO: forward join through k.aps.
 }
 
 func (k *Kernel) handleNewPeeringRequest(ctx context.Context, req NewPeeringRequest) {
@@ -134,12 +154,39 @@ func (k *Kernel) handleNewPeeringRequest(ctx context.Context, req NewPeeringRequ
 	// we inform the requester of the success.
 	req.Resp <- NewPeeringResponse{}
 
-	// TODO: seems like we should do something with the evicted entry.
+	// And then we add it to the managed active peer set.
+	if err := k.aps.Add(ctx, dps.Peer{
+		Conn: req.QuicConn,
+
+		Admission:  req.AdmissionStream,
+		Disconnect: req.DisconnectStream,
+		Shuffle:    req.ShuffleStream,
+	}); err != nil {
+		// This currently can only be a context error,
+		// so it is terminal.
+		k.log.Warn(
+			"Failed to add new peer to managed active peer set",
+			"err", err,
+		)
+		return
+	}
+
 	if evicted != nil {
 		k.log.Info(
 			"Evicted active peer due to active view overflow",
 			"peer_addr", evicted.RemoteAddr.String(),
 		)
+
+		if err := k.aps.Remove(
+			ctx,
+			dps.PeerCertIDFromCerts(evicted.TLS.PeerCertificates),
+		); err != nil {
+			// The only error returned from Remove should be a context error.
+			// Not much we can do here but log it.
+			k.log.Warn(
+				"Failed to remove peer from active set", "err", err,
+			)
+		}
 	}
 }
 
