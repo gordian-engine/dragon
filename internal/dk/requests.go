@@ -1,7 +1,7 @@
 package dk
 
 import (
-	"dragon.example/dragon/deval"
+	"dragon.example/dragon/dview"
 	"github.com/quic-go/quic-go"
 )
 
@@ -9,7 +9,7 @@ import (
 // so that the Kernel can determine if we should
 // ignore, reject, or accept the join request.
 type JoinRequest struct {
-	Peer deval.Peer
+	Peer dview.ActivePeer
 	Resp chan JoinResponse
 }
 

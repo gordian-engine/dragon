@@ -1,0 +1,108 @@
+package dview
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
+	"net"
+)
+
+// ActivePeer is a peer in the active view
+// (peers we have a direct connection with).
+type ActivePeer struct {
+	TLS tls.ConnectionState
+
+	// The address of our local listener.
+	// Might be relevant if the system is configured with multiple listeners.
+	LocalAddr net.Addr
+
+	// The remote address observed.
+	RemoteAddr net.Addr
+}
+
+func (p ActivePeer) CACert() *x509.Certificate {
+	pcs := p.TLS.PeerCertificates
+	return pcs[len(pcs)-1]
+}
+
+// PassivePeer is a peer in the passive set
+// (peers we know about, but do are not directly connected with).
+type PassivePeer struct {
+	Addr string
+
+	// The trusted CA who signed this peer's leaf certificate.
+	CACert *x509.Certificate
+}
+
+// Manager manages the set of active and passive peers.
+//
+// Methods on Manager are only intended to be called through the dragon kernel,
+// which is to say that they will not be called concurrently.
+type Manager interface {
+	// ConsiderJoin evaluates whether a join request
+	// should be disconnected without forwarding,
+	// disconnected with forwarding,
+	// or responded to with a neighbor request.
+	//
+	// This method accepts an ActivePeer because
+	// there must be an already active connection
+	// in order to have received a Join message in the first place.
+	//
+	// Instances should assume that the the provided peer
+	// has already been confirmed to be in the
+	//
+	// If the returned error is non-nil,
+	// the decision should be treated as [DisconnectAndIgnoreJoinDecision]
+	// regardless of the actual value.
+	ConsiderJoin(context.Context, ActivePeer) (JoinDecision, error)
+
+	// AddPeering attempts to commit the peer to the active set.
+	// It is possible that we decided to accept multiple joins concurrently,
+	// and after adding some of them, one that was considered accepted
+	// was no longer able to be added to the active view.
+	//
+	// The evicted peer is only informative.
+	// The Manager is expected to internally handle any logic around
+	// moving the evicted peer from the active to passive view,
+	// without the caller needing to invoke any other method.
+	// However, the caller is responsible for closing any network streams
+	// or freeing any other resources related to the evicted peer.
+	AddPeering(context.Context, ActivePeer) (evicted *ActivePeer, err error)
+
+	// RemoveActivePeer removes a given active peer from the active set.
+	//
+	// Currently, if the provided peer was not in the active set, RemoveActivePeer panics.
+	RemoveActivePeer(context.Context, ActivePeer)
+
+	// The number of active peers being managed.
+	NActivePeers() int
+
+	// The number of passive peers being managed.
+	NPassivePeers() int
+
+	// TODO: need a way to remove all active and passive peers
+	// originating from a particular CA.
+
+	// TODO: support shuffle.
+
+	// TODO: need a way to get a passive peer in order to re-fill active set.
+	// This would probably only be called after removing peers.
+}
+
+// JoinDecision is the outcome of [Manager.ConsiderJoin].
+// There is no explicit reply to a Join request:
+// the contact node ignore the request altogether ([DisconnectAndIgnoreJoinDecision]);
+// the contact node may choose not to join
+// but to forward the notification to its active set ([DisconnectAndForwardJoinDecision]);
+// or it may choose to accept the request by sending a Neighbor request
+// and also send forward join messages to its active set ([AcceptJoinDecision]).
+type JoinDecision uint8
+
+const (
+	DisconnectAndIgnoreJoinDecision JoinDecision = iota
+	DisconnectAndForwardJoinDecision
+	AcceptJoinDecision
+)
+
+var ErrAlreadyActiveCA = errors.New("already have an active peer with the same CA")

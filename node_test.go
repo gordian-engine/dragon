@@ -3,15 +3,16 @@ package dragon_test
 import (
 	"context"
 	"crypto/tls"
+	"math/rand/v2"
 	"net"
 	"testing"
 	"time"
 
 	"dragon.example/dragon"
 	"dragon.example/dragon/dca/dcatest"
-	"dragon.example/dragon/deval"
-	"dragon.example/dragon/deval/devaltest"
 	"dragon.example/dragon/dragontest"
+	"dragon.example/dragon/dview/dviewrand"
+	"dragon.example/dragon/dview/dviewtest"
 	"dragon.example/dragon/internal/dtest"
 	"github.com/stretchr/testify/require"
 )
@@ -49,10 +50,10 @@ func TestNewNode(t *testing.T) {
 
 	log := dtest.NewLogger(t)
 	n, err := dragon.NewNode(ctx, log, dragon.NodeConfig{
-		UDPConn:       uc,
-		QUIC:          dragon.DefaultQUICConfig(),
-		TLS:           &tc,
-		PeerEvaluator: devaltest.DenyingPeerEvaluator{},
+		UDPConn:     uc,
+		QUIC:        dragon.DefaultQUICConfig(),
+		TLS:         &tc,
+		ViewManager: dviewtest.DenyingManager{},
 
 		AdvertiseAddr: uc.LocalAddr().String(),
 	})
@@ -118,7 +119,7 @@ func TestNode_DialAndJoin_deny(t *testing.T) {
 			out := c.ToDragonNodeConfig()
 
 			// Explicitly deny any join requests.
-			out.PeerEvaluator = devaltest.DenyingPeerEvaluator{}
+			out.ViewManager = dviewtest.DenyingManager{}
 
 			return out
 		},
@@ -152,9 +153,15 @@ func TestNode_DialAndJoin_accept(t *testing.T) {
 			out := c.ToDragonNodeConfig()
 
 			// Explicitly accept join requests.
-			out.PeerEvaluator = &devaltest.StaticPeerEvaluator{
-				ConsiderJoinDecision: deval.AcceptJoinDecision,
-			}
+			out.ViewManager = dviewrand.New(
+				dtest.NewLogger(t).With("node_sys", "view_manager"),
+				dviewrand.Config{
+					ActiveViewSize:  4,
+					PassiveViewSize: 8,
+
+					RNG: rand.New(rand.NewPCG(10, 20)), // Arbitrary fixed seed for this test.
+				},
+			)
 
 			return out
 		},

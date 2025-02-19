@@ -99,7 +99,7 @@ func VerifySignatureWithTLSCert(
 		h.Write(msg)
 		hash := h.Sum(nil)
 		if !ecdsa.VerifyASN1(k, hash, sig) {
-			return errors.New("invalid ed25519 signature")
+			return errors.New("invalid ecdsa signature")
 		}
 		return nil
 

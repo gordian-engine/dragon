@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"dragon.example/dragon/dca"
-	"dragon.example/dragon/deval"
+	"dragon.example/dragon/dview"
 	"dragon.example/dragon/internal/dk"
 	"dragon.example/dragon/internal/dproto/dbsaj"
 	"dragon.example/dragon/internal/dproto/dbsin"
@@ -63,8 +63,8 @@ type NodeConfig struct {
 	// If zero, a reasonable default will be used.
 	IncomingPendingConnectionLimit uint8
 
-	// Determines the behavior of choosing to accept peer connections.
-	PeerEvaluator deval.PeerEvaluator
+	// Manages the active and passive peers.
+	ViewManager dview.Manager
 }
 
 // validate panics if there are any illegal settings in the configuration.
@@ -86,8 +86,8 @@ func (c NodeConfig) validate(log *slog.Logger) {
 		panic(errors.New("NodeConfig.AdvertiseAddr must not be empty"))
 	}
 
-	if c.PeerEvaluator == nil {
-		panic(errors.New("NodeConfig.PeerEvaluator may not be nil"))
+	if c.ViewManager == nil {
+		panic(errors.New("NodeConfig.ViewManager may not be nil"))
 	}
 
 	// Although we customize the TLS config later in the initialization flow,
@@ -285,7 +285,7 @@ func NewNode(ctx context.Context, log *slog.Logger, cfg NodeConfig) (*Node, erro
 	}
 
 	k := dk.NewKernel(ctx, log.With("node_sys", "kernel"), dk.KernelConfig{
-		PeerEvaluator: cfg.PeerEvaluator,
+		ViewManager: cfg.ViewManager,
 	})
 
 	n := &Node{
@@ -479,7 +479,7 @@ func (n *Node) handleIncomingJoin(
 	ctx context.Context, qc quic.Connection, qs quic.Stream,
 ) error {
 	// Now we have the advertise address and an admission stream.
-	peer := deval.Peer{
+	peer := dview.ActivePeer{
 		TLS:        qc.ConnectionState().TLS,
 		LocalAddr:  qc.LocalAddr(),
 		RemoteAddr: qc.RemoteAddr(),

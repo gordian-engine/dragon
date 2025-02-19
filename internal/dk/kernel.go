@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"dragon.example/dragon/deval"
+	"dragon.example/dragon/dview"
 )
 
 type Kernel struct {
@@ -14,18 +14,16 @@ type Kernel struct {
 	JoinRequests       chan JoinRequest
 	NewPeeringRequests chan NewPeeringRequest
 
-	pe deval.PeerEvaluator
+	vm dview.Manager
 
-	// TODO: we won't keep this,
-	// but it is a convenient placeholder for test for now.
-	activeViewSize      int
 	activeViewSizeCheck chan chan int
 
 	done chan struct{}
 }
 
 type KernelConfig struct {
-	PeerEvaluator         deval.PeerEvaluator
+	ViewManager dview.Manager
+
 	TargetActiveViewSize  int
 	TargetPassiveViewSize int
 }
@@ -39,7 +37,7 @@ func NewKernel(ctx context.Context, log *slog.Logger, cfg KernelConfig) *Kernel 
 
 		activeViewSizeCheck: make(chan chan int),
 
-		pe: cfg.PeerEvaluator,
+		vm: cfg.ViewManager,
 
 		done: make(chan struct{}),
 	}
@@ -66,10 +64,10 @@ func (k *Kernel) mainLoop(ctx context.Context) {
 			k.handleJoinRequest(ctx, req)
 
 		case req := <-k.NewPeeringRequests:
-			k.handleNewPeeringRequest(req)
+			k.handleNewPeeringRequest(ctx, req)
 
 		case ch := <-k.activeViewSizeCheck:
-			ch <- k.activeViewSize
+			ch <- k.vm.NActivePeers()
 		}
 	}
 }
@@ -78,7 +76,7 @@ func (k *Kernel) mainLoop(ctx context.Context) {
 // by consulting the PeerEvaluator,
 // and then informing the requester whether to disconnect or accept.
 func (k *Kernel) handleJoinRequest(ctx context.Context, req JoinRequest) {
-	d, err := k.pe.ConsiderJoin(ctx, req.Peer)
+	d, err := k.vm.ConsiderJoin(ctx, req.Peer)
 	if err != nil {
 		// It's fine if this was a context error,
 		// as we should catch it on the next iteration of mainLoop.
@@ -86,14 +84,14 @@ func (k *Kernel) handleJoinRequest(ctx context.Context, req JoinRequest) {
 			"Error while considering join request",
 			"err", err,
 		)
-		d = deval.DisconnectAndIgnoreJoinDecision
+		d = dview.DisconnectAndIgnoreJoinDecision
 	}
 
 	var kd JoinDecision
 	switch d {
-	case deval.DisconnectAndIgnoreJoinDecision, deval.DisconnectAndForwardJoinDecision:
+	case dview.DisconnectAndIgnoreJoinDecision, dview.DisconnectAndForwardJoinDecision:
 		kd = DisconnectJoinDecision
-	case deval.AcceptJoinDecision:
+	case dview.AcceptJoinDecision:
 		kd = AcceptJoinDecision
 	default:
 		panic(fmt.Errorf(
@@ -109,23 +107,43 @@ func (k *Kernel) handleJoinRequest(ctx context.Context, req JoinRequest) {
 	}
 }
 
-func (k *Kernel) handleNewPeeringRequest(req NewPeeringRequest) {
-	// TODO: there is a chance we could turn down the peering,
+func (k *Kernel) handleNewPeeringRequest(ctx context.Context, req NewPeeringRequest) {
+	// There is a chance we could turn down the peering,
 	// for instance if there were so many in flight that
 	// this one no longer met conditions to enter active view.
-	//
-	// But at this stage, we'll just treat it like an uncondtional add.
 
-	// For now, just for test, we increment the fake active view size.
-	// We still need to figure out the internal API
-	// for managing active and passive views.
-	k.activeViewSize++
+	evicted, err := k.vm.AddPeering(ctx, dview.ActivePeer{
+		TLS: req.QuicConn.ConnectionState().TLS,
 
-	// Assume the response channel is buffered.
+		LocalAddr:  req.QuicConn.LocalAddr(),
+		RemoteAddr: req.QuicConn.RemoteAddr(),
+	})
+	if err != nil {
+		k.log.Warn(
+			"Error attempting to add peering",
+			"err", err,
+		)
+
+		req.Resp <- NewPeeringResponse{
+			RejectReason: "internal error",
+		}
+		return
+	}
+
+	// Otherwise, since adding the peering succeeded,
+	// we inform the requester of the success.
 	req.Resp <- NewPeeringResponse{}
+
+	// TODO: seems like we should do something with the evicted entry.
+	if evicted != nil {
+		k.log.Info(
+			"Evicted active peer due to active view overflow",
+			"peer_addr", evicted.RemoteAddr.String(),
+		)
+	}
 }
 
-// GetActiveViewSize is a temporary method to shim tests.
+// GetActiveViewSize returns the current number of peers in the active view.
 func (k *Kernel) GetActiveViewSize() int {
 	ch := make(chan int, 1)
 	k.activeViewSizeCheck <- ch

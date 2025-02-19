@@ -6,12 +6,13 @@ import (
 	"crypto/x509"
 	"errors"
 	"log/slog"
+	"math/rand/v2"
 	"net"
 	"testing"
 
 	"dragon.example/dragon"
 	"dragon.example/dragon/dca/dcatest"
-	"dragon.example/dragon/deval/devaltest"
+	"dragon.example/dragon/dview/dviewrand"
 	"dragon.example/dragon/internal/dtest"
 	"github.com/quic-go/quic-go"
 	"github.com/stretchr/testify/require"
@@ -84,11 +85,20 @@ func (c NodeConfig) ToDragonNodeConfig() dragon.NodeConfig {
 func NewDefaultNetwork(t *testing.T, ctx context.Context, cfgs ...dcatest.CAConfig) *Network {
 	t.Helper()
 
+	log := dtest.NewLogger(t)
+
 	return NewNetwork(t, ctx, cfgs, func(_ int, nc NodeConfig) dragon.NodeConfig {
 		out := nc.ToDragonNodeConfig()
 
 		// TODO: this should switch to accepting by default.
-		out.PeerEvaluator = devaltest.DenyingPeerEvaluator{}
+		out.ViewManager = dviewrand.New(log.With("node_sys", "view_manager"), dviewrand.Config{
+			ActiveViewSize:  len(cfgs),
+			PassiveViewSize: 2 * len(cfgs),
+
+			// Test name length is random enough for this seed.
+			// More importantly, it's reproducible on every run.
+			RNG: rand.New(rand.NewPCG(uint64(len(t.Name())), 0)),
+		})
 		return out
 	})
 }
