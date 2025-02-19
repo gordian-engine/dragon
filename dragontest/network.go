@@ -10,10 +10,10 @@ import (
 	"net"
 	"testing"
 
-	"dragon.example/dragon"
-	"dragon.example/dragon/dca/dcatest"
-	"dragon.example/dragon/dview/dviewrand"
-	"dragon.example/dragon/internal/dtest"
+	"github.com/gordian-engine/dragon"
+	"github.com/gordian-engine/dragon/dca/dcatest"
+	"github.com/gordian-engine/dragon/dview/dviewrand"
+	"github.com/gordian-engine/dragon/internal/dtest"
 	"github.com/quic-go/quic-go"
 	"github.com/stretchr/testify/require"
 )

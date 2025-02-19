@@ -7,10 +7,10 @@ import (
 	"math/rand/v2"
 	"testing"
 
-	"dragon.example/dragon/dca/dcatest"
-	"dragon.example/dragon/dview"
-	"dragon.example/dragon/dview/dviewrand"
-	"dragon.example/dragon/internal/dtest"
+	"github.com/gordian-engine/dragon/dca/dcatest"
+	"github.com/gordian-engine/dragon/dview"
+	"github.com/gordian-engine/dragon/dview/dviewrand"
+	"github.com/gordian-engine/dragon/internal/dtest"
 	"github.com/stretchr/testify/require"
 )
 

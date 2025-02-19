@@ -1,4 +1,4 @@
-module dragon.example/dragon
+module github.com/gordian-engine/dragon
 
 go 1.23.6
 

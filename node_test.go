@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"dragon.example/dragon"
-	"dragon.example/dragon/dca/dcatest"
-	"dragon.example/dragon/dragontest"
-	"dragon.example/dragon/dview/dviewrand"
-	"dragon.example/dragon/dview/dviewtest"
-	"dragon.example/dragon/internal/dtest"
+	"github.com/gordian-engine/dragon"
+	"github.com/gordian-engine/dragon/dca/dcatest"
+	"github.com/gordian-engine/dragon/dragontest"
+	"github.com/gordian-engine/dragon/dview/dviewrand"
+	"github.com/gordian-engine/dragon/dview/dviewtest"
+	"github.com/gordian-engine/dragon/internal/dtest"
 	"github.com/stretchr/testify/require"
 )
 

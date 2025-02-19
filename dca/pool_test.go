@@ -4,8 +4,8 @@ import (
 	"crypto/x509"
 	"testing"
 
-	"dragon.example/dragon/dca"
-	"dragon.example/dragon/dca/dcatest"
+	"github.com/gordian-engine/dragon/dca"
+	"github.com/gordian-engine/dragon/dca/dcatest"
 	"github.com/stretchr/testify/require"
 )
 

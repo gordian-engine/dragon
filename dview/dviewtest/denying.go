@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"dragon.example/dragon/dview"
+	"github.com/gordian-engine/dragon/dview"
 )
 
 type DenyingManager struct{}

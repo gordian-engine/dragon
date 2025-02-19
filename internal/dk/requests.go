@@ -1,7 +1,7 @@
 package dk
 
 import (
-	"dragon.example/dragon/dview"
+	"github.com/gordian-engine/dragon/dview"
 	"github.com/quic-go/quic-go"
 )
 

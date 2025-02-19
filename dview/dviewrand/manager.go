@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"math/rand/v2"
 
-	"dragon.example/dragon/dview"
+	"github.com/gordian-engine/dragon/dview"
 )
 
 type Manager struct {

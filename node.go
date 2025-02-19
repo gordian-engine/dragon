@@ -12,12 +12,12 @@ import (
 	"sync"
 	"time"
 
-	"dragon.example/dragon/dca"
-	"dragon.example/dragon/dview"
-	"dragon.example/dragon/internal/dk"
-	"dragon.example/dragon/internal/dproto/dbsaj"
-	"dragon.example/dragon/internal/dproto/dbsin"
-	"dragon.example/dragon/internal/dproto/dbsjoin"
+	"github.com/gordian-engine/dragon/dca"
+	"github.com/gordian-engine/dragon/dview"
+	"github.com/gordian-engine/dragon/internal/dk"
+	"github.com/gordian-engine/dragon/internal/dproto/dbsaj"
+	"github.com/gordian-engine/dragon/internal/dproto/dbsin"
+	"github.com/gordian-engine/dragon/internal/dproto/dbsjoin"
 	"github.com/quic-go/quic-go"
 )
 

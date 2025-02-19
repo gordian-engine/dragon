@@ -7,7 +7,7 @@ import (
 	"io"
 	"log/slog"
 
-	"dragon.example/dragon/internal/dproto"
+	"github.com/gordian-engine/dragon/internal/dproto"
 	"github.com/quic-go/quic-go"
 )
 
