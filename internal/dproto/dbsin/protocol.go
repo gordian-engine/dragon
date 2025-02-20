@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/gordian-engine/dragon/internal/dproto"
 	"github.com/quic-go/quic-go"
 )
 
@@ -47,7 +48,7 @@ func (c Config) Now() time.Time {
 type Result struct {
 	AdmissionStream quic.Stream
 
-	JoinAddr string
+	JoinMessage *dproto.JoinMessage
 
 	// TODO: this will eventually hold a neighbor request too.
 }

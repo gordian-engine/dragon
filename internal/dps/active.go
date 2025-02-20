@@ -5,6 +5,10 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+
+	"github.com/gordian-engine/dragon/internal/dproto"
+	"github.com/gordian-engine/dragon/internal/dps/dfanout"
+	"github.com/quic-go/quic-go"
 )
 
 // Active handles the network interactions for an active peer set.
@@ -27,6 +31,10 @@ type Active struct {
 
 	addRequests    chan addRequest
 	removeRequests chan removeRequest
+
+	forwardJoins chan dproto.ForwardJoinMessage
+
+	seedChannels dfanout.SeedChannels
 }
 
 // Type aliases to avoid mistakenly accessing a map incorrectly.
@@ -35,9 +43,23 @@ type (
 	leafSPKI string
 )
 
-type ActiveConfig struct{}
+type ActiveConfig struct {
+	// Number of seed goroutines to run.
+	// In this context, a seeder is the buffer between
+	// the kernel goroutine (whose contention we want to minimze)
+	// and the active peer workers.
+	Seeders int
+
+	// Number of worker goroutines to run.
+	// The workers are responsible for taking work from the work queue
+	// and sending messages on particular QUIC streams.
+	Workers int
+}
 
 func NewActivePeerSet(ctx context.Context, log *slog.Logger, cfg ActiveConfig) *Active {
+	seeders := max(2, cfg.Seeders)
+	workers := max(4, cfg.Workers)
+
 	a := &Active{
 		log: log,
 
@@ -49,10 +71,38 @@ func NewActivePeerSet(ctx context.Context, log *slog.Logger, cfg ActiveConfig) *
 		// Unbuffered because the caller blocks on these requests anyway.
 		addRequests:    make(chan addRequest),
 		removeRequests: make(chan removeRequest),
+
+		// We don't want these to block.
+		// Unless otherwise noted, these are sized with arbitrary guesses.
+		forwardJoins: make(chan dproto.ForwardJoinMessage, 8),
+
+		seedChannels: dfanout.NewSeedChannels(2 * seeders),
 	}
 
 	a.wg.Add(1)
 	go a.mainLoop(ctx)
+
+	workChannels := dfanout.NewWorkChannels(2 * workers)
+	a.wg.Add(seeders + workers)
+
+	for i := range seeders {
+		go dfanout.RunSeeder(
+			ctx,
+			log.With("seeder_idx", i),
+			&a.wg,
+			a.seedChannels,
+			workChannels,
+		)
+	}
+
+	for i := range workers {
+		go dfanout.RunWorker(
+			ctx,
+			log.With("worker_idx", i),
+			&a.wg,
+			workChannels,
+		)
+	}
 
 	return a
 }
@@ -75,6 +125,9 @@ func (a *Active) mainLoop(ctx context.Context) {
 
 		case req := <-a.removeRequests:
 			a.handleRemoveRequest(req)
+
+		case fj := <-a.forwardJoins:
+			a.handleForwardJoin(ctx, fj)
 		}
 	}
 }
@@ -184,4 +237,38 @@ func (a *Active) handleRemoveRequest(req removeRequest) {
 	delete(a.workers, req.PCI.caSPKI)
 
 	close(req.Resp)
+}
+
+func (a *Active) ForwardJoin(ctx context.Context, m dproto.ForwardJoinMessage) error {
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf(
+			"context canceled while attempting to start forward join work: %w",
+			context.Cause(ctx),
+		)
+
+	case a.forwardJoins <- m:
+		return nil
+	}
+}
+
+func (a *Active) handleForwardJoin(ctx context.Context, m dproto.ForwardJoinMessage) {
+	streams := make([]quic.Stream, 0, len(a.byCASPKI))
+	for _, p := range a.byCASPKI {
+		streams = append(streams, p.Admission)
+	}
+
+	select {
+	case <-ctx.Done():
+		a.log.Info(
+			"Context canceled while attempting to seed forward join message",
+			"cause", context.Cause(ctx),
+		)
+
+	case a.seedChannels.ForwardJoins <- dfanout.SeedForwardJoin{
+		Msg:     m,
+		Streams: streams,
+	}:
+		// Okay.
+	}
 }

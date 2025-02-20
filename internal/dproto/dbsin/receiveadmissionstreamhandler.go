@@ -65,7 +65,7 @@ func (h receiveAdmissionStreamHandler) handleJoinMessage(
 	// to consult the kernel to decide whether we accept this join request.
 	// (We do that work in the Node to avoid coupling the protocol handlers
 	// with the Node's kernel.)
-	res.JoinAddr = jm.Addr
+	res.JoinMessage = &jm
 	return nil
 }
 
@@ -85,17 +85,13 @@ func (h receiveAdmissionStreamHandler) validateJoinMessage(jm dproto.JoinMessage
 		return fmt.Errorf("invalid join message: timestamp %s too far in past", jm.Timestamp)
 	}
 
-	// TODO: there may still be unresolved certificate issues preventing this from working.
-	// Also we need to plumb the peer certificate through.
-	if true {
-		// The timestamp checked out, so now validate the signature.
-		if err := dcrypto.VerifySignatureWithTLSCert(
-			jm.AppendSignContent(nil),
-			h.PeerCert,
-			jm.Signature,
-		); err != nil {
-			return fmt.Errorf("invalid join message: bad signature: %w", err)
-		}
+	// The timestamp checked out, so now validate the signature.
+	if err := dcrypto.VerifySignatureWithTLSCert(
+		jm.AppendSignContent(nil),
+		h.PeerCert,
+		jm.Signature,
+	); err != nil {
+		return fmt.Errorf("invalid join message: bad signature: %w", err)
 	}
 
 	return nil

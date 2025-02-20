@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/gordian-engine/dragon/dview"
+	"github.com/gordian-engine/dragon/internal/dproto"
 	"github.com/gordian-engine/dragon/internal/dps"
 )
 
@@ -108,8 +109,6 @@ func (k *Kernel) handleJoinRequest(ctx context.Context, req JoinRequest) {
 		))
 	}
 
-	// TODO: handle disconnect and forward case, and accept case.
-
 	// Assume the response channel is buffered.
 	req.Resp <- JoinResponse{
 		Decision: kd,
@@ -119,12 +118,19 @@ func (k *Kernel) handleJoinRequest(ctx context.Context, req JoinRequest) {
 		return
 	}
 
-	// We need to forward the join,
-	// which means we need to fan this out to every active peer.
-	// The set of active peers is distinct from the view manager's list of TLS states,
-	// as we need to interact with the admission stream on each connection set.
+	// We need to forward the join
+	// (whether we accepted or disconnected at this point),
+	// so we delegate this to the active peer set.
+	msg := dproto.ForwardJoinMessage{
+		JoinMessage:      req.Msg,
+		JoiningCertChain: req.Peer.TLS.VerifiedChains[0],
 
-	// TODO: forward join through k.aps.
+		TTL: 4, // TODO: make this configurable.
+	}
+	// This is a fire and forget request.
+	if err := k.aps.ForwardJoin(ctx, msg); err != nil {
+		k.log.Error("Failed to forward join", "err", err)
+	}
 }
 
 func (k *Kernel) handleNewPeeringRequest(ctx context.Context, req NewPeeringRequest) {

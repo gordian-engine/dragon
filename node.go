@@ -15,6 +15,7 @@ import (
 	"github.com/gordian-engine/dragon/dca"
 	"github.com/gordian-engine/dragon/dview"
 	"github.com/gordian-engine/dragon/internal/dk"
+	"github.com/gordian-engine/dragon/internal/dproto"
 	"github.com/gordian-engine/dragon/internal/dproto/dbsaj"
 	"github.com/gordian-engine/dragon/internal/dproto/dbsin"
 	"github.com/gordian-engine/dragon/internal/dproto/dbsjoin"
@@ -446,8 +447,8 @@ func (n *Node) acceptConnections(ctx context.Context) {
 			continue
 		}
 
-		if res.JoinAddr != "" {
-			if err := n.handleIncomingJoin(ctx, qc, res.AdmissionStream); err != nil {
+		if res.JoinMessage != nil {
+			if err := n.handleIncomingJoin(ctx, qc, res.AdmissionStream, *res.JoinMessage); err != nil {
 				// On error, assume we have to close the connection.
 				if errors.Is(context.Cause(ctx), err) {
 					n.log.Info(
@@ -477,6 +478,7 @@ func (n *Node) acceptConnections(ctx context.Context) {
 
 func (n *Node) handleIncomingJoin(
 	ctx context.Context, qc quic.Connection, qs quic.Stream,
+	jm dproto.JoinMessage,
 ) error {
 	// Now we have the advertise address and an admission stream.
 	peer := dview.ActivePeer{
@@ -487,6 +489,7 @@ func (n *Node) handleIncomingJoin(
 	respCh := make(chan dk.JoinResponse, 1)
 	req := dk.JoinRequest{
 		Peer: peer,
+		Msg:  jm,
 		Resp: respCh,
 	}
 

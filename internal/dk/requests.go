@@ -2,6 +2,7 @@ package dk
 
 import (
 	"github.com/gordian-engine/dragon/dview"
+	"github.com/gordian-engine/dragon/internal/dproto"
 	"github.com/quic-go/quic-go"
 )
 
@@ -10,6 +11,7 @@ import (
 // ignore, reject, or accept the join request.
 type JoinRequest struct {
 	Peer dview.ActivePeer
+	Msg  dproto.JoinMessage
 	Resp chan JoinResponse
 }
 
