@@ -146,7 +146,7 @@ func (k *Kernel) handleJoinRequest(ctx context.Context, req JoinRequest) {
 		TTL: 4, // TODO: make this configurable.
 	}
 	// This is a fire and forget request.
-	if err := k.aps.ForwardJoinToNetwork(ctx, msg); err != nil {
+	if err := k.aps.ForwardJoinToNetwork(ctx, msg, nil); err != nil {
 		k.log.Error("Failed to forward join", "err", err)
 	}
 }
@@ -215,8 +215,34 @@ func (k *Kernel) handleNewPeeringRequest(ctx context.Context, req NewPeeringRequ
 }
 
 func (k *Kernel) handleForwardJoinFromNetwork(ctx context.Context, req dps.ForwardJoinFromNetwork) {
-	// TODO: connect to the view manager
-	// to decide how to handle this forward join.
+	d, err := k.vm.ConsiderForwardJoin(ctx, req.Msg)
+	if err != nil {
+		k.log.Warn(
+			"Received error from view manager when considering forward join",
+			"err", err,
+		)
+		return
+	}
+
+	if d.ContinueForwarding && req.Msg.TTL > 1 {
+		req.Msg.TTL--
+
+		// TODO: we should have some kind of TTL cache
+		// so that we exclude cycles if we have received this message from multiple peers.
+		exclude := map[string]struct{}{
+			string(req.ForwarderCert.RawSubjectPublicKeyInfo): {},
+		}
+
+		if err := k.aps.ForwardJoinToNetwork(ctx, req.Msg, exclude); err != nil {
+			k.log.Error("Failed to forward join", "err", err)
+			// We don't stop here, because even if forwarding fails for some reason,
+			// we may still want to make a neighbor request to the other peer.
+		}
+	}
+
+	if d.MakeNeighborRequest {
+		// TODO: dial the neighbor and make the request.
+	}
 }
 
 // GetActiveViewSize returns the current number of peers in the active view.

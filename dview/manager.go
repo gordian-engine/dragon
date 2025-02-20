@@ -6,6 +6,8 @@ import (
 	"crypto/x509"
 	"errors"
 	"net"
+
+	"github.com/gordian-engine/dragon/internal/dproto"
 )
 
 // ActivePeer is a peer in the active view
@@ -57,6 +59,13 @@ type Manager interface {
 	// regardless of the actual value.
 	ConsiderJoin(context.Context, ActivePeer) (JoinDecision, error)
 
+	// ConsiderForwardJoin evaluates whether an incoming Forward Join message
+	// should continue to be propagated
+	// and whether the current node should attempt to make a neighbor request.
+	ConsiderForwardJoin(context.Context, dproto.ForwardJoinMessage) (
+		ForwardJoinDecision, error,
+	)
+
 	// AddPeering attempts to commit the peer to the active set.
 	// It is possible that we decided to accept multiple joins concurrently,
 	// and after adding some of them, one that was considered accepted
@@ -104,5 +113,20 @@ const (
 	DisconnectAndForwardJoinDecision
 	AcceptJoinDecision
 )
+
+// ForwardJoinDecision is the outcome of [Manager.ConsiderForwardJoin].
+type ForwardJoinDecision struct {
+	// If true, the system should decrement the forward join message's TTL
+	// and continue forwarding it to peers.
+	// Otherwise, the system should not propagate the message any further.
+	//
+	// The Manager implementation may disregard the TTL in this evaluation,
+	// as the system will ignore this value when TTL=1
+	// (indicating this was the last hop).
+	ContinueForwarding bool
+
+	// Whether the system should make a neighbor request to the joining node.
+	MakeNeighborRequest bool
+}
 
 var ErrAlreadyActiveCA = errors.New("already have an active peer with the same CA")

@@ -57,13 +57,20 @@ func newPeerWorker(
 		mainLoopDone: make(chan struct{}),
 	}
 
-	// The main loop is not part of the wait group.
-	go w.mainLoop(ctx)
-
+	// Usually we run the main goroutine first,
+	// but in this case there are some tests that race with context cancellation.
+	// Ensuring the wait group is synchronously added
+	// before we start the main loop,
+	// avoids that data race in test.
+	// That data race seems unlikely to happen in a real system
+	// that starts and is expected to stay running for a long time.
 	w.wg.Add(3)
 	go w.handleIncomingAdmission(ctx)
 	go w.handleIncomingDisconnect()
 	go w.handleIncomingShuffle()
+
+	// The main loop is not part of the wait group.
+	go w.mainLoop(ctx)
 
 	return w
 }
@@ -133,8 +140,8 @@ func (w *peerWorker) handleIncomingAdmission(ctx context.Context) {
 				return
 
 			case w.a.forwardJoinsFromNetwork <- ForwardJoinFromNetwork{
-				Msg:        *res.ForwardJoinMessage,
-				SenderCert: senderCert,
+				Msg:           *res.ForwardJoinMessage,
+				ForwarderCert: senderCert,
 			}:
 				// Okay.
 				continue

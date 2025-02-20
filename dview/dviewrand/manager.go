@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 
 	"github.com/gordian-engine/dragon/dview"
+	"github.com/gordian-engine/dragon/internal/dproto"
 )
 
 type Manager struct {
@@ -77,6 +78,22 @@ func (m *Manager) ConsiderJoin(
 
 	// Otherwise it's acceptable.
 	return dview.AcceptJoinDecision, nil
+}
+
+// ConsiderForwardJoin always continues forwarding,
+// and it wants to connect to the new neighbor
+// if we don't already have one from the same CA.
+func (m *Manager) ConsiderForwardJoin(
+	_ context.Context, fjm dproto.ForwardJoinMessage,
+) (dview.ForwardJoinDecision, error) {
+	caCert := fjm.JoiningCertChain[len(fjm.JoiningCertChain)-1]
+
+	_, alreadyHaveCA := m.aByCAPKI[string(caCert.RawSubjectPublicKeyInfo)]
+
+	return dview.ForwardJoinDecision{
+		ContinueForwarding:  true,
+		MakeNeighborRequest: !alreadyHaveCA,
+	}, nil
 }
 
 func (m *Manager) AddPeering(

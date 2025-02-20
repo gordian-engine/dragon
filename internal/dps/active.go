@@ -35,7 +35,7 @@ type Active struct {
 	addRequests    chan addRequest
 	removeRequests chan removeRequest
 
-	forwardJoinsToNetwork   chan dproto.ForwardJoinMessage
+	forwardJoinsToNetwork   chan forwardJoinToNetwork
 	forwardJoinsFromNetwork chan<- ForwardJoinFromNetwork
 
 	seedChannels dfanout.SeedChannels
@@ -82,7 +82,7 @@ func NewActivePeerSet(ctx context.Context, log *slog.Logger, cfg ActiveConfig) *
 
 		// We don't want these to block.
 		// Unless otherwise noted, these are sized with arbitrary guesses.
-		forwardJoinsToNetwork: make(chan dproto.ForwardJoinMessage, 8),
+		forwardJoinsToNetwork: make(chan forwardJoinToNetwork, 8),
 
 		// Channels that flow back upward to the kernel.
 		forwardJoinsFromNetwork: cfg.ForwardJoinsFromNetwork,
@@ -261,7 +261,11 @@ func (a *Active) handleRemoveRequest(req removeRequest) {
 	close(req.Resp)
 }
 
-func (a *Active) ForwardJoinToNetwork(ctx context.Context, m dproto.ForwardJoinMessage) error {
+func (a *Active) ForwardJoinToNetwork(
+	ctx context.Context,
+	m dproto.ForwardJoinMessage,
+	excludeByCA map[string]struct{},
+) error {
 	select {
 	case <-ctx.Done():
 		return fmt.Errorf(
@@ -269,14 +273,20 @@ func (a *Active) ForwardJoinToNetwork(ctx context.Context, m dproto.ForwardJoinM
 			context.Cause(ctx),
 		)
 
-	case a.forwardJoinsToNetwork <- m:
+	case a.forwardJoinsToNetwork <- forwardJoinToNetwork{
+		Msg:     m,
+		Exclude: excludeByCA,
+	}:
 		return nil
 	}
 }
 
-func (a *Active) handleForwardJoinToNetwork(ctx context.Context, m dproto.ForwardJoinMessage) {
+func (a *Active) handleForwardJoinToNetwork(ctx context.Context, fj forwardJoinToNetwork) {
 	streams := make([]quic.Stream, 0, len(a.byCASPKI))
-	for _, p := range a.byCASPKI {
+	for spki, p := range a.byCASPKI {
+		if _, ok := fj.Exclude[string(spki)]; ok {
+			continue
+		}
 		streams = append(streams, p.Admission)
 	}
 
@@ -288,7 +298,7 @@ func (a *Active) handleForwardJoinToNetwork(ctx context.Context, m dproto.Forwar
 		)
 
 	case a.seedChannels.ForwardJoins <- dfanout.SeedForwardJoin{
-		Msg:     m,
+		Msg:     fj.Msg,
 		Streams: streams,
 	}:
 		// Okay.

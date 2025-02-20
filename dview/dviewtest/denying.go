@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/gordian-engine/dragon/dview"
+	"github.com/gordian-engine/dragon/internal/dproto"
 )
 
 type DenyingManager struct{}
@@ -13,6 +14,16 @@ func (DenyingManager) ConsiderJoin(
 	context.Context, dview.ActivePeer,
 ) (dview.JoinDecision, error) {
 	return dview.DisconnectAndIgnoreJoinDecision, nil
+}
+
+func (DenyingManager) ConsiderForwardJoin(
+	context.Context, dproto.ForwardJoinMessage,
+) (dview.ForwardJoinDecision, error) {
+	return dview.ForwardJoinDecision{
+		// Seems like we may as well continue forwarding in this test type.
+		ContinueForwarding:  true,
+		MakeNeighborRequest: false,
+	}, nil
 }
 
 func (DenyingManager) AddPeering(

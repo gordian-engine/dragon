@@ -32,5 +32,12 @@ type ForwardJoinFromNetwork struct {
 	// We received this request from an active peer,
 	// so we track who sent it to us,
 	// in order to not send it back to them.
-	SenderCert *x509.Certificate
+	ForwarderCert *x509.Certificate
+}
+
+type forwardJoinToNetwork struct {
+	Msg dproto.ForwardJoinMessage
+
+	// Exclude peers by their CA certificate's SPKI.
+	Exclude map[string]struct{}
 }
