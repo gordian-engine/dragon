@@ -16,9 +16,12 @@ type Active struct {
 	log *slog.Logger
 
 	// Wait group for directly owned goroutines.
+	// This wait group is directly tied to the lifecycle of this type.
 	wg sync.WaitGroup
 
 	// Wait group for workers' main loops.
+	// The workers are associated with individual peers,
+	// which can come and go during the lifecycle of the active peer set.
 	workerWG sync.WaitGroup
 
 	// Allow looking up a peer by its CA or its own SPKI.
@@ -32,7 +35,8 @@ type Active struct {
 	addRequests    chan addRequest
 	removeRequests chan removeRequest
 
-	forwardJoins chan dproto.ForwardJoinMessage
+	forwardJoinsToNetwork   chan dproto.ForwardJoinMessage
+	forwardJoinsFromNetwork chan<- ForwardJoinFromNetwork
 
 	seedChannels dfanout.SeedChannels
 }
@@ -54,6 +58,10 @@ type ActiveConfig struct {
 	// The workers are responsible for taking work from the work queue
 	// and sending messages on particular QUIC streams.
 	Workers int
+
+	// A forward join was received from the network.
+	// The active peer set sends the message on this channel.
+	ForwardJoinsFromNetwork chan<- ForwardJoinFromNetwork
 }
 
 func NewActivePeerSet(ctx context.Context, log *slog.Logger, cfg ActiveConfig) *Active {
@@ -74,7 +82,10 @@ func NewActivePeerSet(ctx context.Context, log *slog.Logger, cfg ActiveConfig) *
 
 		// We don't want these to block.
 		// Unless otherwise noted, these are sized with arbitrary guesses.
-		forwardJoins: make(chan dproto.ForwardJoinMessage, 8),
+		forwardJoinsToNetwork: make(chan dproto.ForwardJoinMessage, 8),
+
+		// Channels that flow back upward to the kernel.
+		forwardJoinsFromNetwork: cfg.ForwardJoinsFromNetwork,
 
 		seedChannels: dfanout.NewSeedChannels(2 * seeders),
 	}
@@ -108,6 +119,7 @@ func NewActivePeerSet(ctx context.Context, log *slog.Logger, cfg ActiveConfig) *
 }
 
 func (a *Active) Wait() {
+	a.workerWG.Wait()
 	a.wg.Wait()
 }
 
@@ -118,6 +130,16 @@ func (a *Active) mainLoop(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			a.log.Info("Main loop quitting due to context cancellation", "cause", context.Cause(ctx))
+
+			// This is the highest level component where we have
+			// references to every peer's QUIC connection.
+			// There is probably a better place to do all of this,
+			// but for now in tests,
+			// this ensures that all wait groups finish correctly.
+			for _, p := range a.byCASPKI {
+				p.Conn.CloseWithError(1, "TODO: ungraceful shutdown")
+			}
+
 			return
 
 		case req := <-a.addRequests:
@@ -126,8 +148,8 @@ func (a *Active) mainLoop(ctx context.Context) {
 		case req := <-a.removeRequests:
 			a.handleRemoveRequest(req)
 
-		case fj := <-a.forwardJoins:
-			a.handleForwardJoin(ctx, fj)
+		case fj := <-a.forwardJoinsToNetwork:
+			a.handleForwardJoinToNetwork(ctx, fj)
 		}
 	}
 }
@@ -239,7 +261,7 @@ func (a *Active) handleRemoveRequest(req removeRequest) {
 	close(req.Resp)
 }
 
-func (a *Active) ForwardJoin(ctx context.Context, m dproto.ForwardJoinMessage) error {
+func (a *Active) ForwardJoinToNetwork(ctx context.Context, m dproto.ForwardJoinMessage) error {
 	select {
 	case <-ctx.Done():
 		return fmt.Errorf(
@@ -247,12 +269,12 @@ func (a *Active) ForwardJoin(ctx context.Context, m dproto.ForwardJoinMessage) e
 			context.Cause(ctx),
 		)
 
-	case a.forwardJoins <- m:
+	case a.forwardJoinsToNetwork <- m:
 		return nil
 	}
 }
 
-func (a *Active) handleForwardJoin(ctx context.Context, m dproto.ForwardJoinMessage) {
+func (a *Active) handleForwardJoinToNetwork(ctx context.Context, m dproto.ForwardJoinMessage) {
 	streams := make([]quic.Stream, 0, len(a.byCASPKI))
 	for _, p := range a.byCASPKI {
 		streams = append(streams, p.Admission)

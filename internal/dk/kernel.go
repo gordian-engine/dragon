@@ -13,12 +13,16 @@ import (
 type Kernel struct {
 	log *slog.Logger
 
+	// Exported channels exposed directly to the owning Node.
 	JoinRequests       chan JoinRequest
 	NewPeeringRequests chan NewPeeringRequest
 
+	// Unexported channels passed to the active peer set.
+	forwardJoinsFromNetwork chan dps.ForwardJoinFromNetwork
+
 	vm dview.Manager
 
-	aps *dps.Active
+	aps *dps.Active // Active Peer Set.
 
 	activeViewSizeCheck chan chan int
 
@@ -33,11 +37,19 @@ type KernelConfig struct {
 }
 
 func NewKernel(ctx context.Context, log *slog.Logger, cfg KernelConfig) *Kernel {
+	// We don't want to have workers blocked on sending messages
+	// back upwards toward the kernel.
+	// Plus, it's fine if these messages aren't handled instantly.
+	// These are all arbitrarily sized.
+	fjfns := make(chan dps.ForwardJoinFromNetwork, 8)
+
 	k := &Kernel{
 		log: log,
 
 		JoinRequests:       make(chan JoinRequest),
 		NewPeeringRequests: make(chan NewPeeringRequest),
+
+		forwardJoinsFromNetwork: fjfns,
 
 		activeViewSizeCheck: make(chan chan int),
 
@@ -45,7 +57,9 @@ func NewKernel(ctx context.Context, log *slog.Logger, cfg KernelConfig) *Kernel 
 		aps: dps.NewActivePeerSet(
 			ctx,
 			log.With("dk_sys", "active_peer_set"),
-			dps.ActiveConfig{},
+			dps.ActiveConfig{
+				ForwardJoinsFromNetwork: fjfns,
+			},
 		),
 
 		done: make(chan struct{}),
@@ -76,7 +90,11 @@ func (k *Kernel) mainLoop(ctx context.Context) {
 		case req := <-k.NewPeeringRequests:
 			k.handleNewPeeringRequest(ctx, req)
 
+		case req := <-k.forwardJoinsFromNetwork:
+			k.handleForwardJoinFromNetwork(ctx, req)
+
 		case ch := <-k.activeViewSizeCheck:
+			// Assuming the incoming request is buffered.
 			ch <- k.vm.NActivePeers()
 		}
 	}
@@ -128,7 +146,7 @@ func (k *Kernel) handleJoinRequest(ctx context.Context, req JoinRequest) {
 		TTL: 4, // TODO: make this configurable.
 	}
 	// This is a fire and forget request.
-	if err := k.aps.ForwardJoin(ctx, msg); err != nil {
+	if err := k.aps.ForwardJoinToNetwork(ctx, msg); err != nil {
 		k.log.Error("Failed to forward join", "err", err)
 	}
 }
@@ -185,7 +203,7 @@ func (k *Kernel) handleNewPeeringRequest(ctx context.Context, req NewPeeringRequ
 
 		if err := k.aps.Remove(
 			ctx,
-			dps.PeerCertIDFromCerts(evicted.TLS.PeerCertificates),
+			dps.PeerCertIDFromCerts(evicted.TLS.PeerCertificates), // TODO: shouldn't this be VerifiedCertificates?
 		); err != nil {
 			// The only error returned from Remove should be a context error.
 			// Not much we can do here but log it.
@@ -194,6 +212,11 @@ func (k *Kernel) handleNewPeeringRequest(ctx context.Context, req NewPeeringRequ
 			)
 		}
 	}
+}
+
+func (k *Kernel) handleForwardJoinFromNetwork(ctx context.Context, req dps.ForwardJoinFromNetwork) {
+	// TODO: connect to the view manager
+	// to decide how to handle this forward join.
 }
 
 // GetActiveViewSize returns the current number of peers in the active view.

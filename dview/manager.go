@@ -22,7 +22,7 @@ type ActivePeer struct {
 }
 
 func (p ActivePeer) CACert() *x509.Certificate {
-	pcs := p.TLS.PeerCertificates
+	pcs := p.TLS.PeerCertificates // TODO: this is probably wrong and needs to be .VerifiedCertificates.
 	return pcs[len(pcs)-1]
 }
 

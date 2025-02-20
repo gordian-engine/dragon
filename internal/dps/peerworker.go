@@ -3,15 +3,21 @@ package dps
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/gordian-engine/dragon/internal/dproto/dpadmission"
 )
 
+// peerWorker handles the work involved with accepting messages
+// from a single peer.
 type peerWorker struct {
 	log *slog.Logger
 
-	// Connection and streams.
+	// The Peer holds the connection and streams
+	// whose work this worker is responsible for.
 	p Peer
 
 	// Backreference to parent.
@@ -55,7 +61,7 @@ func newPeerWorker(
 	go w.mainLoop(ctx)
 
 	w.wg.Add(3)
-	go w.handleIncomingAdmission()
+	go w.handleIncomingAdmission(ctx)
 	go w.handleIncomingDisconnect()
 	go w.handleIncomingShuffle()
 
@@ -86,12 +92,59 @@ func (w *peerWorker) Cancel() {
 	w.cancel(errors.New("worker manually canceled"))
 }
 
-func (w *peerWorker) handleIncomingAdmission() {
+// fail cancels the worker.
+func (w *peerWorker) fail(e error) {
+	w.cancel(e)
+}
+
+func (w *peerWorker) handleIncomingAdmission(ctx context.Context) {
 	defer w.wg.Done()
 
-	w.p.Admission.SetReadDeadline(time.Time{})
+	p := dpadmission.Protocol{
+		Log:    w.log.With("protocol", "admission"),
+		Stream: w.p.Admission,
+		Cfg: dpadmission.Config{
+			AcceptForwardJoinTimeout: 50 * time.Millisecond,
+		},
+	}
 
-	// TODO: need protocol handler for this.
+	for {
+		// We can wait for as long as necessary.
+		if err := w.p.Admission.SetReadDeadline(time.Time{}); err != nil {
+			w.fail(fmt.Errorf("failed to set read deadline on admission stream: %w", err))
+			return
+		}
+
+		res, err := p.Run(ctx)
+		if err != nil {
+			w.fail(fmt.Errorf("failed to run admission protocol: %w", err))
+			return
+		}
+
+		// Only possible result currently.
+		if res.ForwardJoinMessage != nil {
+			senderCert := w.p.Conn.ConnectionState().TLS.PeerCertificates[0]
+			select {
+			case <-ctx.Done():
+				w.fail(fmt.Errorf(
+					"context canceled while sending forward join from network: %w",
+					context.Cause(ctx),
+				))
+				return
+
+			case w.a.forwardJoinsFromNetwork <- ForwardJoinFromNetwork{
+				Msg:        *res.ForwardJoinMessage,
+				SenderCert: senderCert,
+			}:
+				// Okay.
+				continue
+			}
+		}
+
+		panic(errors.New(
+			"IMPOSSIBLE: admission protocol returned without setting any result",
+		))
+	}
 }
 
 func (w *peerWorker) handleIncomingDisconnect() {
