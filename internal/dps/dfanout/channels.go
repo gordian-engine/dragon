@@ -5,6 +5,13 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
+// Seed channels are "pre-work" channels,
+// where the kernel can send a single value
+// that will eventually fan out to the workers.
+//
+// If the kernel had to fan out to the workers itself,
+// that would cause greater kernel contention than
+// sending the single seed value.
 type SeedChannels struct {
 	ForwardJoins chan SeedForwardJoin
 }

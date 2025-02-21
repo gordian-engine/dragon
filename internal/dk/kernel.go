@@ -2,6 +2,7 @@ package dk
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -35,6 +36,10 @@ type Kernel struct {
 	// outside the kernel and outside the active peer set.
 	neighborRequests chan<- string
 
+	// External signal, passed via KernelConfig,
+	// indicating that a shuffle is due.
+	shuffleSignal <-chan struct{}
+
 	vm dview.Manager
 
 	aps *dps.Active // Active Peer Set.
@@ -58,6 +63,9 @@ type KernelConfig struct {
 	// it will eventually feed back into the Kernel
 	// through the NewPeeringRequests channel.
 	NeighborRequests chan<- string
+
+	// A value sent on this channel indicates that a shuffle is due.
+	ShuffleSignal <-chan struct{}
 }
 
 func NewKernel(ctx context.Context, log *slog.Logger, cfg KernelConfig) *Kernel {
@@ -79,6 +87,8 @@ func NewKernel(ctx context.Context, log *slog.Logger, cfg KernelConfig) *Kernel 
 		activeViewSizeCheck: make(chan chan int),
 
 		neighborRequests: cfg.NeighborRequests,
+
+		shuffleSignal: cfg.ShuffleSignal,
 
 		vm: cfg.ViewManager,
 		aps: dps.NewActivePeerSet(
@@ -122,6 +132,15 @@ func (k *Kernel) mainLoop(ctx context.Context) {
 
 		case req := <-k.forwardJoinsFromNetwork:
 			k.handleForwardJoinFromNetwork(ctx, req)
+
+		case _, closed := <-k.shuffleSignal:
+			if closed {
+				panic(errors.New(
+					"BUG: misuse of ShuffleSignal: channel must not be closed",
+				))
+			}
+
+			k.initiateShuffle(ctx)
 
 		case ch := <-k.activeViewSizeCheck:
 			// Assuming the incoming request is buffered.
@@ -297,6 +316,22 @@ func (k *Kernel) handleForwardJoinFromNetwork(ctx context.Context, req dps.Forwa
 				"addr", addr,
 			)
 		}
+	}
+}
+
+func (k *Kernel) initiateShuffle(ctx context.Context) {
+	// TODO: finish implementing this.
+
+	os, err := k.vm.MakeOutboundShuffle(ctx)
+	if err != nil {
+		k.log.Error("Outbound shuffle failed", "err", err)
+		return
+	}
+	_ = os
+
+	if err := k.aps.InitiateShuffle(ctx); err != nil {
+		k.log.Error("Failed to initiate shuffle", "err", err)
+		return
 	}
 }
 

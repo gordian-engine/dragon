@@ -73,6 +73,10 @@ func (c NodeConfig) ToDragonNodeConfig() dragon.NodeConfig {
 		AdvertiseAddr: c.udpConn.LocalAddr().String(),
 
 		InitialTrustedCAs: c.TrustedCAs,
+
+		// TODO: we should expose this somehow,
+		// so a test can manually trigger a shuffle if needed.
+		ShuffleSignal: make(chan struct{}),
 	}
 }
 

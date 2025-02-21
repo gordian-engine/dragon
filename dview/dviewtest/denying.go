@@ -40,5 +40,9 @@ func (DenyingManager) AddPeering(
 
 func (DenyingManager) RemoveActivePeer(context.Context, dview.ActivePeer) {}
 
+func (DenyingManager) MakeOutboundShuffle(ctx context.Context) (dview.OutboundShuffle, error) {
+	return dview.OutboundShuffle{}, errors.New("shuffle not supported in DenyingManager")
+}
+
 func (DenyingManager) NActivePeers() int  { return 0 }
 func (DenyingManager) NPassivePeers() int { return 0 }

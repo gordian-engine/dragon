@@ -50,12 +50,14 @@ func TestNewNode(t *testing.T) {
 
 	log := dtest.NewLogger(t)
 	n, err := dragon.NewNode(ctx, log, dragon.NodeConfig{
-		UDPConn:     uc,
-		QUIC:        dragon.DefaultQUICConfig(),
-		TLS:         &tc,
-		ViewManager: dviewtest.DenyingManager{},
+		UDPConn: uc,
+		QUIC:    dragon.DefaultQUICConfig(),
+		TLS:     &tc,
 
 		AdvertiseAddr: uc.LocalAddr().String(),
+
+		ViewManager:   dviewtest.DenyingManager{},
+		ShuffleSignal: make(chan struct{}),
 	})
 
 	require.NoError(t, err)

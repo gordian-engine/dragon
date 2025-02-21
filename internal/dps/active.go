@@ -2,6 +2,7 @@ package dps
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -303,4 +304,13 @@ func (a *Active) handleForwardJoinToNetwork(ctx context.Context, fj forwardJoinT
 	}:
 		// Okay.
 	}
+}
+
+func (a *Active) InitiateShuffle(
+	ctx context.Context,
+	// TODO: this will have more parameters.
+	// The kernel will need to translate from the dview.OutboundShuffle
+	// peer representation to the peer representation in this package.
+) error {
+	return errors.New("TODO: implement this")
 }

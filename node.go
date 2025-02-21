@@ -69,29 +69,62 @@ type NodeConfig struct {
 
 	// Manages the active and passive peers.
 	ViewManager dview.Manager
+
+	// Externally controlled channel to signal when
+	// this node should initiate an outgoing shuffle.
+	ShuffleSignal <-chan struct{}
 }
 
 // validate panics if there are any illegal settings in the configuration.
 // It also warns about any suspect settings.
 func (c NodeConfig) validate(log *slog.Logger) {
+	// If there are multiple reasons we could panic,
+	// collect them all in one go
+	// so we can give a maximally helpful error.
+	var panicErrs error
+
 	if !c.QUIC.EnableDatagrams {
 		// We aren't actually forcing this yet.
 		// It's possible this may only be an application-level concern.
-		panic(errors.New("QUIC datagrams must be enabled; set NodeConfig.QUIC.EnableDatagrams=true"))
+		panicErrs = errors.Join(
+			panicErrs,
+			errors.New("QUIC datagrams must be enabled; set NodeConfig.QUIC.EnableDatagrams=true"),
+		)
 	}
 
 	if c.TLS.ClientAuth != tls.RequireAndVerifyClientCert {
-		panic(errors.New(
-			"client certificates are required; set NodeConfig.TLS.ClientAuth = tls.RequireAndVerifyClientCert",
-		))
+		panicErrs = errors.Join(
+			panicErrs,
+			errors.New("client certificates are required; set NodeConfig.TLS.ClientAuth = tls.RequireAndVerifyClientCert"),
+		)
 	}
 
 	if c.AdvertiseAddr == "" {
-		panic(errors.New("NodeConfig.AdvertiseAddr must not be empty"))
+		panicErrs = errors.Join(
+			panicErrs,
+			errors.New("NodeConfig.AdvertiseAddr must not be empty"),
+		)
 	}
 
 	if c.ViewManager == nil {
-		panic(errors.New("NodeConfig.ViewManager may not be nil"))
+		panicErrs = errors.Join(
+			panicErrs,
+			errors.New("NodeConfig.ViewManager may not be nil"),
+		)
+	}
+
+	if c.ShuffleSignal == nil {
+		panicErrs = errors.Join(
+			panicErrs,
+			errors.New("NodeConfig.ShuffleSignal may not be nil"),
+		)
+
+		if cap(c.ShuffleSignal) != 0 {
+			panicErrs = errors.Join(
+				panicErrs,
+				errors.New("NodeConfig.ShuffleSignal must be an unbuffered channel for correct behavior"),
+			)
+		}
 	}
 
 	// Although we customize the TLS config later in the initialization flow,
@@ -106,44 +139,51 @@ func (c NodeConfig) validate(log *slog.Logger) {
 	if len(c.TLS.Certificates) > 0 {
 		cert := c.TLS.Certificates[0]
 		if cert.Leaf == nil {
-			panic(errors.New(
-				"BUG: TLS.Certificates[0].Leaf must be set (use x509.ParseCertificate if needed)",
-			))
-		}
-
-		// Timestamp validation.
-		now := time.Now()
-		if cert.Leaf.NotBefore.After(now) {
-			log.Error(
-				"Certificate's not before field is in the future",
-				"not_before", cert.Leaf.NotBefore,
-			)
-		}
-		if cert.Leaf.NotAfter.Before(now) {
-			log.Error(
-				"Certificate's not after field is in the past",
-				"not_after", cert.Leaf.NotAfter,
+			panicErrs = errors.Join(
+				panicErrs,
+				errors.New("BUG: TLS.Certificates[0].Leaf must be set (use x509.ParseCertificate if needed)"),
 			)
 		}
 
-		// Now, the trickier part, key usage.
-		if cert.Leaf.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
-			log.Error(
-				"Certificate is missing digital signature key usage; remotes may reject TLS communication",
-			)
-		}
+		if cert.Leaf != nil {
+			// Timestamp validation.
+			now := time.Now()
+			if cert.Leaf.NotBefore.After(now) {
+				log.Error(
+					"Certificate's not before field is in the future",
+					"not_before", cert.Leaf.NotBefore,
+				)
+			}
+			if cert.Leaf.NotAfter.Before(now) {
+				log.Error(
+					"Certificate's not after field is in the past",
+					"not_after", cert.Leaf.NotAfter,
+				)
+			}
 
-		if !slices.Contains(cert.Leaf.ExtKeyUsage, x509.ExtKeyUsageServerAuth) {
-			log.Error(
-				"Certificate is missing server authentication extended key usage; clients will reject TLS handshake",
-			)
-		}
+			// Now, the trickier part, key usage.
+			if cert.Leaf.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
+				log.Error(
+					"Certificate is missing digital signature key usage; remotes may reject TLS communication",
+				)
+			}
 
-		if !slices.Contains(cert.Leaf.ExtKeyUsage, x509.ExtKeyUsageClientAuth) {
-			log.Error(
-				"Certificate is missing client authentication extended key usage; servers will reject TLS handshake",
-			)
+			if !slices.Contains(cert.Leaf.ExtKeyUsage, x509.ExtKeyUsageServerAuth) {
+				log.Error(
+					"Certificate is missing server authentication extended key usage; clients will reject TLS handshake",
+				)
+			}
+
+			if !slices.Contains(cert.Leaf.ExtKeyUsage, x509.ExtKeyUsageClientAuth) {
+				log.Error(
+					"Certificate is missing client authentication extended key usage; servers will reject TLS handshake",
+				)
+			}
 		}
+	}
+
+	if panicErrs != nil {
+		panic(panicErrs)
 	}
 }
 

@@ -13,6 +13,8 @@ import (
 // ActivePeer is a peer in the active view
 // (peers we have a direct connection with).
 type ActivePeer struct {
+	// TODO: it might be better to have a narrower value
+	// than an entire tls.ConnectionState.
 	TLS tls.ConnectionState
 
 	// The address of our local listener.
@@ -20,6 +22,10 @@ type ActivePeer struct {
 	LocalAddr net.Addr
 
 	// The remote address observed.
+	// TODO: this seems useless.
+	// Consider the case of a peer dialing us
+	// while using a different UDP port from its listener.
+	// We should be sending an AdvertiseAddr on Join and Neighbor messages.
 	RemoteAddr net.Addr
 }
 
@@ -29,7 +35,7 @@ func (p ActivePeer) CACert() *x509.Certificate {
 }
 
 // PassivePeer is a peer in the passive set
-// (peers we know about, but do are not directly connected with).
+// (peers we know about, but are not directly connected with).
 type PassivePeer struct {
 	Addr string
 
@@ -91,6 +97,10 @@ type Manager interface {
 	// Currently, if the provided peer was not in the active set, RemoveActivePeer panics.
 	RemoveActivePeer(context.Context, ActivePeer)
 
+	MakeOutboundShuffle(context.Context) (OutboundShuffle, error)
+
+	// TODO: MakeShuffleResponse and HandleShuffleResponse.
+
 	// The number of active peers being managed.
 	NActivePeers() int
 
@@ -99,8 +109,6 @@ type Manager interface {
 
 	// TODO: need a way to remove all active and passive peers
 	// originating from a particular CA.
-
-	// TODO: support shuffle.
 
 	// TODO: need a way to get a passive peer in order to re-fill active set.
 	// This would probably only be called after removing peers.
@@ -136,4 +144,10 @@ type ForwardJoinDecision struct {
 	MakeNeighborRequest bool
 }
 
+type OutboundShuffle struct {
+	// TODO: how will the target peer and payload peers be represented?
+}
+
+// ErrAlreadyActiveCA should be returned by [Manager] implementations
+// when attempting to add a peer who is already in the active set.
 var ErrAlreadyActiveCA = errors.New("already have an active peer with the same CA")

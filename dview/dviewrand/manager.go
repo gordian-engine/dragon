@@ -151,6 +151,7 @@ func (m *Manager) RemoveActivePeer(_ context.Context, p dview.ActivePeer) {
 
 func (m *Manager) randomActivePeer() (string, *dview.ActivePeer) {
 	// First entry by random map iteration.
+	// TODO: use RNG to actually skip a random count.
 	for k, p := range m.aByCAPKI {
 		return k, p
 	}
@@ -161,12 +162,17 @@ func (m *Manager) randomActivePeer() (string, *dview.ActivePeer) {
 
 func (m *Manager) randomPassivePeer() (string, *dview.PassivePeer) {
 	// First entry by random map iteration.
+	// TODO: use RNG to actually skip a random count.
 	for k, p := range m.pByCAPKI {
 		return k, p
 	}
 
 	// Map was empty.
 	return "", nil
+}
+
+func (m *Manager) MakeOutboundShuffle(ctx context.Context) (dview.OutboundShuffle, error) {
+	return dview.OutboundShuffle{}, errors.New("TODO")
 }
 
 func (m *Manager) NActivePeers() int {
