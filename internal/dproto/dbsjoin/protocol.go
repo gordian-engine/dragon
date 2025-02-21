@@ -39,7 +39,7 @@ type Config struct {
 
 	// Our TLS certificate.
 	// This is used for signing the outgoing join message.
-	// We sign this because it gets forwarded to other peers
+	// We sign the message because it gets forwarded to other peers
 	// over the contact node's connection,
 	// and we need to prove the origin of the message.
 	Cert tls.Certificate

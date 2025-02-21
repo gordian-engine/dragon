@@ -285,8 +285,11 @@ func NewNode(ctx context.Context, log *slog.Logger, cfg NodeConfig) (*Node, erro
 		// Skip: Tracer: we aren't interested in tracing quite yet.
 	}
 
+	neighborRequestsCh := make(chan string, 8) // Arbitrarily sized.
+
 	k := dk.NewKernel(ctx, log.With("node_sys", "kernel"), dk.KernelConfig{
-		ViewManager: cfg.ViewManager,
+		ViewManager:      cfg.ViewManager,
+		NeighborRequests: neighborRequestsCh,
 	})
 
 	n := &Node{
@@ -318,6 +321,23 @@ func NewNode(ctx context.Context, log *slog.Logger, cfg NodeConfig) (*Node, erro
 	for range nPending {
 		go n.acceptConnections(ctx)
 	}
+
+	n.wg.Add(1)
+	nd := &neighborDialer{
+		Log: n.log.With("node_sys", "neighbor_dialer"),
+
+		BaseTLSConf: n.baseTLSConf,
+		CAPool:      n.caPool,
+
+		QUICConf:      n.quicConf,
+		QUICTransport: n.quicTransport,
+
+		NeighborRequests: neighborRequestsCh,
+
+		NewPeeringRequests: k.NewPeeringRequests,
+	}
+	go nd.Run(ctx, &n.wg)
+
 	return n, nil
 }
 
@@ -720,7 +740,7 @@ func (n *Node) bootstrapJoin(
 
 	res, err := p.Run(ctx)
 	if err != nil {
-		return res, fmt.Errorf("bootstrap failed: %w", err)
+		return res, fmt.Errorf("bootstrap by join failed: %w", err)
 	}
 
 	return res, nil

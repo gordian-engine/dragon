@@ -20,6 +20,10 @@ type Kernel struct {
 	// Unexported channels passed to the active peer set.
 	forwardJoinsFromNetwork chan dps.ForwardJoinFromNetwork
 
+	// Unexported channels for work that has to happen
+	// outside the kernel and outside the active peer set.
+	neighborRequests chan<- string
+
 	vm dview.Manager
 
 	aps *dps.Active // Active Peer Set.
@@ -34,6 +38,15 @@ type KernelConfig struct {
 
 	TargetActiveViewSize  int
 	TargetPassiveViewSize int
+
+	// When the kernel's ViewManager decides to make a neighbor request
+	// to a peer, that work must happen outside the kernel to reduce contention.
+	//
+	// Peer addresses are sent on this channel to initiate neighbor requests,
+	// and if the connection succeeds,
+	// it will eventually feed back into the Kernel
+	// through the NewPeeringRequests channel.
+	NeighborRequests chan<- string
 }
 
 func NewKernel(ctx context.Context, log *slog.Logger, cfg KernelConfig) *Kernel {
@@ -52,6 +65,8 @@ func NewKernel(ctx context.Context, log *slog.Logger, cfg KernelConfig) *Kernel 
 		forwardJoinsFromNetwork: fjfns,
 
 		activeViewSizeCheck: make(chan chan int),
+
+		neighborRequests: cfg.NeighborRequests,
 
 		vm: cfg.ViewManager,
 		aps: dps.NewActivePeerSet(
@@ -241,7 +256,16 @@ func (k *Kernel) handleForwardJoinFromNetwork(ctx context.Context, req dps.Forwa
 	}
 
 	if d.MakeNeighborRequest {
-		// TODO: dial the neighbor and make the request.
+		addr := req.Msg.JoinMessage.Addr
+		select {
+		case k.neighborRequests <- addr:
+			// Okay.
+		default:
+			k.log.Warn(
+				"Dropped neighbor request due to backpressure",
+				"addr", addr,
+			)
+		}
 	}
 }
 
