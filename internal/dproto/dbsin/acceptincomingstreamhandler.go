@@ -19,6 +19,10 @@ type acceptIncomingStreamHandler struct {
 	Cfg      *Config
 }
 
+// Handle accepts the bootstrap stream
+// (which is eventually promoted to the admission stream),
+// and then it expects either a join or neighbor message from the peer.
+// The details of that received message, if valid, are set on the Result.
 func (h acceptIncomingStreamHandler) Handle(
 	ctx context.Context, c quic.Connection, res *Result,
 ) (incomingStreamHandler, error) {

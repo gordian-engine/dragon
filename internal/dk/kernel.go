@@ -14,7 +14,18 @@ type Kernel struct {
 	log *slog.Logger
 
 	// Exported channels exposed directly to the owning Node.
-	JoinRequests       chan JoinRequest
+
+	// Sender needs a decision about what to do with
+	// a Join message received from an unknown peer.
+	JoinRequests chan JoinRequest
+
+	// Sender needs a decision about what to do with
+	// a Neighbor message received from an unknown peer.
+	NeighborDecisionRequests chan NeighborDecisionRequest
+
+	// Sender has a completely bootstrapped connection
+	// and wants to add it to the active set.
+	// TODO: this should get renamed.
 	NewPeeringRequests chan NewPeeringRequest
 
 	// Unexported channels passed to the active peer set.
@@ -59,8 +70,9 @@ func NewKernel(ctx context.Context, log *slog.Logger, cfg KernelConfig) *Kernel 
 	k := &Kernel{
 		log: log,
 
-		JoinRequests:       make(chan JoinRequest),
-		NewPeeringRequests: make(chan NewPeeringRequest),
+		JoinRequests:             make(chan JoinRequest),
+		NeighborDecisionRequests: make(chan NeighborDecisionRequest),
+		NewPeeringRequests:       make(chan NewPeeringRequest),
 
 		forwardJoinsFromNetwork: fjfns,
 
@@ -101,6 +113,9 @@ func (k *Kernel) mainLoop(ctx context.Context) {
 
 		case req := <-k.JoinRequests:
 			k.handleJoinRequest(ctx, req)
+
+		case req := <-k.NeighborDecisionRequests:
+			k.handleNeighborDecisionRequest(ctx, req)
 
 		case req := <-k.NewPeeringRequests:
 			k.handleNewPeeringRequest(ctx, req)
@@ -164,6 +179,22 @@ func (k *Kernel) handleJoinRequest(ctx context.Context, req JoinRequest) {
 	if err := k.aps.ForwardJoinToNetwork(ctx, msg, nil); err != nil {
 		k.log.Error("Failed to forward join", "err", err)
 	}
+}
+
+func (k *Kernel) handleNeighborDecisionRequest(ctx context.Context, req NeighborDecisionRequest) {
+	accept, err := k.vm.ConsiderNeighborRequest(ctx, req.Peer)
+	if err != nil {
+		// It's fine if this was a context error,
+		// as we should catch it on the next iteration of mainLoop.
+		k.log.Info(
+			"Error while considering neighbor request",
+			"err", err,
+		)
+		accept = false
+	}
+
+	// Assume the response channel is buffered.
+	req.Resp <- accept
 }
 
 func (k *Kernel) handleNewPeeringRequest(ctx context.Context, req NewPeeringRequest) {

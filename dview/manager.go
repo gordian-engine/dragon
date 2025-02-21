@@ -53,6 +53,7 @@ type Manager interface {
 	//
 	// Instances should assume that the the provided peer
 	// has already been confirmed to be in the
+	// list of acceptable certificates.
 	//
 	// If the returned error is non-nil,
 	// the decision should be treated as [DisconnectAndIgnoreJoinDecision]
@@ -65,6 +66,12 @@ type Manager interface {
 	ConsiderForwardJoin(context.Context, dproto.ForwardJoinMessage) (
 		ForwardJoinDecision, error,
 	)
+
+	// ConsiderNeighborRequest evaluates whether to accept
+	// an incoming Neighbor request.
+	//
+	// The same notes in ConsiderJoin apply to ConsiderNeighborRequest.
+	ConsiderNeighborRequest(context.Context, ActivePeer) (bool, error)
 
 	// AddPeering attempts to commit the peer to the active set.
 	// It is possible that we decided to accept multiple joins concurrently,

@@ -1,4 +1,4 @@
-package dbsjoin
+package dbsan
 
 import (
 	"context"
@@ -11,28 +11,26 @@ import (
 
 type streamAcceptHandler struct {
 	OuterLog *slog.Logger
-
-	Cfg *Config
+	Cfg      *Config
 }
 
 func (h streamAcceptHandler) Handle(
-	ctx context.Context, c quic.Connection, res *Result,
-) (streamHandler, error) {
-	deadline := h.Cfg.NowFn().Add(h.Cfg.AcceptStreamsTimeout)
+	ctx context.Context, c quic.Connection, _ quic.Stream, res *Result,
+) (handler, error) {
+
+	deadline := h.Cfg.Now().Add(h.Cfg.AcceptStreamsTimeout)
 
 	acceptRes, err := dbscommon.AcceptStreams(ctx, c, deadline)
 	if err != nil {
 		return nil, fmt.Errorf("failed to accept streams: %w", err)
 	}
 
-	res.DisconnectStream = acceptRes.Disconnect
-	res.ShuffleStream = acceptRes.Shuffle
+	res.Disconnect = acceptRes.Disconnect
+	res.Shuffle = acceptRes.Shuffle
 
-	// We return a nil error and a nil handler here
-	// because we have reached the terminal state of the admission stream setup.
 	return nil, nil
 }
 
 func (h streamAcceptHandler) Name() string {
-	return "Stream Accept"
+	return "Accept Streams"
 }

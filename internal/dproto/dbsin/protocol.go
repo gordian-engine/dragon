@@ -50,7 +50,7 @@ type Result struct {
 
 	JoinMessage *dproto.JoinMessage
 
-	// TODO: this will eventually hold a neighbor request too.
+	NeighborMessage bool
 }
 
 func (p *Protocol) Run(ctx context.Context) (Result, error) {

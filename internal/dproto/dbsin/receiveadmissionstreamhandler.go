@@ -38,7 +38,12 @@ func (h receiveAdmissionStreamHandler) Handle(
 		// Returned error will be wrapped properly.
 		return nil, h.handleJoinMessage(res)
 
-	// TODO: handle Neighbor message type.
+	case byte(dproto.NeighborMessageType):
+		// There is no data inside the neighbor message,
+		// so we don't have to read anything.
+		// We just have to mark the Result.
+		res.NeighborMessage = true
+		return nil, nil
 
 	default:
 		return nil, fmt.Errorf("invalid admission stream message type: %d", typeBuf[0])

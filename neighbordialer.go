@@ -142,6 +142,10 @@ func (d *neighborDialer) bootstrapNeighbor(
 		Log:  d.Log.With("protocol", "outgoing_bootstrap_neighbor"),
 		Conn: qc,
 		Cfg: dbsneighbor.Config{
+			OpenStreamTimeout:         100 * time.Millisecond,
+			AwaitNeighborReplyTimeout: 75 * time.Millisecond,
+			InitializeStreamsTimeout:  75 * time.Millisecond,
+
 			NowFn: time.Now,
 		},
 	}

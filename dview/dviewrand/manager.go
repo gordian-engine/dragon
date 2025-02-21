@@ -80,6 +80,19 @@ func (m *Manager) ConsiderJoin(
 	return dview.AcceptJoinDecision, nil
 }
 
+// ConsiderNeighborRequest accepts the request
+// if there is no existing active peer from the same trusted CA.
+func (m *Manager) ConsiderNeighborRequest(
+	_ context.Context, p dview.ActivePeer,
+) (bool, error) {
+	caCert := p.CACert()
+
+	_, have := m.aByCAPKI[string(caCert.RawSubjectPublicKeyInfo)]
+
+	// Acceptable if we don't already have an active peer from this CA.
+	return !have, nil
+}
+
 // ConsiderForwardJoin always continues forwarding,
 // and it wants to connect to the new neighbor
 // if we don't already have one from the same CA.

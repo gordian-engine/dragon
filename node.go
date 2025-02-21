@@ -17,6 +17,7 @@ import (
 	"github.com/gordian-engine/dragon/internal/dk"
 	"github.com/gordian-engine/dragon/internal/dproto"
 	"github.com/gordian-engine/dragon/internal/dproto/dbsaj"
+	"github.com/gordian-engine/dragon/internal/dproto/dbsan"
 	"github.com/gordian-engine/dragon/internal/dproto/dbsin"
 	"github.com/gordian-engine/dragon/internal/dproto/dbsjoin"
 	"github.com/quic-go/quic-go"
@@ -506,6 +507,36 @@ func (n *Node) acceptConnections(ctx context.Context) {
 			// we go ahead to the next iteration of accepting connections now.
 			continue
 		}
+
+		if res.NeighborMessage {
+			if err := n.handleIncomingNeighbor(ctx, qc, res.AdmissionStream); err != nil {
+				// On error, assume we have to close the connection.
+				if errors.Is(context.Cause(ctx), err) {
+					n.log.Info(
+						"Accept loop quitting due to context cancellation during handling incoming neighbor request",
+						"remote_addr", qc.RemoteAddr().String(),
+						"cause", context.Cause(ctx),
+					)
+					return
+				}
+
+				if err := qc.CloseWithError(1, "TODO: error handling incoming neighbor request"); err != nil {
+					n.log.Info(
+						"Failed to close connection after failing to handle incoming neighbor request",
+						"remote_addr", qc.RemoteAddr().String(),
+						"err", err,
+					)
+				}
+			}
+
+			// Whether the connection was handled properly or failed,
+			// continue to the next iteration of accepting connections.
+			continue
+		}
+
+		panic(errors.New(
+			"BUG: bootstrap input protocol did not indicate join or neighbor message",
+		))
 	}
 }
 
@@ -552,7 +583,7 @@ func (n *Node) handleIncomingJoin(
 		if err := qc.CloseWithError(1, "TODO: join request denied"); err != nil {
 			n.log.Info(
 				"Failed to close connection after denying join request",
-				"remote_addr", qc.RemoteAddr().String(),
+				"remote_addr", peer.RemoteAddr.String(),
 				"err", err,
 			)
 		}
@@ -599,6 +630,129 @@ func (n *Node) handleIncomingJoin(
 		AdmissionStream:  qs,
 		DisconnectStream: res.DisconnectStream,
 		ShuffleStream:    res.ShuffleStream,
+
+		Resp: pResp,
+	}
+
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf(
+			"context cancelled while sending peering request to kernel: %w",
+			context.Cause(ctx),
+		)
+
+	case n.k.NewPeeringRequests <- pReq:
+		// Okay.
+	}
+
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf(
+			"context cancelled while awaiting peering response from kernel: %w",
+			context.Cause(ctx),
+		)
+	case resp := <-pResp:
+		if resp.RejectReason != "" {
+			// Last minute issue with adding the connection.
+			// For now, just return the error, and the caller will close the connection.
+			return fmt.Errorf("kernel rejected finalized peering: %s", resp.RejectReason)
+		}
+
+		// Otherwise there was no reject reason,
+		// so the kernel accepted the peering.
+		// We are finished accepting this connection,
+		// and now the accept loop can continue.
+		return nil
+	}
+}
+
+func (n *Node) handleIncomingNeighbor(
+	ctx context.Context, qc quic.Connection, qs quic.Stream,
+) error {
+	// We received a neighbor message from the remote.
+	// Next, we have to consult the kernel to decide whether we will accept this neighbor request.
+	peer := dview.ActivePeer{
+		TLS:        qc.ConnectionState().TLS,
+		LocalAddr:  qc.LocalAddr(),
+		RemoteAddr: qc.RemoteAddr(),
+	}
+	respCh := make(chan bool, 1)
+	req := dk.NeighborDecisionRequest{
+		Peer: peer,
+		Resp: respCh,
+	}
+
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf(
+			"context canceled while sending neighbor decision request to kernel: %w",
+			context.Cause(ctx),
+		)
+	case n.k.NeighborDecisionRequests <- req:
+		// Okay.
+	}
+
+	var accept bool
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf(
+			"context canceled while awaiting neighbor decision request from kernel: %w",
+			context.Cause(ctx),
+		)
+	case accept = <-respCh:
+		// Okay.
+	}
+
+	if !accept {
+		p := dbsan.Protocol{
+			Log: n.log.With(
+				"protocol", "reject_neighbor",
+			),
+			Conn:      qc,
+			Admission: qs,
+
+			Cfg: dbsan.Config{
+				NeighborReplyTimeout: 50 * time.Millisecond,
+			},
+		}
+		if err := p.RunReject(ctx); err != nil {
+			// We don't need to close the connection here,
+			// because the caller closes the connection upon error.
+			return fmt.Errorf("failed while rejecting neighbor request: %w", err)
+		}
+
+		return nil
+	}
+
+	// Otherwise we are accepting.
+	p := dbsan.Protocol{
+		Log: n.log.With(
+			"protocol", "accept_neighbor",
+		),
+		Conn:      qc,
+		Admission: qs,
+
+		Cfg: dbsan.Config{
+			NeighborReplyTimeout: 50 * time.Millisecond,
+			AcceptStreamsTimeout: 75 * time.Millisecond,
+		},
+	}
+
+	res, err := p.RunAccept(ctx)
+	if err != nil {
+		// We don't need to close the connection here,
+		// because the caller closes the connection upon error.
+		return fmt.Errorf("failed while accepting neighbor request: %w", err)
+	}
+
+	// Streams are initialized, so we can seend the peering to the kernel.
+	pResp := make(chan dk.NewPeeringResponse, 1)
+	pReq := dk.NewPeeringRequest{
+		QuicConn: qc,
+
+		AdmissionStream: qs,
+		DisconnectStream: res.Disconnect,
+		ShuffleStream:    res.Shuffle,
 
 		Resp: pResp,
 	}

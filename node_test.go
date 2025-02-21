@@ -235,7 +235,6 @@ func TestNode_forwardJoin(t *testing.T) {
 	// Another short delay for background work.
 	time.Sleep(50 * time.Millisecond)
 
-	t.Skip("TODO: we are sending and receiving forward joins, but we need to handle them too")
 	require.Equal(t, 2, nw.Nodes[0].Node.ActiveViewSize())
 	require.Equal(t, 2, nw.Nodes[1].Node.ActiveViewSize())
 	require.Equal(t, 2, nw.Nodes[2].Node.ActiveViewSize())

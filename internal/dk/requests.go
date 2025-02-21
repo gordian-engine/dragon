@@ -36,6 +36,15 @@ const (
 	AcceptJoinDecision
 )
 
+// NeighborRequest is sent from the outer Node to the [Kernel],
+// and the kernel reports back whether the neighbor request
+// should be accepted or denied.
+type NeighborDecisionRequest struct {
+	Peer dview.ActivePeer
+
+	Resp chan bool
+}
+
 // NewPeeringRequest is sent from the outer Node to the [Kernel],
 // telling the Kernel to add this peer to the active set.
 //

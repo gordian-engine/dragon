@@ -16,6 +16,12 @@ func (DenyingManager) ConsiderJoin(
 	return dview.DisconnectAndIgnoreJoinDecision, nil
 }
 
+func (DenyingManager) ConsiderNeighborRequest(
+	context.Context, dview.ActivePeer,
+) (bool, error) {
+	return false, nil
+}
+
 func (DenyingManager) ConsiderForwardJoin(
 	context.Context, dproto.ForwardJoinMessage,
 ) (dview.ForwardJoinDecision, error) {

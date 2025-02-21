@@ -29,7 +29,7 @@ func (h awaitNeighborReplyHandler) Handle(
 
 	var nm [2]byte
 	if _, err := io.ReadFull(s, nm[:]); err != nil {
-		return nil, fmt.Errorf("failed to read neighbor message: %w", err)
+		return nil, fmt.Errorf("failed to read neighbor reply message: %w", err)
 	}
 
 	if nm[0] != byte(dproto.NeighborReplyMessageType) {
