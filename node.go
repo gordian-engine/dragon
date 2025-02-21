@@ -41,6 +41,8 @@ type Node struct {
 
 	caPool *dca.Pool
 
+	dialer dialer
+
 	advertiseAddr string
 }
 
@@ -292,17 +294,29 @@ func NewNode(ctx context.Context, log *slog.Logger, cfg NodeConfig) (*Node, erro
 		NeighborRequests: neighborRequestsCh,
 	})
 
+	baseTLSConf := cfg.customizedTLSConfig(log)
+	caPool := dca.NewPoolFromCerts(cfg.InitialTrustedCAs)
+
 	n := &Node{
 		log: log,
 
 		k: k,
 
 		quicTransport: qt,
+		quicConf:      cfg.QUIC,
 
-		quicConf:    cfg.QUIC,
-		baseTLSConf: cfg.customizedTLSConfig(log),
+		baseTLSConf: baseTLSConf,
 
-		caPool: dca.NewPoolFromCerts(cfg.InitialTrustedCAs),
+		caPool: caPool,
+
+		dialer: dialer{
+			BaseTLSConf: baseTLSConf,
+
+			QUICTransport: qt,
+			QUICConfig:    cfg.QUIC,
+
+			CAPool: caPool,
+		},
 
 		advertiseAddr: cfg.AdvertiseAddr,
 	}
@@ -322,15 +336,14 @@ func NewNode(ctx context.Context, log *slog.Logger, cfg NodeConfig) (*Node, erro
 		go n.acceptConnections(ctx)
 	}
 
+	// For now, limit neighborDialer to one instance
+	// which means we can only dial one neighbor at a time.
+	// We could probably safely increase this.
 	n.wg.Add(1)
 	nd := &neighborDialer{
 		Log: n.log.With("node_sys", "neighbor_dialer"),
 
-		BaseTLSConf: n.baseTLSConf,
-		CAPool:      n.caPool,
-
-		QUICConf:      n.quicConf,
-		QUICTransport: n.quicTransport,
+		Dialer: n.dialer,
 
 		NeighborRequests: neighborRequestsCh,
 

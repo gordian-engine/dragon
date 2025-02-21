@@ -2,29 +2,32 @@ package dragon
 
 import (
 	"context"
-	"crypto/tls"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"sync"
 	"time"
 
-	"github.com/gordian-engine/dragon/dca"
 	"github.com/gordian-engine/dragon/internal/dk"
 	"github.com/gordian-engine/dragon/internal/dproto/dbsneighbor"
 	"github.com/quic-go/quic-go"
 )
 
+// neighborDialer runs a dedicated goroutine for making neighbor requests.
+// There are two cases where our node would make a neighbor request:
+//  1. In reaction to a forward join message
+//  2. In reaction to an active peer being disconnect
+//
+// This dedicated goroutine acts as a buffer between
+// the kernel's view manager in case 1,
+// or the kernel's active peer set in case 2,
+// and the actual kernel.
+// Doing the dial and bootstrap work in this goroutine
+// reduces contention in those critical core components.
 type neighborDialer struct {
 	Log *slog.Logger
 
-	BaseTLSConf *tls.Config
-
-	CAPool *dca.Pool
-
-	QUICConf      *quic.Config
-	QUICTransport *quic.Transport
+	Dialer dialer
 
 	NeighborRequests <-chan string
 
@@ -57,52 +60,18 @@ func (d *neighborDialer) dialAndNeighbor(ctx context.Context, addr string) {
 		return
 	}
 
-	// TODO: extract dialer type from all this.
-	// ---- beginning of code copied from (*Node).DialAndJoin
-	tlsConf := d.BaseTLSConf.Clone()
-	tlsConf.RootCAs = d.CAPool.CertPool()
-
-	qc, err := d.QUICTransport.Dial(ctx, udpAddr, tlsConf, d.QUICConf)
+	dr, err := d.Dialer.Dial(ctx, udpAddr)
 	if err != nil {
 		d.Log.Warn(
-			"Failed to dial desired neighbor",
+			"Failed to dial neighbor",
 			"addr", addr,
 			"err", err,
 		)
-		return
-	}
-
-	// Now that we have a raw connection to that peer,
-	// we need to ensure that we close it if that certificate is removed.
-	vcs := qc.ConnectionState().TLS.VerifiedChains
-	if len(vcs) == 0 {
-		panic(fmt.Errorf(
-			"IMPOSSIBLE: no verified chains after dialing remote host %q",
-			addr,
-		))
-	}
-	if len(vcs) > 1 {
-		panic(fmt.Errorf(
-			"TODO: handle multiple verified chains; dialing %q resulted in chains: %#v",
-			addr, vcs,
-		))
-	}
-
-	vc := vcs[0]
-	ca := vc[len(vc)-1]
-
-	notify := d.CAPool.NotifyRemoval(ca)
-	if notify == nil {
-		panic(errors.New(
-			"BUG: failed to get notify removal channel after successful connection to peer",
-		))
 	}
 
 	// TODO: start a new goroutine for a context.WithCancelCause paired with notify.
 
-	// ---- end of code copied from (*Node).DialAndJoin
-
-	res, err := d.bootstrapNeighbor(ctx, qc)
+	res, err := d.bootstrapNeighbor(ctx, dr.Conn)
 	if err != nil {
 		d.Log.Warn(
 			"Failed to dial and bootstrap by neighbor",
@@ -116,7 +85,7 @@ func (d *neighborDialer) dialAndNeighbor(ctx context.Context, addr string) {
 	// so now the last step is to confirm peering with the kernel.
 	pResp := make(chan dk.NewPeeringResponse, 1)
 	req := dk.NewPeeringRequest{
-		QuicConn: qc,
+		QuicConn: dr.Conn,
 
 		AdmissionStream:  res.Admission,
 		DisconnectStream: res.Disconnect,
@@ -147,7 +116,9 @@ func (d *neighborDialer) dialAndNeighbor(ctx context.Context, addr string) {
 	case resp := <-pResp:
 		if resp.RejectReason != "" {
 			// Last minute issue with adding the connection.
-			if err := qc.CloseWithError(1, "TODO: peering rejected: "+resp.RejectReason); err != nil {
+			// TODO: we should actually use a Disconnect message here,
+			// since we have established all streams.
+			if err := dr.Conn.CloseWithError(1, "TODO: peering rejected: "+resp.RejectReason); err != nil {
 				d.Log.Debug("Failed to close connection", "err", err)
 			}
 
