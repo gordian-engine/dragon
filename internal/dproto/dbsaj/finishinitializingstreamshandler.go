@@ -11,11 +11,11 @@ import (
 
 type finishInitializingStreamsHandler struct {
 	OuterLog *slog.Logger
-	Cfg      *AcceptJoinConfig
+	Cfg      *Config
 }
 
 func (h finishInitializingStreamsHandler) Handle(
-	ctx context.Context, c quic.Connection, s quic.Stream, res *AcceptJoinResult,
+	ctx context.Context, c quic.Connection, s quic.Stream, res *Result,
 ) (acceptJoinHandler, error) {
 	// It doesn't really matter what order we open the streams,
 	// but we'll do Disconnect first since that happens to be declared first in the constants.
@@ -40,7 +40,7 @@ func (h finishInitializingStreamsHandler) Handle(
 		return nil, fmt.Errorf("failed to write disconnect stream header: %w", err)
 	}
 
-	res.DisconnectStream = ds
+	res.Disconnect = ds
 
 	ss, err := c.OpenStreamSync(ctx)
 	if err != nil {
@@ -55,7 +55,7 @@ func (h finishInitializingStreamsHandler) Handle(
 		return nil, fmt.Errorf("failed to write shuffle stream header: %w", err)
 	}
 
-	res.ShuffleStream = ss
+	res.Shuffle = ss
 
 	// We have initialized both streams.
 	// There is nothing left to do in this protocol set.

@@ -599,13 +599,13 @@ func (n *Node) handleIncomingJoin(
 		))
 	}
 
-	p := dbsaj.AcceptJoinProtocol{
+	p := dbsaj.Protocol{
 		Log: n.log.With(
 			"protocol", "accept_join",
 			"remote_addr", qc.RemoteAddr().String(),
 		),
 
-		Cfg: dbsaj.AcceptJoinConfig{
+		Cfg: dbsaj.Config{
 			NeighborRequestTimeout:   100 * time.Millisecond,
 			NeighborReplyTimeout:     100 * time.Millisecond,
 			InitializeStreamsTimeout: 100 * time.Millisecond,
@@ -628,8 +628,8 @@ func (n *Node) handleIncomingJoin(
 		QuicConn: qc,
 
 		AdmissionStream:  qs,
-		DisconnectStream: res.DisconnectStream,
-		ShuffleStream:    res.ShuffleStream,
+		DisconnectStream: res.Disconnect,
+		ShuffleStream:    res.Shuffle,
 
 		Resp: pResp,
 	}

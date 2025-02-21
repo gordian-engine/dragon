@@ -9,17 +9,17 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-type AcceptJoinProtocol struct {
+type Protocol struct {
 	Log *slog.Logger
 
-	Cfg AcceptJoinConfig
+	Cfg Config
 
 	Conn quic.Connection
 
 	AdmissionStream quic.Stream
 }
 
-type AcceptJoinConfig struct {
+type Config struct {
 	// Timeout for writing the neighbor request.
 	NeighborRequestTimeout time.Duration
 
@@ -32,7 +32,7 @@ type AcceptJoinConfig struct {
 	NowFn func() time.Time
 }
 
-func (c AcceptJoinConfig) Now() time.Time {
+func (c Config) Now() time.Time {
 	if c.NowFn != nil {
 		return c.NowFn()
 	}
@@ -40,17 +40,17 @@ func (c AcceptJoinConfig) Now() time.Time {
 	return time.Now()
 }
 
-type AcceptJoinResult struct {
-	DisconnectStream, ShuffleStream quic.Stream
+type Result struct {
+	Disconnect, Shuffle quic.Stream
 }
 
-func (p *AcceptJoinProtocol) Run(ctx context.Context) (AcceptJoinResult, error) {
+func (p *Protocol) Run(ctx context.Context) (Result, error) {
 	var h acceptJoinHandler = sendNeighborRequestHandler{
 		OuterLog: p.Log,
 		Cfg:      &p.Cfg,
 	}
 
-	var res AcceptJoinResult
+	var res Result
 
 	for {
 		next, err := h.Handle(ctx, p.Conn, p.AdmissionStream, &res)
@@ -71,6 +71,6 @@ func (p *AcceptJoinProtocol) Run(ctx context.Context) (AcceptJoinResult, error) 
 }
 
 type acceptJoinHandler interface {
-	Handle(context.Context, quic.Connection, quic.Stream, *AcceptJoinResult) (acceptJoinHandler, error)
+	Handle(context.Context, quic.Connection, quic.Stream, *Result) (acceptJoinHandler, error)
 	Name() string
 }

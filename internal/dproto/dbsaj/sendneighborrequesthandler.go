@@ -11,11 +11,11 @@ import (
 
 type sendNeighborRequestHandler struct {
 	OuterLog *slog.Logger
-	Cfg      *AcceptJoinConfig
+	Cfg      *Config
 }
 
 func (h sendNeighborRequestHandler) Handle(
-	ctx context.Context, _ quic.Connection, s quic.Stream, res *AcceptJoinResult,
+	ctx context.Context, _ quic.Connection, s quic.Stream, res *Result,
 ) (acceptJoinHandler, error) {
 	if err := s.SetWriteDeadline(h.Cfg.Now().Add(h.Cfg.NeighborRequestTimeout)); err != nil {
 		return nil, fmt.Errorf(

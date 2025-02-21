@@ -13,11 +13,11 @@ import (
 
 type awaitNeighborReplyHandler struct {
 	OuterLog *slog.Logger
-	Cfg      *AcceptJoinConfig
+	Cfg      *Config
 }
 
 func (h awaitNeighborReplyHandler) Handle(
-	ctx context.Context, _ quic.Connection, s quic.Stream, res *AcceptJoinResult,
+	ctx context.Context, _ quic.Connection, s quic.Stream, res *Result,
 ) (acceptJoinHandler, error) {
 	if err := s.SetReadDeadline(h.Cfg.Now().Add(h.Cfg.NeighborReplyTimeout)); err != nil {
 		return nil, fmt.Errorf(
