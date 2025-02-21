@@ -362,7 +362,7 @@ func (n *Node) startListener() error {
 	// we can dynamically set the ClientCAs certificate pool
 	// any time a client connects.
 	tlsConf := n.baseTLSConf.Clone()
-	tlsConf.GetConfigForClient = n.getQUICListenerTLCConfig
+	tlsConf.GetConfigForClient = n.getQUICListenerTLSConfig
 
 	ql, err := n.quicTransport.Listen(tlsConf, n.quicConf)
 	if err != nil {
@@ -373,12 +373,12 @@ func (n *Node) startListener() error {
 	return nil
 }
 
-// getQUICListenerTLCConfig is used as the GetConfigForClient callback
+// getQUICListenerTLSConfig is used as the GetConfigForClient callback
 // in the tls.Config that the QUIC listener uses.
 //
 // Dynamically retrieiving the TLS config allows us to have an up-to-date TLS config
 // any time an incoming connection arrives.
-func (n *Node) getQUICListenerTLCConfig(*tls.ClientHelloInfo) (*tls.Config, error) {
+func (n *Node) getQUICListenerTLSConfig(*tls.ClientHelloInfo) (*tls.Config, error) {
 	// TOOD: right now we build a new TLS config for every incoming client connection,
 	// but we should be able to create a single shared instance
 	// that only gets updated once the dca.Pool is updated.
@@ -750,7 +750,7 @@ func (n *Node) handleIncomingNeighbor(
 	pReq := dk.NewPeeringRequest{
 		QuicConn: qc,
 
-		AdmissionStream: qs,
+		AdmissionStream:  qs,
 		DisconnectStream: res.Disconnect,
 		ShuffleStream:    res.Shuffle,
 
@@ -799,43 +799,14 @@ func (n *Node) handleIncomingNeighbor(
 // TODO: we should have DisconnectedError or something to specifically indicate
 // that semi-expected disconnect.
 func (n *Node) DialAndJoin(ctx context.Context, addr net.Addr) error {
-	tlsConf := n.baseTLSConf.Clone()
-	tlsConf.RootCAs = n.caPool.CertPool()
-
-	qc, err := n.quicTransport.Dial(ctx, addr, tlsConf, n.quicConf)
+	dr, err := n.dialer.Dial(ctx, addr)
 	if err != nil {
 		return fmt.Errorf("DialAndJoin: dial failed: %w", err)
 	}
 
-	// Now that we have a raw connection to that peer,
-	// we need to ensure that we close it if that certificate is removed.
-	vcs := qc.ConnectionState().TLS.VerifiedChains
-	if len(vcs) == 0 {
-		panic(fmt.Errorf(
-			"IMPOSSIBLE: no verified chains after dialing remote host %q",
-			addr,
-		))
-	}
-	if len(vcs) > 1 {
-		panic(fmt.Errorf(
-			"TODO: handle multiple verified chains; dialing %q resulted in chains: %#v",
-			addr, vcs,
-		))
-	}
-
-	vc := vcs[0]
-	ca := vc[len(vc)-1]
-
-	notify := n.caPool.NotifyRemoval(ca)
-	if notify == nil {
-		panic(errors.New(
-			"BUG: failed to get notify removal channel after successful connection to peer",
-		))
-	}
-
 	// TODO: start a new goroutine for a context.WithCancelCause paired with notify.
 
-	res, err := n.bootstrapJoin(ctx, qc)
+	res, err := n.bootstrapJoin(ctx, dr.Conn)
 	if err != nil {
 		return fmt.Errorf("DialAndJoin: failed to bootstrap: %w", err)
 	}
@@ -844,7 +815,7 @@ func (n *Node) DialAndJoin(ctx context.Context, addr net.Addr) error {
 	// so now the last step is to confirm peering with the kernel.
 	pResp := make(chan dk.NewPeeringResponse, 1)
 	req := dk.NewPeeringRequest{
-		QuicConn: qc,
+		QuicConn: dr.Conn,
 
 		AdmissionStream:  res.AdmissionStream,
 		DisconnectStream: res.DisconnectStream,
@@ -867,7 +838,7 @@ func (n *Node) DialAndJoin(ctx context.Context, addr net.Addr) error {
 	case resp := <-pResp:
 		if resp.RejectReason != "" {
 			// Last minute issue with adding the connection.
-			if err := qc.CloseWithError(1, "TODO: peering rejected: "+resp.RejectReason); err != nil {
+			if err := dr.Conn.CloseWithError(1, "TODO: peering rejected: "+resp.RejectReason); err != nil {
 				n.log.Debug("Failed to close connection", "err", err)
 			}
 
