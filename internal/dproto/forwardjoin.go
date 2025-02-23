@@ -1,8 +1,10 @@
 package dproto
 
 import (
+	"bytes"
 	"crypto/x509"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 )
@@ -10,12 +12,13 @@ import (
 // ForwardJoin message is conditionally sent to active peers
 // when a Node receives a [JoinMessage].
 type ForwardJoinMessage struct {
-	// The initial message sent by the joining node.
-	JoinMessage JoinMessage
+	// The initial address attestation sent by the joining node.
+	AA AddressAttestation
 
 	// The certificate chain of the joining node.
 	JoiningCertChain []*x509.Certificate
 
+	// How many more hops the join may go.
 	TTL uint8
 }
 
@@ -24,13 +27,7 @@ func (m ForwardJoinMessage) Verify() error {
 	return nil
 }
 
-func (m ForwardJoinMessage) Encode(w io.Writer) (int, error) {
-	if len(m.JoinMessage.Addr) > 255 {
-		panic(fmt.Errorf(
-			"ILLEGAL: tried to encode join address of %d bytes but limit is 255 (%q)",
-			len(m.JoinMessage.Addr), m.JoinMessage.Addr,
-		))
-	}
+func (m ForwardJoinMessage) Encode(w io.Writer) error {
 	if len(m.JoiningCertChain) > 255 {
 		panic(fmt.Errorf(
 			"ILLEGAL: joining cert chain too long (%d)",
@@ -44,41 +41,36 @@ func (m ForwardJoinMessage) Encode(w io.Writer) (int, error) {
 		))
 	}
 
-	buf := make([]byte, 2, 4)
-	buf[0] = byte(ForwardJoinMessageType)
-	buf[1] = byte(len(m.JoinMessage.Addr))
-	buf = binary.BigEndian.AppendUint16(buf, uint16(len(m.JoinMessage.Signature)))
+	// Put as much as possible in the first send buffer.
+	sz := 1 + // Forward join message type.
+		m.AA.EncodedSize() +
+		1 + // uint8 number of certificates in the chain.
+		(2 * len(m.JoiningCertChain)) + // uint16 for each cert size.
+		1 // uint8 TTL.
 
-	// Sizes for join message.
-	nn, err := w.Write(buf)
-	if err != nil {
-		return nn, fmt.Errorf("failed to write message header: %w", err)
-	}
-	n := nn
-
-	// Join message content.
-	nn, err = io.WriteString(w, m.JoinMessage.Addr)
-	n += nn
-	if err != nil {
-		return n, fmt.Errorf("failed to write join message address: %w", err)
+	// TODO: we could save a bit of space by not encoding the raw CA certificate.
+	// We expect the remote to already have it.
+	// So we could send the unique identifier of its RawSubjectPublicKeyInfo.
+	for _, c := range m.JoiningCertChain {
+		sz += len(c.Raw)
 	}
 
-	nn, err = io.WriteString(w, m.JoinMessage.Timestamp)
-	n += nn
-	if err != nil {
-		return n, fmt.Errorf("failed to write join message timestamp: %w", err)
+	buf := bytes.NewBuffer(make([]byte, 0, sz))
+	_ = buf.WriteByte(byte(ForwardJoinMessageType))
+
+	// bytes.Buffer is documented to always return nil for write operations.
+	// And currently, (AddressAttestation).Encode can only return an error
+	// from the underlying writer, so this should never fail.
+	if err := m.AA.Encode(buf); err != nil {
+		panic(errors.New(
+			"BUG: encoding an address attestation should never fail",
+		))
 	}
 
-	nn, err = w.Write(m.JoinMessage.Signature)
-	n += nn
-	if err != nil {
-		return n, fmt.Errorf("failed to write join message signature: %w", err)
-	}
+	// Number of certificates in the chain.
+	_ = buf.WriteByte(byte(len(m.JoiningCertChain)))
 
-	// Next, the number of certificates in the chain, plus the TTL.
-	buf = make([]byte, 1, 1+(2*len(m.JoiningCertChain))+1)
-	buf[0] = byte(len(m.JoiningCertChain))
-
+	// Each raw certificate size.
 	for _, c := range m.JoiningCertChain {
 		const maxUint16 = (1 << 16) - 1
 		if len(c.Raw) > maxUint16 {
@@ -87,69 +79,52 @@ func (m ForwardJoinMessage) Encode(w io.Writer) (int, error) {
 				maxUint16,
 			))
 		}
-		buf = binary.BigEndian.AppendUint16(buf, uint16(len(c.Raw)))
-	}
-
-	buf = append(buf, m.TTL)
-
-	nn, err = w.Write(buf)
-	n += nn
-	if err != nil {
-		return n, fmt.Errorf("failed to write certificate count and sizes: %w", err)
-	}
-
-	for i, c := range m.JoiningCertChain {
-		nn, err = w.Write(c.Raw)
-		n += nn
-		if err != nil {
-			return n, fmt.Errorf("failed to write certificate at index %d: %w", i, err)
+		if err := binary.Write(buf, binary.BigEndian, uint16(len(c.Raw))); err != nil {
+			panic(fmt.Errorf(
+				"IMPOSSIBLE: failed to encode big endian uint16: %w", err,
+			))
 		}
 	}
 
-	return n, nil
+	// Now loop again and write the raw certificate data.
+	// If we really wanted to, we could roll this in the above loop,
+	// but these chains should be short enough
+	// that it wouldn't be a noticeable difference.
+	for _, c := range m.JoiningCertChain {
+		_, _ = buf.Write(c.Raw)
+	}
+
+	// And finally, the TTL byte.
+	_ = buf.WriteByte(m.TTL)
+
+	_, err := buf.WriteTo(w)
+	if err != nil {
+		return fmt.Errorf("failed to write encoded forward join: %w", err)
+	}
+
+	return nil
 }
 
 func (m *ForwardJoinMessage) Decode(r io.Reader) error {
 	// We have to assume the header byte has already been consumed.
-	// So, first we read three bytes for the join message lengths.
-	var szBuf [3]byte
+	// So, we can decode the address attestation first.
+	if err := m.AA.Decode(r); err != nil {
+		return fmt.Errorf("failed to decode address attestation: %w", err)
+	}
+
+	// Next in the encode sequence is the number of certificates.
+	var szBuf [1]byte
 	if _, err := io.ReadFull(r, szBuf[:]); err != nil {
-		return fmt.Errorf("failed to read forward join message first sizes: %w", err)
-	}
-
-	addrSz := szBuf[0]
-	sigSz := binary.BigEndian.Uint16(szBuf[1:])
-
-	jmBuf := make([]byte, max(int(addrSz), joinMessageTimestampLen, int(sigSz)))
-	if _, err := io.ReadFull(r, jmBuf[:addrSz]); err != nil {
-		return fmt.Errorf("failed to read forward join address: %w", err)
-	}
-	m.JoinMessage.Addr = string(jmBuf[:addrSz])
-
-	if _, err := io.ReadFull(r, jmBuf[:joinMessageTimestampLen]); err != nil {
-		return fmt.Errorf("failed to read forward join timestamp: %w", err)
-	}
-	m.JoinMessage.Timestamp = string(jmBuf[:joinMessageTimestampLen])
-
-	if _, err := io.ReadFull(r, jmBuf[:sigSz]); err != nil {
-		return fmt.Errorf("failed to read forward join signature: %w", err)
-	}
-	// Take ownership of jmBuf for the signature.
-	m.JoinMessage.Signature = jmBuf[:sigSz:sigSz]
-
-	// Now the count of certificates.
-	if _, err := io.ReadFull(r, szBuf[:1]); err != nil {
 		return fmt.Errorf("failed to read certificate count: %w", err)
 	}
 
-	// Now we know how many certificate sizes to read. Plus the TTL.
-	cSizes := make([]byte, (2*szBuf[0])+1)
+	// Read in the certificate sizes.
+	cSizes := make([]byte, 2*szBuf[0])
 	if _, err := io.ReadFull(r, cSizes); err != nil {
 		return fmt.Errorf("failed to read certificate sizes: %w", err)
 	}
 
-	m.TTL = cSizes[len(cSizes)-1]
-
+	// Right-size the joining cert chain.
 	if cap(m.JoiningCertChain) >= int(szBuf[0]) {
 		m.JoiningCertChain = m.JoiningCertChain[:szBuf[0]]
 	} else {
@@ -157,6 +132,8 @@ func (m *ForwardJoinMessage) Decode(r io.Reader) error {
 	}
 
 	for i := range m.JoiningCertChain {
+		// We have to allocate a byte slice,
+		// and the call to x509.ParseCertificate will take ownership of it.
 		raw := make([]byte, binary.BigEndian.Uint16(cSizes))
 		cSizes = cSizes[2:]
 
@@ -170,6 +147,14 @@ func (m *ForwardJoinMessage) Decode(r io.Reader) error {
 			return fmt.Errorf("failed to parse certificate at index %d: %w", i, err)
 		}
 	}
+
+	// Finally, read one more byte for the TTL.
+	// We already had a 1-byte slice we can reuse for that.
+	if _, err := io.ReadFull(r, szBuf[:]); err != nil {
+		return fmt.Errorf("failed to read TTL byte: %w", err)
+	}
+
+	m.TTL = szBuf[0]
 
 	return nil
 }

@@ -41,7 +41,7 @@ func handleSeedForwardJoin(
 	// But we might not see forward joins enough to be worth the trouble.
 	var buf bytes.Buffer
 
-	if _, err := sfj.Msg.Encode(&buf); err != nil {
+	if err := sfj.Msg.Encode(&buf); err != nil {
 		log.Error("Failed to encode forward join message", "err", err)
 		return
 	}
@@ -50,7 +50,7 @@ func handleSeedForwardJoin(
 
 	for _, s := range sfj.Streams {
 		w := WorkForwardJoin{
-			Raw: raw,
+			Raw:    raw,
 			Stream: s,
 		}
 

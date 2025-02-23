@@ -189,7 +189,7 @@ func (k *Kernel) handleJoinRequest(ctx context.Context, req JoinRequest) {
 	// (whether we accepted or disconnected at this point),
 	// so we delegate this to the active peer set.
 	msg := dproto.ForwardJoinMessage{
-		JoinMessage:      req.Msg,
+		AA:               req.Msg.AA,
 		JoiningCertChain: req.Peer.TLS.VerifiedChains[0],
 
 		TTL: 4, // TODO: make this configurable.
@@ -306,7 +306,7 @@ func (k *Kernel) handleForwardJoinFromNetwork(ctx context.Context, req dps.Forwa
 	}
 
 	if d.MakeNeighborRequest {
-		addr := req.Msg.JoinMessage.Addr
+		addr := req.Msg.AA.Addr
 		select {
 		case k.neighborRequests <- addr:
 			// Okay.

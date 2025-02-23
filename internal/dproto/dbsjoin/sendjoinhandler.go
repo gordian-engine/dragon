@@ -22,9 +22,11 @@ func (h sendJoinHandler) Handle(
 	// so we need to set up the admission stream before anything else.
 
 	jm := dproto.JoinMessage{
-		Addr: h.Cfg.AdvertiseAddr,
+		AA: dproto.AddressAttestation{
+			Addr:      h.Cfg.AdvertiseAddr,
+			Timestamp: h.Cfg.Now(),
+		},
 	}
-	jm.SetTimestamp(h.Cfg.Now())
 
 	if err := h.signJoinMessage(&jm); err != nil {
 		return nil, fmt.Errorf("failed to sign join message: %w", err)
@@ -58,13 +60,13 @@ func (h sendJoinHandler) Handle(
 
 // signJoinMessage updates jm to include a signature via h.Cfg.Cert.
 func (h sendJoinHandler) signJoinMessage(jm *dproto.JoinMessage) error {
-	joinSignContent := jm.AppendSignContent(nil)
+	joinSignContent := jm.AA.AppendSignContent(nil)
 	sig, err := dcrypto.SignMessageWithTLSCert(joinSignContent, h.Cfg.Cert)
 	if err != nil {
 		return fmt.Errorf("failed to sign join message: %w", err)
 	}
 
-	jm.Signature = sig
+	jm.AA.Signature = sig
 	return nil
 }
 

@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 
-	"github.com/gordian-engine/dragon/internal/dcrypto"
 	"github.com/gordian-engine/dragon/internal/dproto"
 	"github.com/quic-go/quic-go"
 )
@@ -76,26 +75,18 @@ func (h receiveAdmissionStreamHandler) handleJoinMessage(
 
 func (h receiveAdmissionStreamHandler) validateJoinMessage(jm dproto.JoinMessage) error {
 	// It's cheaper to validate the timestamp first.
-	t, err := jm.ParseTimestamp()
-	if err != nil {
-		return fmt.Errorf("invalid join message: invalid timestamp: %w", err)
-	}
-
 	now := h.Cfg.Now() // Prefer a single syscall for current time.
-	if now.Before(t.Add(-h.Cfg.GraceBeforeJoinTimestamp)) {
-		return fmt.Errorf("invalid join message: timestamp %s too far in future", jm.Timestamp)
+	ts := jm.AA.Timestamp
+	if now.Before(ts.Add(-h.Cfg.GraceBeforeJoinTimestamp)) {
+		return fmt.Errorf("invalid join message: timestamp %s too far in future", ts)
 	}
 
-	if now.After(t.Add(h.Cfg.GraceAfterJoinTimestamp)) {
-		return fmt.Errorf("invalid join message: timestamp %s too far in past", jm.Timestamp)
+	if now.After(ts.Add(h.Cfg.GraceAfterJoinTimestamp)) {
+		return fmt.Errorf("invalid join message: timestamp %s too far in past", ts)
 	}
 
 	// The timestamp checked out, so now validate the signature.
-	if err := dcrypto.VerifySignatureWithTLSCert(
-		jm.AppendSignContent(nil),
-		h.PeerCert,
-		jm.Signature,
-	); err != nil {
+	if err := jm.AA.VerifySignature(h.PeerCert); err != nil {
 		return fmt.Errorf("invalid join message: bad signature: %w", err)
 	}
 
