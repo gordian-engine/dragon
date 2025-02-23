@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/gordian-engine/dragon/internal/dk"
-	"github.com/gordian-engine/dragon/internal/dproto/dbsneighbor"
+	"github.com/gordian-engine/dragon/internal/dproto/dbootstrap/dbssendneighbor"
 	"github.com/quic-go/quic-go"
 )
 
@@ -137,11 +137,11 @@ func (d *neighborDialer) dialAndNeighbor(ctx context.Context, addr string) {
 
 func (d *neighborDialer) bootstrapNeighbor(
 	ctx context.Context, qc quic.Connection,
-) (dbsneighbor.Result, error) {
-	p := dbsneighbor.Protocol{
+) (dbssendneighbor.Result, error) {
+	p := dbssendneighbor.Protocol{
 		Log:  d.Log.With("protocol", "outgoing_bootstrap_neighbor"),
 		Conn: qc,
-		Cfg: dbsneighbor.Config{
+		Cfg: dbssendneighbor.Config{
 			OpenStreamTimeout:         100 * time.Millisecond,
 			AwaitNeighborReplyTimeout: 75 * time.Millisecond,
 			InitializeStreamsTimeout:  75 * time.Millisecond,

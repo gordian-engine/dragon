@@ -16,10 +16,10 @@ import (
 	"github.com/gordian-engine/dragon/dview"
 	"github.com/gordian-engine/dragon/internal/dk"
 	"github.com/gordian-engine/dragon/internal/dproto"
-	"github.com/gordian-engine/dragon/internal/dproto/dbsaj"
-	"github.com/gordian-engine/dragon/internal/dproto/dbsan"
-	"github.com/gordian-engine/dragon/internal/dproto/dbsin"
-	"github.com/gordian-engine/dragon/internal/dproto/dbsjoin"
+	"github.com/gordian-engine/dragon/internal/dproto/dbootstrap/dbsacceptjoin"
+	"github.com/gordian-engine/dragon/internal/dproto/dbootstrap/dbsacceptneighbor"
+	"github.com/gordian-engine/dragon/internal/dproto/dbootstrap/dbsinbound"
+	"github.com/gordian-engine/dragon/internal/dproto/dbootstrap/dbssendjoin"
 	"github.com/quic-go/quic-go"
 )
 
@@ -476,14 +476,14 @@ func (n *Node) acceptConnections(ctx context.Context) {
 
 		// TODO: update context to handle notify on certificate removal.
 
-		p := dbsin.Protocol{
+		p := dbsinbound.Protocol{
 			Log:  n.log.With("protocol", "incoming_bootstrap"),
 			Conn: qc,
 
 			// The first element of PeerCertificates is supposed to be the leaf certificate.
 			PeerCert: qc.ConnectionState().TLS.PeerCertificates[0],
 
-			Cfg: dbsin.Config{
+			Cfg: dbsinbound.Config{
 				AcceptBootstrapStreamTimeout: time.Second,
 
 				ReadStreamHeaderTimeout: time.Second,
@@ -639,13 +639,13 @@ func (n *Node) handleIncomingJoin(
 		))
 	}
 
-	p := dbsaj.Protocol{
+	p := dbsacceptjoin.Protocol{
 		Log: n.log.With(
 			"protocol", "accept_join",
 			"remote_addr", qc.RemoteAddr().String(),
 		),
 
-		Cfg: dbsaj.Config{
+		Cfg: dbsacceptjoin.Config{
 			NeighborRequestTimeout:   100 * time.Millisecond,
 			NeighborReplyTimeout:     100 * time.Millisecond,
 			InitializeStreamsTimeout: 100 * time.Millisecond,
@@ -744,14 +744,14 @@ func (n *Node) handleIncomingNeighbor(
 	}
 
 	if !accept {
-		p := dbsan.Protocol{
+		p := dbsacceptneighbor.Protocol{
 			Log: n.log.With(
 				"protocol", "reject_neighbor",
 			),
 			Conn:      qc,
 			Admission: qs,
 
-			Cfg: dbsan.Config{
+			Cfg: dbsacceptneighbor.Config{
 				NeighborReplyTimeout: 50 * time.Millisecond,
 			},
 		}
@@ -765,14 +765,14 @@ func (n *Node) handleIncomingNeighbor(
 	}
 
 	// Otherwise we are accepting.
-	p := dbsan.Protocol{
+	p := dbsacceptneighbor.Protocol{
 		Log: n.log.With(
 			"protocol", "accept_neighbor",
 		),
 		Conn:      qc,
 		Admission: qs,
 
-		Cfg: dbsan.Config{
+		Cfg: dbsacceptneighbor.Config{
 			NeighborReplyTimeout: 50 * time.Millisecond,
 			AcceptStreamsTimeout: 75 * time.Millisecond,
 		},
@@ -893,11 +893,11 @@ func (n *Node) DialAndJoin(ctx context.Context, addr net.Addr) error {
 // bootstrapJoin bootstraps all protocol streams on the given connection.
 func (n *Node) bootstrapJoin(
 	ctx context.Context, qc quic.Connection,
-) (dbsjoin.Result, error) {
-	p := dbsjoin.Protocol{
+) (dbssendjoin.Result, error) {
+	p := dbssendjoin.Protocol{
 		Log:  n.log.With("protocol", "outgoing_bootstrap_join"),
 		Conn: qc,
-		Cfg: dbsjoin.Config{
+		Cfg: dbssendjoin.Config{
 			AdvertiseAddr: n.advertiseAddr,
 
 			// TODO: for now these are all hardcoded,
