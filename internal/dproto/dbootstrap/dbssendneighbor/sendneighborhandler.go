@@ -1,10 +1,13 @@
 package dbssendneighbor
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
+	"github.com/gordian-engine/dragon/internal/dcrypto"
 	"github.com/gordian-engine/dragon/internal/dproto"
 	"github.com/quic-go/quic-go"
 )
@@ -19,6 +22,19 @@ func (h sendNeighborHandler) Handle(
 ) (handler, error) {
 	// We only have a bare connection at this point,
 	// so we need to set up the admission stream before anything else.
+
+	aa := dproto.AddressAttestation{
+		Addr:      h.Cfg.AdvertiseAddr,
+		Timestamp: h.Cfg.Now(),
+	}
+
+	joinSignContent := aa.AppendSignContent(nil)
+	sig, err := dcrypto.SignMessageWithTLSCert(joinSignContent, h.Cfg.Cert)
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign address attestation: %w", err)
+	}
+
+	aa.Signature = sig
 
 	// There's no apparent other way to set a deadline on opening a stream,
 	// besides using OpenStreamSync with a cancelable context.
@@ -40,12 +56,17 @@ func (h sendNeighborHandler) Handle(
 		return nil, fmt.Errorf("failed to set neighbor bootstrap stream deadline: %w", err)
 	}
 
-	out := [3]byte{
-		dproto.CurrentProtocolVersion,
-		byte(dproto.AdmissionStreamType),
-		byte(dproto.NeighborMessageType),
+	buf := bytes.NewBuffer(make([]byte, 0, 3+aa.EncodedSize()))
+	_ = buf.WriteByte(dproto.CurrentProtocolVersion)
+	_ = buf.WriteByte(byte(dproto.AdmissionStreamType))
+	_ = buf.WriteByte(byte(dproto.NeighborMessageType))
+
+	if err := aa.Encode(buf); err != nil {
+		panic(errors.New(
+			"BUG: encoding an address attestation should never fail",
+		))
 	}
-	if _, err := s.Write(out[:]); err != nil {
+	if _, err := buf.WriteTo(s); err != nil {
 		return nil, fmt.Errorf("failed to write stream header and neighbor message type: %w", err)
 	}
 

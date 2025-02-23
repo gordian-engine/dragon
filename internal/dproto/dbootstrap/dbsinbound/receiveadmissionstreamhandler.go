@@ -38,11 +38,7 @@ func (h receiveAdmissionStreamHandler) Handle(
 		return nil, h.handleJoinMessage(res)
 
 	case byte(dproto.NeighborMessageType):
-		// There is no data inside the neighbor message,
-		// so we don't have to read anything.
-		// We just have to mark the Result.
-		res.NeighborMessage = true
-		return nil, nil
+		return nil, h.handleNeighborMessage(res)
 
 	default:
 		return nil, fmt.Errorf("invalid admission stream message type: %d", typeBuf[0])
@@ -60,7 +56,7 @@ func (h receiveAdmissionStreamHandler) handleJoinMessage(
 		)
 	}
 
-	if err := h.validateJoinMessage(jm); err != nil {
+	if err := h.validateAddressAttestation(jm.AA); err != nil {
 		return err
 	}
 
@@ -73,10 +69,36 @@ func (h receiveAdmissionStreamHandler) handleJoinMessage(
 	return nil
 }
 
-func (h receiveAdmissionStreamHandler) validateJoinMessage(jm dproto.JoinMessage) error {
+func (h receiveAdmissionStreamHandler) handleNeighborMessage(
+	res *Result,
+) error {
+	// Still relying on the earlier set read deadline.
+	var nm dproto.NeighborMessage
+	if err := nm.Decode(res.AdmissionStream); err != nil {
+		return fmt.Errorf(
+			"failed to decode join message from admission stream: %w", err,
+		)
+	}
+
+	if err := h.validateAddressAttestation(nm.AA); err != nil {
+		return err
+	}
+
+	// If the neighbor message passed validation, we terminate the protocol here.
+	// At this point it is the Node's responsibility
+	// to consult the kernel to decide whether we accept this neighbor request.
+	// (We do that work in the Node to avoid coupling the protocol handlers
+	// with the Node's kernel.)
+	res.NeighborMessage = &nm
+	return nil
+}
+
+func (h receiveAdmissionStreamHandler) validateAddressAttestation(
+	aa dproto.AddressAttestation,
+) error {
 	// It's cheaper to validate the timestamp first.
 	now := h.Cfg.Now() // Prefer a single syscall for current time.
-	ts := jm.AA.Timestamp
+	ts := aa.Timestamp
 	if now.Before(ts.Add(-h.Cfg.GraceBeforeJoinTimestamp)) {
 		return fmt.Errorf("invalid join message: timestamp %s too far in future", ts)
 	}
@@ -86,7 +108,7 @@ func (h receiveAdmissionStreamHandler) validateJoinMessage(jm dproto.JoinMessage
 	}
 
 	// The timestamp checked out, so now validate the signature.
-	if err := jm.AA.VerifySignature(h.PeerCert); err != nil {
+	if err := aa.VerifySignature(h.PeerCert); err != nil {
 		return fmt.Errorf("invalid join message: bad signature: %w", err)
 	}
 

@@ -2,6 +2,7 @@ package dbssendneighbor
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"time"
@@ -20,6 +21,15 @@ type Protocol struct {
 }
 
 type Config struct {
+	// The address to advertise on the outgoing neighbor message.
+	// This is needed so the node we join can include us in outbound shuffles.
+	AdvertiseAddr string
+
+	// Our TLS certificate.
+	// This is used for signing the outgoing address attestation
+	// for the neighbor request.
+	Cert tls.Certificate
+
 	// Timeout for our open stream request to complete.
 	OpenStreamTimeout time.Duration
 

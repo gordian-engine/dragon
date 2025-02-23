@@ -2,6 +2,7 @@ package dragon
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net"
@@ -32,6 +33,9 @@ type neighborDialer struct {
 	NeighborRequests <-chan string
 
 	NewPeeringRequests chan<- dk.NewPeeringRequest
+
+	AdvertiseAddr string
+	Cert          tls.Certificate
 }
 
 func (d *neighborDialer) Run(ctx context.Context, wg *sync.WaitGroup) {
@@ -142,6 +146,9 @@ func (d *neighborDialer) bootstrapNeighbor(
 		Log:  d.Log.With("protocol", "outgoing_bootstrap_neighbor"),
 		Conn: qc,
 		Cfg: dbssendneighbor.Config{
+			AdvertiseAddr: d.AdvertiseAddr,
+			Cert:          d.Cert,
+
 			OpenStreamTimeout:         100 * time.Millisecond,
 			AwaitNeighborReplyTimeout: 75 * time.Millisecond,
 			InitializeStreamsTimeout:  75 * time.Millisecond,

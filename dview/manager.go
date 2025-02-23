@@ -17,6 +17,8 @@ type ActivePeer struct {
 	// than an entire tls.ConnectionState.
 	TLS tls.ConnectionState
 
+	// TODO: this should contain an address attestation.
+
 	// The address of our local listener.
 	// Might be relevant if the system is configured with multiple listeners.
 	LocalAddr net.Addr
@@ -38,6 +40,8 @@ func (p ActivePeer) CACert() *x509.Certificate {
 // (peers we know about, but are not directly connected with).
 type PassivePeer struct {
 	Addr string
+
+	// TODO: this should contain an address attestation.
 
 	// The trusted CA who signed this peer's leaf certificate.
 	CACert *x509.Certificate

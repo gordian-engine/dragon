@@ -389,6 +389,12 @@ func NewNode(ctx context.Context, log *slog.Logger, cfg NodeConfig) (*Node, erro
 		NeighborRequests: neighborRequestsCh,
 
 		NewPeeringRequests: k.NewPeeringRequests,
+
+		AdvertiseAddr: n.advertiseAddr,
+
+		// TODO: we should probably not rely on
+		// this particular method of getting our certificate.
+		Cert: n.baseTLSConf.Certificates[0],
 	}
 	go nd.Run(ctx, &n.wg)
 
@@ -548,8 +554,8 @@ func (n *Node) acceptConnections(ctx context.Context) {
 			continue
 		}
 
-		if res.NeighborMessage {
-			if err := n.handleIncomingNeighbor(ctx, qc, res.AdmissionStream); err != nil {
+		if res.NeighborMessage!= nil {
+			if err := n.handleIncomingNeighbor(ctx, qc, res.AdmissionStream, *res.NeighborMessage); err != nil {
 				// On error, assume we have to close the connection.
 				if errors.Is(context.Cause(ctx), err) {
 					n.log.Info(
@@ -707,7 +713,7 @@ func (n *Node) handleIncomingJoin(
 }
 
 func (n *Node) handleIncomingNeighbor(
-	ctx context.Context, qc quic.Connection, qs quic.Stream,
+	ctx context.Context, qc quic.Connection, qs quic.Stream, nm dproto.NeighborMessage,
 ) error {
 	// We received a neighbor message from the remote.
 	// Next, we have to consult the kernel to decide whether we will accept this neighbor request.
