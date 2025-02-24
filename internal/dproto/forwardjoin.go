@@ -9,6 +9,7 @@ import (
 	"io"
 
 	"github.com/gordian-engine/dragon/daddr"
+	"github.com/gordian-engine/dragon/dcert"
 )
 
 // ForwardJoin message is conditionally sent to active peers
@@ -18,7 +19,7 @@ type ForwardJoinMessage struct {
 	AA daddr.AddressAttestation
 
 	// The certificate chain of the joining node.
-	JoiningCertChain []*x509.Certificate
+	Chain dcert.Chain
 
 	// How many more hops the join may go.
 	TTL uint8
@@ -30,30 +31,21 @@ func (m ForwardJoinMessage) Verify() error {
 }
 
 func (m ForwardJoinMessage) Encode(w io.Writer) error {
-	if len(m.JoiningCertChain) > 255 {
-		panic(fmt.Errorf(
-			"ILLEGAL: joining cert chain too long (%d)",
-			len(m.JoiningCertChain),
-		))
-	}
-	if len(m.JoiningCertChain) < 2 {
-		panic(fmt.Errorf(
-			"ILLEGAL: joining cert chain must be at least 2, got %d",
-			len(m.JoiningCertChain),
-		))
+	if err := m.Chain.Validate(); err != nil {
+		panic(fmt.Errorf("ILLEGAL: attempted to encode invalid chain: %w", err))
 	}
 
 	// Put as much as possible in the first send buffer.
 	sz := 1 + // Forward join message type.
 		m.AA.EncodedSize() +
-		1 + // uint8 number of certificates in the chain.
-		(2 * len(m.JoiningCertChain)) + // uint16 for each cert size.
+		1 + // uint8 number of intermediate certificates in the chain.
+		(2 * m.Chain.Len()) + // uint16 for each cert size.
 		1 // uint8 TTL.
 
 	// TODO: we could save a bit of space by not encoding the raw CA certificate.
 	// We expect the remote to already have it.
 	// So we could send the unique identifier of its RawSubjectPublicKeyInfo.
-	for _, c := range m.JoiningCertChain {
+	for c := range m.Chain.All() {
 		sz += len(c.Raw)
 	}
 
@@ -70,10 +62,10 @@ func (m ForwardJoinMessage) Encode(w io.Writer) error {
 	}
 
 	// Number of certificates in the chain.
-	_ = buf.WriteByte(byte(len(m.JoiningCertChain)))
+	_ = buf.WriteByte(byte(m.Chain.Len()))
 
 	// Each raw certificate size.
-	for _, c := range m.JoiningCertChain {
+	for c := range m.Chain.All() {
 		const maxUint16 = (1 << 16) - 1
 		if len(c.Raw) > maxUint16 {
 			panic(fmt.Errorf(
@@ -92,7 +84,7 @@ func (m ForwardJoinMessage) Encode(w io.Writer) error {
 	// If we really wanted to, we could roll this in the above loop,
 	// but these chains should be short enough
 	// that it wouldn't be a noticeable difference.
-	for _, c := range m.JoiningCertChain {
+	for c := range m.Chain.All() {
 		_, _ = buf.Write(c.Raw)
 	}
 
@@ -126,28 +118,45 @@ func (m *ForwardJoinMessage) Decode(r io.Reader) error {
 		return fmt.Errorf("failed to read certificate sizes: %w", err)
 	}
 
-	// Right-size the joining cert chain.
-	if cap(m.JoiningCertChain) >= int(szBuf[0]) {
-		m.JoiningCertChain = m.JoiningCertChain[:szBuf[0]]
-	} else {
-		m.JoiningCertChain = make([]*x509.Certificate, szBuf[0])
+	if szBuf[0] < 2 {
+		return fmt.Errorf("parsed certificate count = %d, but minimum is 2", szBuf[0])
+	}
+	if szBuf[0] > dcert.MaxIntermediateLen+2 {
+		return fmt.Errorf(
+			"parsed certificate count = %d, but maximum is %d",
+			szBuf[0], dcert.MaxIntermediateLen+2,
+		)
 	}
 
-	for i := range m.JoiningCertChain {
+	// Right-size the joining cert chain.
+	szBuf[0] -= 2
+	if cap(m.Chain.Intermediate) >= int(szBuf[0]) {
+		m.Chain.Intermediate = m.Chain.Intermediate[:szBuf[0]]
+	} else {
+		m.Chain.Intermediate = make([]*x509.Certificate, szBuf[0])
+	}
+
+	i := 0
+	for mc := range m.Chain.Mutable() {
 		// We have to allocate a byte slice,
 		// and the call to x509.ParseCertificate will take ownership of it.
 		raw := make([]byte, binary.BigEndian.Uint16(cSizes))
 		cSizes = cSizes[2:]
 
-		_, err := io.ReadFull(r, raw)
-		if err != nil {
+		if _, err := io.ReadFull(r, raw); err != nil {
 			return fmt.Errorf("failed to read raw certificate at index %d: %w", i, err)
 		}
 
-		m.JoiningCertChain[i], err = x509.ParseCertificate(raw)
+		cert, err := x509.ParseCertificate(raw)
 		if err != nil {
 			return fmt.Errorf("failed to parse certificate at index %d: %w", i, err)
 		}
+		mc.Set(cert)
+		i++
+	}
+
+	if err := m.Chain.Validate(); err != nil {
+		return fmt.Errorf("parsed invalid chain: %w", err)
 	}
 
 	// Finally, read one more byte for the TTL.

@@ -8,16 +8,14 @@ import (
 	"net"
 
 	"github.com/gordian-engine/dragon/daddr"
+	"github.com/gordian-engine/dragon/dcert"
 )
 
 // ActivePeer is a peer in the active view
 // (peers we have a direct connection with).
 type ActivePeer struct {
-	// TODO: it might be better to have a narrower value
-	// than an entire tls.ConnectionState.
+	// TODO: replace the TLS field with a dcert.Chain.
 	TLS tls.ConnectionState
-
-	// TODO: this should contain an address attestation.
 
 	// The address of our local listener.
 	// Might be relevant if the system is configured with multiple listeners.
@@ -76,7 +74,7 @@ type Manager interface {
 	ConsiderForwardJoin(
 		ctx context.Context,
 		aa daddr.AddressAttestation,
-		certChain []*x509.Certificate,
+		chain dcert.Chain,
 	) (ForwardJoinDecision, error)
 
 	// ConsiderNeighborRequest evaluates whether to accept

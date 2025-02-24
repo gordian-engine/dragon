@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dview"
 	"github.com/gordian-engine/dragon/internal/dproto"
 	"github.com/gordian-engine/dragon/internal/dps"
@@ -69,10 +70,14 @@ type KernelConfig struct {
 }
 
 func NewKernel(ctx context.Context, log *slog.Logger, cfg KernelConfig) *Kernel {
+	// The entire channel for forward joins from network
+	// is scoped within the kernel.
+	// The kernel receives from it and the active peer set sends to it.
+	//
 	// We don't want to have workers blocked on sending messages
 	// back upwards toward the kernel.
 	// Plus, it's fine if these messages aren't handled instantly.
-	// These are all arbitrarily sized.
+	// The channel size is an arbitrary guess right now.
 	fjfns := make(chan dps.ForwardJoinFromNetwork, 8)
 
 	k := &Kernel{
@@ -188,9 +193,19 @@ func (k *Kernel) handleJoinRequest(ctx context.Context, req JoinRequest) {
 	// We need to forward the join
 	// (whether we accepted or disconnected at this point),
 	// so we delegate this to the active peer set.
+
+	// TODO: req.Peer should already have the chain set.
+	chain, err := dcert.NewChainFromTLSConnectionState(req.Peer.TLS)
+	if err != nil {
+		k.log.Info(
+			"Failed to extract certificate chain from peer's TLS connection state",
+			"err", err,
+		)
+		return
+	}
 	msg := dproto.ForwardJoinMessage{
-		AA:               req.Msg.AA,
-		JoiningCertChain: req.Peer.TLS.VerifiedChains[0],
+		AA:    req.Msg.AA,
+		Chain: chain,
 
 		TTL: 4, // TODO: make this configurable.
 	}
@@ -281,7 +296,7 @@ func (k *Kernel) handleNewPeeringRequest(ctx context.Context, req NewPeeringRequ
 
 func (k *Kernel) handleForwardJoinFromNetwork(ctx context.Context, req dps.ForwardJoinFromNetwork) {
 	fjm := req.Msg
-	d, err := k.vm.ConsiderForwardJoin(ctx, fjm.AA, fjm.JoiningCertChain)
+	d, err := k.vm.ConsiderForwardJoin(ctx, fjm.AA, fjm.Chain)
 	if err != nil {
 		k.log.Warn(
 			"Received error from view manager when considering forward join",

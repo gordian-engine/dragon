@@ -2,10 +2,10 @@ package dviewtest
 
 import (
 	"context"
-	"crypto/x509"
 	"errors"
 
 	"github.com/gordian-engine/dragon/daddr"
+	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dview"
 )
 
@@ -24,7 +24,7 @@ func (DenyingManager) ConsiderNeighborRequest(
 }
 
 func (DenyingManager) ConsiderForwardJoin(
-	context.Context, daddr.AddressAttestation, []*x509.Certificate,
+	context.Context, daddr.AddressAttestation, dcert.Chain,
 ) (dview.ForwardJoinDecision, error) {
 	return dview.ForwardJoinDecision{
 		// Seems like we may as well continue forwarding in this test type.

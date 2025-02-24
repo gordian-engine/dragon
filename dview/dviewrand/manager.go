@@ -2,13 +2,13 @@ package dviewrand
 
 import (
 	"context"
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
 
 	"github.com/gordian-engine/dragon/daddr"
+	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dview"
 )
 
@@ -98,11 +98,9 @@ func (m *Manager) ConsiderNeighborRequest(
 // and it wants to connect to the new neighbor
 // if we don't already have one from the same CA.
 func (m *Manager) ConsiderForwardJoin(
-	_ context.Context, aa daddr.AddressAttestation, chain []*x509.Certificate,
+	_ context.Context, aa daddr.AddressAttestation, chain dcert.Chain,
 ) (dview.ForwardJoinDecision, error) {
-	caCert := chain[len(chain)-1]
-
-	_, alreadyHaveCA := m.aByCAPKI[string(caCert.RawSubjectPublicKeyInfo)]
+	_, alreadyHaveCA := m.aByCAPKI[string(chain.Root.RawSubjectPublicKeyInfo)]
 
 	return dview.ForwardJoinDecision{
 		ContinueForwarding:  true,
