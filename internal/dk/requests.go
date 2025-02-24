@@ -46,7 +46,7 @@ type NeighborDecisionRequest struct {
 	Resp chan bool
 }
 
-// NewPeeringRequest is sent from the outer Node to the [Kernel],
+// AddActivePeerRequest is sent from the outer Node to the [Kernel],
 // telling the Kernel to add this peer to the active set.
 //
 // There are three circumstances where this can happen:
@@ -61,7 +61,7 @@ type NeighborDecisionRequest struct {
 //  3. We were in another node's passive view,
 //     and that node needed a new connection,
 //     so they connected to us and directly opened sent a Neighbor message.
-type NewPeeringRequest struct {
+type AddActivePeerRequest struct {
 	QuicConn quic.Connection
 
 	// TODO: this should have an address attestation too.
@@ -70,14 +70,14 @@ type NewPeeringRequest struct {
 
 	AdmissionStream, DisconnectStream, ShuffleStream quic.Stream
 
-	Resp chan NewPeeringResponse
+	Resp chan AddActivePeerResponse
 }
 
-// NewPeeringResponse is the response from the [Kernel] to the Node,
-// indicating whether the peering was accepted into the active set.
+// AddActivePeerResponse is the response from the [Kernel] to the Node,
+// indicating whether the peer was accepted into the active set.
 //
-// If RejectReason is empty, the peering was accepted.
+// If RejectReason is empty, the peer was accepted.
 // Otherwise, the RejectReason can be sent to the remote peer.
-type NewPeeringResponse struct {
+type AddActivePeerResponse struct {
 	RejectReason string
 }

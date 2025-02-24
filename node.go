@@ -388,7 +388,7 @@ func NewNode(ctx context.Context, log *slog.Logger, cfg NodeConfig) (*Node, erro
 
 		NeighborRequests: neighborRequestsCh,
 
-		NewPeeringRequests: k.NewPeeringRequests,
+		NewPeeringRequests: k.AddActivePeerRequests,
 
 		AdvertiseAddr: n.advertiseAddr,
 
@@ -505,7 +505,6 @@ func (n *Node) acceptConnections(ctx context.Context) {
 			Log:  n.log.With("protocol", "incoming_bootstrap"),
 			Conn: qc,
 
-			// The first element of PeerCertificates is supposed to be the leaf certificate.
 			PeerCert: chain.Leaf,
 
 			Cfg: dbsinbound.Config{
@@ -705,8 +704,8 @@ func (n *Node) handleIncomingJoin(
 
 	// Finally, the streams are initialized,
 	// so we can pass the connection to the kernel now.
-	pResp := make(chan dk.NewPeeringResponse, 1)
-	pReq := dk.NewPeeringRequest{
+	pResp := make(chan dk.AddActivePeerResponse, 1)
+	pReq := dk.AddActivePeerRequest{
 		QuicConn: qc,
 
 		Chain: chain,
@@ -725,7 +724,7 @@ func (n *Node) handleIncomingJoin(
 			context.Cause(ctx),
 		)
 
-	case n.k.NewPeeringRequests <- pReq:
+	case n.k.AddActivePeerRequests <- pReq:
 		// Okay.
 	}
 
@@ -833,8 +832,8 @@ func (n *Node) handleIncomingNeighbor(
 	}
 
 	// Streams are initialized, so we can seend the peering to the kernel.
-	pResp := make(chan dk.NewPeeringResponse, 1)
-	pReq := dk.NewPeeringRequest{
+	pResp := make(chan dk.AddActivePeerResponse, 1)
+	pReq := dk.AddActivePeerRequest{
 		QuicConn: qc,
 
 		Chain: chain,
@@ -853,7 +852,7 @@ func (n *Node) handleIncomingNeighbor(
 			context.Cause(ctx),
 		)
 
-	case n.k.NewPeeringRequests <- pReq:
+	case n.k.AddActivePeerRequests <- pReq:
 		// Okay.
 	}
 
@@ -907,8 +906,8 @@ func (n *Node) DialAndJoin(ctx context.Context, addr net.Addr) error {
 
 	// The bootstrap process completed successfully,
 	// so now the last step is to confirm peering with the kernel.
-	pResp := make(chan dk.NewPeeringResponse, 1)
-	req := dk.NewPeeringRequest{
+	pResp := make(chan dk.AddActivePeerResponse, 1)
+	req := dk.AddActivePeerRequest{
 		QuicConn: dr.Conn,
 
 		Chain: chain,
@@ -923,7 +922,7 @@ func (n *Node) DialAndJoin(ctx context.Context, addr net.Addr) error {
 	case <-ctx.Done():
 		return context.Cause(ctx)
 
-	case n.k.NewPeeringRequests <- req:
+	case n.k.AddActivePeerRequests <- req:
 		// Okay.
 	}
 

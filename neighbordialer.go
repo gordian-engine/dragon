@@ -33,7 +33,7 @@ type neighborDialer struct {
 
 	NeighborRequests <-chan string
 
-	NewPeeringRequests chan<- dk.NewPeeringRequest
+	NewPeeringRequests chan<- dk.AddActivePeerRequest
 
 	AdvertiseAddr string
 	Cert          tls.Certificate
@@ -98,8 +98,8 @@ func (d *neighborDialer) dialAndNeighbor(ctx context.Context, addr string) {
 
 	// The bootstrap process completed successfully,
 	// so now the last step is to confirm peering with the kernel.
-	pResp := make(chan dk.NewPeeringResponse, 1)
-	req := dk.NewPeeringRequest{
+	pResp := make(chan dk.AddActivePeerResponse, 1)
+	req := dk.AddActivePeerRequest{
 		QuicConn: dr.Conn,
 
 		Chain: chain,

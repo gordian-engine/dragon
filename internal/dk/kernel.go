@@ -26,8 +26,7 @@ type Kernel struct {
 
 	// Sender has a completely bootstrapped connection
 	// and wants to add it to the active set.
-	// TODO: this should get renamed.
-	NewPeeringRequests chan NewPeeringRequest
+	AddActivePeerRequests chan AddActivePeerRequest
 
 	// Unexported channels passed to the active peer set.
 	forwardJoinsFromNetwork chan dps.ForwardJoinFromNetwork
@@ -84,7 +83,7 @@ func NewKernel(ctx context.Context, log *slog.Logger, cfg KernelConfig) *Kernel 
 
 		JoinRequests:             make(chan JoinRequest),
 		NeighborDecisionRequests: make(chan NeighborDecisionRequest),
-		NewPeeringRequests:       make(chan NewPeeringRequest),
+		AddActivePeerRequests:    make(chan AddActivePeerRequest),
 
 		forwardJoinsFromNetwork: fjfns,
 
@@ -131,8 +130,8 @@ func (k *Kernel) mainLoop(ctx context.Context) {
 		case req := <-k.NeighborDecisionRequests:
 			k.handleNeighborDecisionRequest(ctx, req)
 
-		case req := <-k.NewPeeringRequests:
-			k.handleNewPeeringRequest(ctx, req)
+		case req := <-k.AddActivePeerRequests:
+			k.handleAddActivePeerRequest(ctx, req)
 
 		case req := <-k.forwardJoinsFromNetwork:
 			k.handleForwardJoinFromNetwork(ctx, req)
@@ -221,7 +220,7 @@ func (k *Kernel) handleNeighborDecisionRequest(ctx context.Context, req Neighbor
 	req.Resp <- accept
 }
 
-func (k *Kernel) handleNewPeeringRequest(ctx context.Context, req NewPeeringRequest) {
+func (k *Kernel) handleAddActivePeerRequest(ctx context.Context, req AddActivePeerRequest) {
 	// There is a chance we could turn down the peering,
 	// for instance if there were so many in flight that
 	// this one no longer met conditions to enter active view.
@@ -234,11 +233,11 @@ func (k *Kernel) handleNewPeeringRequest(ctx context.Context, req NewPeeringRequ
 	})
 	if err != nil {
 		k.log.Warn(
-			"Error attempting to add peering",
+			"Error attempting to add active peer",
 			"err", err,
 		)
 
-		req.Resp <- NewPeeringResponse{
+		req.Resp <- AddActivePeerResponse{
 			RejectReason: "internal error",
 		}
 		return
@@ -246,7 +245,7 @@ func (k *Kernel) handleNewPeeringRequest(ctx context.Context, req NewPeeringRequ
 
 	// Otherwise, since adding the peering succeeded,
 	// we inform the requester of the success.
-	req.Resp <- NewPeeringResponse{}
+	req.Resp <- AddActivePeerResponse{}
 
 	// And then we add it to the managed active peer set.
 	if err := k.aps.Add(ctx, dps.Peer{
