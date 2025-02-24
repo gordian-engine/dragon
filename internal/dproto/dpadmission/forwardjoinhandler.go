@@ -32,6 +32,8 @@ func (h forwardJoinHandler) Handle(
 		)
 	}
 
+	// TODO: we should probably do some basic verification of the address here first.
+
 	res.ForwardJoinMessage = &msg
 
 	return nil, nil

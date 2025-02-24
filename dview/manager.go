@@ -15,26 +15,23 @@ type ActivePeer struct {
 	// The peer's certificate chain.
 	Chain dcert.Chain
 
-	// TODO: add an address attestation.
+	AA daddr.AddressAttestation
 
 	// The address of our local listener.
 	// Might be relevant if the system is configured with multiple listeners.
 	LocalAddr net.Addr
 
 	// The remote address observed.
-	// TODO: this seems useless.
-	// Consider the case of a peer dialing us
-	// while using a different UDP port from its listener.
-	// We should be sending an AdvertiseAddr on Join and Neighbor messages.
+	// This may not be particularly useful,
+	// unless there is a meaningful difference in this address
+	// compared to the attestation address.
 	RemoteAddr net.Addr
 }
 
 // PassivePeer is a peer in the passive set
 // (peers we know about, but are not directly connected with).
 type PassivePeer struct {
-	Addr string
-
-	// TODO: add an address attestation.
+	AA daddr.AddressAttestation
 
 	// The peer's certificate chain.
 	Chain dcert.Chain

@@ -26,10 +26,14 @@ func TestManager_ConsiderJoin(t *testing.T) {
 		DNSNames: []string{"leaf1.example"},
 	})
 	require.NoError(t, err)
+	l1aa, err := leaf1.AddressAttestation("leaf1.example:23456")
+	require.NoError(t, err)
 
 	leaf2, err := ca.CreateLeafCert(dcerttest.LeafConfig{
 		DNSNames: []string{"leaf2.example"},
 	})
+	require.NoError(t, err)
+	l2aa, err := leaf2.AddressAttestation("leaf2.example:34567")
 	require.NoError(t, err)
 
 	m := managerFixture(t, 8, 32)
@@ -42,6 +46,8 @@ func TestManager_ConsiderJoin(t *testing.T) {
 			Leaf: leaf1.Cert,
 			Root: ca.Cert,
 		},
+
+		AA: l1aa,
 	}
 
 	// First consider join is accepted because we don't have anything to conflict with it.
@@ -58,6 +64,8 @@ func TestManager_ConsiderJoin(t *testing.T) {
 			Leaf: leaf2.Cert,
 			Root: ca.Cert,
 		},
+
+		AA: l2aa,
 	}
 
 	// Now this second consider join is denied

@@ -6,7 +6,6 @@ import (
 	"log/slog"
 
 	"github.com/gordian-engine/dragon/daddr"
-	"github.com/gordian-engine/dragon/internal/dcrypto"
 	"github.com/gordian-engine/dragon/internal/dproto"
 	"github.com/quic-go/quic-go"
 )
@@ -29,7 +28,7 @@ func (h sendJoinHandler) Handle(
 		},
 	}
 
-	if err := h.signJoinMessage(&jm); err != nil {
+	if err := jm.AA.SignWithTLSCert(h.Cfg.Cert); err != nil {
 		return nil, fmt.Errorf("failed to sign join message: %w", err)
 	}
 
@@ -57,18 +56,6 @@ func (h sendJoinHandler) Handle(
 		OuterLog: h.OuterLog,
 		Cfg:      h.Cfg,
 	}, nil
-}
-
-// signJoinMessage updates jm to include a signature via h.Cfg.Cert.
-func (h sendJoinHandler) signJoinMessage(jm *dproto.JoinMessage) error {
-	joinSignContent := jm.AA.AppendSignContent(nil)
-	sig, err := dcrypto.SignMessageWithTLSCert(joinSignContent, h.Cfg.Cert)
-	if err != nil {
-		return fmt.Errorf("failed to sign join message: %w", err)
-	}
-
-	jm.AA.Signature = sig
-	return nil
 }
 
 func (h sendJoinHandler) Name() string {

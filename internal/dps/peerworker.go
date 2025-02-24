@@ -128,9 +128,18 @@ func (w *peerWorker) handleIncomingAdmission(ctx context.Context) {
 			return
 		}
 
-		// Only possible result currently.
+		// Only possible outcome from the protocol, currently.
 		if res.ForwardJoinMessage != nil {
 			senderCert := w.p.Conn.ConnectionState().TLS.PeerCertificates[0]
+
+			// The protocol handler gets the raw bytes from the network
+			// but doesn't validate it.
+			if err := res.ForwardJoinMessage.AA.VerifySignature(senderCert); err != nil {
+				w.fail(fmt.Errorf(
+					"received forward join message with invalid signature: %w", err,
+				))
+			}
+
 			select {
 			case <-ctx.Done():
 				w.fail(fmt.Errorf(

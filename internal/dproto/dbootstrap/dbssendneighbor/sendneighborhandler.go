@@ -8,7 +8,6 @@ import (
 	"log/slog"
 
 	"github.com/gordian-engine/dragon/daddr"
-	"github.com/gordian-engine/dragon/internal/dcrypto"
 	"github.com/gordian-engine/dragon/internal/dproto"
 	"github.com/quic-go/quic-go"
 )
@@ -29,13 +28,9 @@ func (h sendNeighborHandler) Handle(
 		Timestamp: h.Cfg.Now(),
 	}
 
-	joinSignContent := aa.AppendSignContent(nil)
-	sig, err := dcrypto.SignMessageWithTLSCert(joinSignContent, h.Cfg.Cert)
-	if err != nil {
+	if err := aa.SignWithTLSCert(h.Cfg.Cert); err != nil {
 		return nil, fmt.Errorf("failed to sign address attestation: %w", err)
 	}
-
-	aa.Signature = sig
 
 	// There's no apparent other way to set a deadline on opening a stream,
 	// besides using OpenStreamSync with a cancelable context.

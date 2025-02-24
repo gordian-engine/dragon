@@ -3,6 +3,7 @@ package dcerttest
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -11,6 +12,8 @@ import (
 	"math/big"
 	"net"
 	"time"
+
+	"github.com/gordian-engine/dragon/daddr"
 )
 
 // KeyType indicates which key type is used
@@ -287,4 +290,26 @@ func (ca *CA) CreateLeafCert(cfg LeafConfig) (*LeafCert, error) {
 		PrivKey: privKey,
 		KeyType: keyType,
 	}, nil
+}
+
+func (c LeafCert) AddressAttestation(advertise string) (daddr.AddressAttestation, error) {
+	aa := daddr.AddressAttestation{
+		Addr:      advertise,
+		Timestamp: time.Now(),
+	}
+
+	// Create tls.Certificate so we can sign aa.
+	tlsCert := tls.Certificate{
+		Certificate: [][]byte{c.Cert.Raw},
+		PrivateKey:  c.PrivKey,
+		Leaf:        c.Cert,
+	}
+
+	if err := aa.SignWithTLSCert(tlsCert); err != nil {
+		return daddr.AddressAttestation{}, fmt.Errorf(
+			"failed to sign address attestation: %w", err,
+		)
+	}
+
+	return aa, nil
 }

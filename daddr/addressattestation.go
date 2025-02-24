@@ -1,6 +1,7 @@
 package daddr
 
 import (
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/binary"
 	"fmt"
@@ -56,6 +57,16 @@ func (a AddressAttestation) AppendSignContent(dst []byte) []byte {
 	dst = binary.BigEndian.AppendUint64(dst, uint64(ts))
 
 	return dst
+}
+
+func (a *AddressAttestation) SignWithTLSCert(cert tls.Certificate) error {
+	signContent := a.AppendSignContent(nil)
+	sig, err := dcrypto.SignMessageWithTLSCert(signContent, cert)
+	if err != nil {
+		return fmt.Errorf("failed to sign join message: %w", err)
+	}
+	a.Signature = sig
+	return nil
 }
 
 func (a AddressAttestation) VerifySignature(signingCert *x509.Certificate) error {

@@ -600,6 +600,7 @@ func (n *Node) handleIncomingJoin(
 	// Now we have the advertise address and an admission stream.
 	peer := dview.ActivePeer{
 		Chain:      chain,
+		AA:         jm.AA,
 		LocalAddr:  qc.LocalAddr(),
 		RemoteAddr: qc.RemoteAddr(),
 	}
@@ -734,8 +735,8 @@ func (n *Node) handleIncomingNeighbor(
 	// We received a neighbor message from the remote.
 	// Next, we have to consult the kernel to decide whether we will accept this neighbor request.
 	peer := dview.ActivePeer{
-		Chain: chain,
-		// TODO: use nm.AA once ActivePeer supports that field.
+		Chain:      chain,
+		AA:         nm.AA,
 		LocalAddr:  qc.LocalAddr(),
 		RemoteAddr: qc.RemoteAddr(),
 	}
