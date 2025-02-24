@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/gordian-engine/dragon"
-	"github.com/gordian-engine/dragon/dca/dcatest"
+	"github.com/gordian-engine/dragon/dcert/dcerttest"
 	"github.com/gordian-engine/dragon/dview/dviewrand"
 	"github.com/gordian-engine/dragon/internal/dtest"
 	"github.com/quic-go/quic-go"
@@ -46,7 +46,7 @@ type NodeConfig struct {
 
 	// The config used to set up the TLS config.
 	// Possibly useful if you need to inspect the CA or leaf certificate details.
-	CA dcatest.CAConfig
+	CA dcerttest.CAConfig
 
 	// Initial trusted CAs to set on the outgoing [dragon.NodeConfig].
 	TrustedCAs []*x509.Certificate
@@ -86,7 +86,7 @@ func (c NodeConfig) ToDragonNodeConfig() dragon.NodeConfig {
 // It uses default settings for every node;
 // if finer control is needed, use [NewNetwork]
 // and provide an appropriate configCreator callback.
-func NewDefaultNetwork(t *testing.T, ctx context.Context, cfgs ...dcatest.CAConfig) *Network {
+func NewDefaultNetwork(t *testing.T, ctx context.Context, cfgs ...dcerttest.CAConfig) *Network {
 	t.Helper()
 
 	log := dtest.NewLogger(t)
@@ -120,7 +120,7 @@ func NewDefaultNetwork(t *testing.T, ctx context.Context, cfgs ...dcatest.CAConf
 func NewNetwork(
 	t *testing.T,
 	ctx context.Context,
-	cfgs []dcatest.CAConfig,
+	cfgs []dcerttest.CAConfig,
 	configCreator func(int, NodeConfig) dragon.NodeConfig,
 ) *Network {
 	t.Helper()
@@ -131,10 +131,10 @@ func NewNetwork(
 
 	log := dtest.NewLogger(t)
 
-	cas := make([]*dcatest.CA, len(cfgs))
+	cas := make([]*dcerttest.CA, len(cfgs))
 	for i, cfg := range cfgs {
 		var err error
-		cas[i], err = dcatest.GenerateCA(cfg)
+		cas[i], err = dcerttest.GenerateCA(cfg)
 		require.NoError(t, err)
 	}
 
@@ -153,7 +153,7 @@ func NewNetwork(
 		})
 
 		// Now we need the leaf certificate for the node.
-		l, err := ca.CreateLeafCert(dcatest.LeafConfig{
+		l, err := ca.CreateLeafCert(dcerttest.LeafConfig{
 			DNSNames: []string{"localhost"},
 		})
 		require.NoError(t, err)

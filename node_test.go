@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/gordian-engine/dragon"
-	"github.com/gordian-engine/dragon/dca/dcatest"
+	"github.com/gordian-engine/dragon/dcert/dcerttest"
 	"github.com/gordian-engine/dragon/dragontest"
 	"github.com/gordian-engine/dragon/dview/dviewrand"
 	"github.com/gordian-engine/dragon/dview/dviewtest"
@@ -21,10 +21,10 @@ func TestNewNode(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	ca, err := dcatest.GenerateCA(dcatest.FastConfig())
+	ca, err := dcerttest.GenerateCA(dcerttest.FastConfig())
 	require.NoError(t, err)
 
-	leaf, err := ca.CreateLeafCert(dcatest.LeafConfig{
+	leaf, err := ca.CreateLeafCert(dcerttest.LeafConfig{
 		DNSNames: []string{"localhost"},
 	})
 	require.NoError(t, err)
@@ -73,11 +73,11 @@ func TestNode_DialAndJoin_unrecognizedCert(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		nw := dragontest.NewDefaultNetwork(t, ctx, dcatest.FastConfig(), dcatest.FastConfig())
+		nw := dragontest.NewDefaultNetwork(t, ctx, dcerttest.FastConfig(), dcerttest.FastConfig())
 		defer nw.Wait()
 		defer cancel()
 
-		out := dragontest.NewDefaultNetwork(t, ctx, dcatest.FastConfig())
+		out := dragontest.NewDefaultNetwork(t, ctx, dcerttest.FastConfig())
 		defer out.Wait()
 		defer cancel()
 
@@ -89,12 +89,12 @@ func TestNode_DialAndJoin_unrecognizedCert(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		cfg1, cfg2 := dcatest.FastConfig(), dcatest.FastConfig()
+		cfg1, cfg2 := dcerttest.FastConfig(), dcerttest.FastConfig()
 		nw12 := dragontest.NewDefaultNetwork(t, ctx, cfg1, cfg2)
 		defer nw12.Wait()
 		defer cancel()
 
-		nw123 := dragontest.NewDefaultNetwork(t, ctx, cfg1, cfg2, dcatest.FastConfig())
+		nw123 := dragontest.NewDefaultNetwork(t, ctx, cfg1, cfg2, dcerttest.FastConfig())
 		defer nw123.Wait()
 		defer cancel()
 
@@ -116,7 +116,7 @@ func TestNode_DialAndJoin_deny(t *testing.T) {
 
 	nw := dragontest.NewNetwork(
 		t, ctx,
-		[]dcatest.CAConfig{dcatest.FastConfig(), dcatest.FastConfig()},
+		[]dcerttest.CAConfig{dcerttest.FastConfig(), dcerttest.FastConfig()},
 		func(_ int, c dragontest.NodeConfig) dragon.NodeConfig {
 			out := c.ToDragonNodeConfig()
 
@@ -150,7 +150,7 @@ func TestNode_DialAndJoin_accept(t *testing.T) {
 
 	nw := dragontest.NewNetwork(
 		t, ctx,
-		[]dcatest.CAConfig{dcatest.FastConfig(), dcatest.FastConfig()},
+		[]dcerttest.CAConfig{dcerttest.FastConfig(), dcerttest.FastConfig()},
 		func(_ int, c dragontest.NodeConfig) dragon.NodeConfig {
 			out := c.ToDragonNodeConfig()
 
@@ -193,7 +193,7 @@ func TestNode_forwardJoin(t *testing.T) {
 
 	nw := dragontest.NewNetwork(
 		t, ctx,
-		[]dcatest.CAConfig{dcatest.FastConfig(), dcatest.FastConfig(), dcatest.FastConfig()},
+		[]dcerttest.CAConfig{dcerttest.FastConfig(), dcerttest.FastConfig(), dcerttest.FastConfig()},
 		func(_ int, c dragontest.NodeConfig) dragon.NodeConfig {
 			out := c.ToDragonNodeConfig()
 

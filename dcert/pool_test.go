@@ -1,34 +1,34 @@
-package dca_test
+package dcert_test
 
 import (
 	"crypto/x509"
 	"testing"
 
-	"github.com/gordian-engine/dragon/dca"
-	"github.com/gordian-engine/dragon/dca/dcatest"
+	"github.com/gordian-engine/dragon/dcert"
+	"github.com/gordian-engine/dragon/dcert/dcerttest"
 	"github.com/stretchr/testify/require"
 )
 
 func TestPool_NotifyRemoval(t *testing.T) {
 	t.Parallel()
 
-	ca1, err := dcatest.GenerateCA(dcatest.FastConfig())
+	ca1, err := dcerttest.GenerateCA(dcerttest.FastConfig())
 	require.NoError(t, err)
 
-	ca2, err := dcatest.GenerateCA(dcatest.FastConfig())
+	ca2, err := dcerttest.GenerateCA(dcerttest.FastConfig())
 	require.NoError(t, err)
 
 	t.Run("returns nil for unrecognized certificate", func(t *testing.T) {
 		t.Parallel()
 
-		p := dca.NewPoolFromCerts([]*x509.Certificate{ca1.Cert})
+		p := dcert.NewPoolFromCerts([]*x509.Certificate{ca1.Cert})
 		require.Nil(t, p.NotifyRemoval(ca2.Cert))
 	})
 
 	t.Run("notifies channel only when missing from updated set", func(t *testing.T) {
 		t.Parallel()
 
-		p := dca.NewPoolFromCerts([]*x509.Certificate{ca1.Cert})
+		p := dcert.NewPoolFromCerts([]*x509.Certificate{ca1.Cert})
 		ch := p.NotifyRemoval(ca1.Cert)
 		require.NotNil(t, ch)
 
@@ -52,7 +52,7 @@ func TestPool_NotifyRemoval(t *testing.T) {
 	t.Run("multiple notifications are the same underlying channel", func(t *testing.T) {
 		t.Parallel()
 
-		p := dca.NewPoolFromCerts([]*x509.Certificate{ca1.Cert, ca2.Cert})
+		p := dcert.NewPoolFromCerts([]*x509.Certificate{ca1.Cert, ca2.Cert})
 		ch1a := p.NotifyRemoval(ca1.Cert)
 		ch1b := p.NotifyRemoval(ca1.Cert)
 

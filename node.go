@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gordian-engine/dragon/dca"
+	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dview"
 	"github.com/gordian-engine/dragon/internal/dk"
 	"github.com/gordian-engine/dragon/internal/dproto"
@@ -40,7 +40,7 @@ type Node struct {
 	// We never use this directly, but we do clone it when we need TLS config.
 	baseTLSConf *tls.Config
 
-	caPool *dca.Pool
+	caPool *dcert.Pool
 
 	dialer dialer
 
@@ -336,7 +336,7 @@ func NewNode(ctx context.Context, log *slog.Logger, cfg NodeConfig) (*Node, erro
 	})
 
 	baseTLSConf := cfg.customizedTLSConfig(log)
-	caPool := dca.NewPoolFromCerts(cfg.InitialTrustedCAs)
+	caPool := dcert.NewPoolFromCerts(cfg.InitialTrustedCAs)
 
 	n := &Node{
 		log: log,
@@ -427,7 +427,7 @@ func (n *Node) startListener() error {
 func (n *Node) getQUICListenerTLSConfig(*tls.ClientHelloInfo) (*tls.Config, error) {
 	// TOOD: right now we build a new TLS config for every incoming client connection,
 	// but we should be able to create a single shared instance
-	// that only gets updated once the dca.Pool is updated.
+	// that only gets updated once the dcert.Pool is updated.
 	tlsConf := n.baseTLSConf.Clone()
 
 	// For the QUIC listener,
@@ -554,7 +554,7 @@ func (n *Node) acceptConnections(ctx context.Context) {
 			continue
 		}
 
-		if res.NeighborMessage!= nil {
+		if res.NeighborMessage != nil {
 			if err := n.handleIncomingNeighbor(ctx, qc, res.AdmissionStream, *res.NeighborMessage); err != nil {
 				// On error, assume we have to close the connection.
 				if errors.Is(context.Cause(ctx), err) {

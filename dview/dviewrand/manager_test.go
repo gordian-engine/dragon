@@ -7,7 +7,7 @@ import (
 	"math/rand/v2"
 	"testing"
 
-	"github.com/gordian-engine/dragon/dca/dcatest"
+	"github.com/gordian-engine/dragon/dcert/dcerttest"
 	"github.com/gordian-engine/dragon/dview"
 	"github.com/gordian-engine/dragon/dview/dviewrand"
 	"github.com/gordian-engine/dragon/internal/dtest"
@@ -20,15 +20,15 @@ func TestManager_ConsiderJoin(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	ca, err := dcatest.GenerateCA(dcatest.FastConfig())
+	ca, err := dcerttest.GenerateCA(dcerttest.FastConfig())
 	require.NoError(t, err)
 
-	leaf1, err := ca.CreateLeafCert(dcatest.LeafConfig{
+	leaf1, err := ca.CreateLeafCert(dcerttest.LeafConfig{
 		DNSNames: []string{"leaf1.example"},
 	})
 	require.NoError(t, err)
 
-	leaf2, err := ca.CreateLeafCert(dcatest.LeafConfig{
+	leaf2, err := ca.CreateLeafCert(dcerttest.LeafConfig{
 		DNSNames: []string{"leaf2.example"},
 	})
 	require.NoError(t, err)

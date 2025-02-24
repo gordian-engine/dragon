@@ -1,11 +1,11 @@
-package dcatest_test
+package dcerttest_test
 
 import (
 	"crypto/tls"
 	"crypto/x509"
 	"testing"
 
-	"github.com/gordian-engine/dragon/dca/dcatest"
+	"github.com/gordian-engine/dragon/dcert/dcerttest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -13,12 +13,12 @@ func TestGenerateCA_valid(t *testing.T) {
 	t.Run("ed25519", func(t *testing.T) {
 		t.Parallel()
 
-		cfg := dcatest.FastConfig()
-		require.Equal(t, dcatest.Ed25519KeyType, cfg.KeyType)
-		ca, err := dcatest.GenerateCA(cfg)
+		cfg := dcerttest.FastConfig()
+		require.Equal(t, dcerttest.Ed25519KeyType, cfg.KeyType)
+		ca, err := dcerttest.GenerateCA(cfg)
 		require.NoError(t, err)
 
-		leaf, err := ca.CreateLeafCert(dcatest.LeafConfig{
+		leaf, err := ca.CreateLeafCert(dcerttest.LeafConfig{
 			DNSNames: []string{"leaf1.example.com"},
 		})
 		require.NoError(t, err)

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/gordian-engine/dragon/dca"
+	"github.com/gordian-engine/dragon/dcert"
 	"github.com/quic-go/quic-go"
 )
 
@@ -18,7 +18,7 @@ type dialer struct {
 	QUICTransport *quic.Transport
 	QUICConfig    *quic.Config
 
-	CAPool *dca.Pool
+	CAPool *dcert.Pool
 }
 
 type dialResult struct {
