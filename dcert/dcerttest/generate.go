@@ -76,7 +76,11 @@ type LeafCert struct {
 	CertPEM []byte
 	KeyPEM  []byte
 
+	// Public certificate.
 	Cert *x509.Certificate
+
+	// Private certificate that can be used for signing.
+	TLSCert tls.Certificate
 
 	KeyType         KeyType
 	PubKey, PrivKey any
@@ -285,7 +289,14 @@ func (ca *CA) CreateLeafCert(cfg LeafConfig) (*LeafCert, error) {
 	return &LeafCert{
 		CertPEM: certPEM,
 		KeyPEM:  keyPEM,
-		Cert:    cert,
+
+		Cert: cert,
+		TLSCert: tls.Certificate{
+			Certificate: [][]byte{cert.Raw},
+			PrivateKey:  privKey,
+			Leaf:        cert,
+		},
+
 		PubKey:  pubKey,
 		PrivKey: privKey,
 		KeyType: keyType,
@@ -298,14 +309,7 @@ func (c LeafCert) AddressAttestation(advertise string) (daddr.AddressAttestation
 		Timestamp: time.Now(),
 	}
 
-	// Create tls.Certificate so we can sign aa.
-	tlsCert := tls.Certificate{
-		Certificate: [][]byte{c.Cert.Raw},
-		PrivateKey:  c.PrivKey,
-		Leaf:        c.Cert,
-	}
-
-	if err := aa.SignWithTLSCert(tlsCert); err != nil {
+	if err := aa.SignWithTLSCert(c.TLSCert); err != nil {
 		return daddr.AddressAttestation{}, fmt.Errorf(
 			"failed to sign address attestation: %w", err,
 		)

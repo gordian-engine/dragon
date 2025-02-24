@@ -193,7 +193,6 @@ func (k *Kernel) handleJoinRequest(ctx context.Context, req JoinRequest) {
 	// (whether we accepted or disconnected at this point),
 	// so we delegate this to the active peer set.
 
-	// TODO: req.Peer should already have the chain set.
 	msg := dproto.ForwardJoinMessage{
 		AA:    req.Msg.AA,
 		Chain: req.Peer.Chain,

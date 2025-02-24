@@ -482,12 +482,31 @@ func (n *Node) acceptConnections(ctx context.Context) {
 
 		// TODO: update context to handle notify on certificate removal.
 
+		chain, err := dcert.NewChainFromTLSConnectionState(qc.ConnectionState().TLS)
+		if err != nil {
+			n.log.Warn(
+				"Connection was accepted but chain extraction failed",
+				"remote_addr", qc.RemoteAddr().String(),
+				"err", err,
+			)
+
+			if err := qc.CloseWithError(1, "TODO: error extracting chain"); err != nil {
+				n.log.Info(
+					"Failed to close connection after failure to extract chain",
+					"remote_addr", qc.RemoteAddr().String(),
+					"err", err,
+				)
+			}
+
+			continue
+		}
+
 		p := dbsinbound.Protocol{
 			Log:  n.log.With("protocol", "incoming_bootstrap"),
 			Conn: qc,
 
 			// The first element of PeerCertificates is supposed to be the leaf certificate.
-			PeerCert: qc.ConnectionState().TLS.PeerCertificates[0],
+			PeerCert: chain.Leaf,
 
 			Cfg: dbsinbound.Config{
 				AcceptBootstrapStreamTimeout: time.Second,
@@ -528,7 +547,23 @@ func (n *Node) acceptConnections(ctx context.Context) {
 		}
 
 		if res.JoinMessage != nil {
-			if err := n.handleIncomingJoin(ctx, qc, res.AdmissionStream, *res.JoinMessage); err != nil {
+			if err := res.JoinMessage.AA.VerifySignature(chain.Leaf); err != nil {
+				n.log.Warn(
+					"Accepted connection from valid peer but address attestation signature failed",
+					"err", err,
+				)
+
+				if err := qc.CloseWithError(1, "TODO: error verifying address attestation signature"); err != nil {
+					n.log.Info(
+						"Failed to close connection after AA signature failure",
+						"remote_addr", qc.RemoteAddr().String(),
+						"err", err,
+					)
+				}
+
+				continue
+			}
+			if err := n.handleIncomingJoin(ctx, qc, res.AdmissionStream, chain, *res.JoinMessage); err != nil {
 				// On error, assume we have to close the connection.
 				if errors.Is(context.Cause(ctx), err) {
 					n.log.Info(
@@ -555,7 +590,7 @@ func (n *Node) acceptConnections(ctx context.Context) {
 		}
 
 		if res.NeighborMessage != nil {
-			if err := n.handleIncomingNeighbor(ctx, qc, res.AdmissionStream, *res.NeighborMessage); err != nil {
+			if err := n.handleIncomingNeighbor(ctx, qc, res.AdmissionStream, chain, *res.NeighborMessage); err != nil {
 				// On error, assume we have to close the connection.
 				if errors.Is(context.Cause(ctx), err) {
 					n.log.Info(
@@ -588,15 +623,8 @@ func (n *Node) acceptConnections(ctx context.Context) {
 
 func (n *Node) handleIncomingJoin(
 	ctx context.Context, qc quic.Connection, qs quic.Stream,
-	jm dproto.JoinMessage,
+	chain dcert.Chain, jm dproto.JoinMessage,
 ) error {
-	chain, err := dcert.NewChainFromTLSConnectionState(qc.ConnectionState().TLS)
-	if err != nil {
-		return fmt.Errorf(
-			"failed to extract certificate chain from incoming join: %w", err,
-		)
-	}
-
 	// Now we have the advertise address and an admission stream.
 	peer := dview.ActivePeer{
 		Chain:      chain,
@@ -723,15 +751,10 @@ func (n *Node) handleIncomingJoin(
 }
 
 func (n *Node) handleIncomingNeighbor(
-	ctx context.Context, qc quic.Connection, qs quic.Stream, nm dproto.NeighborMessage,
+	ctx context.Context,
+	qc quic.Connection, qs quic.Stream,
+	chain dcert.Chain, nm dproto.NeighborMessage,
 ) error {
-	chain, err := dcert.NewChainFromTLSConnectionState(qc.ConnectionState().TLS)
-	if err != nil {
-		return fmt.Errorf(
-			"failed to extract certificate chain from incoming neighbor request: %w", err,
-		)
-	}
-
 	// We received a neighbor message from the remote.
 	// Next, we have to consult the kernel to decide whether we will accept this neighbor request.
 	peer := dview.ActivePeer{
