@@ -1,12 +1,16 @@
 package dps
 
 import (
+	"github.com/gordian-engine/dragon/daddr"
 	"github.com/gordian-engine/dragon/dcert"
 	"github.com/quic-go/quic-go"
 )
 
 type Peer struct {
 	Conn quic.Connection
+
+	Chain dcert.Chain
+	AA    daddr.AddressAttestation
 
 	// TODO: first, these should probably all be quic.SendStream,
 	// as the read side happens in the peerWorker type,
@@ -32,24 +36,27 @@ type Peer struct {
 }
 
 func (p Peer) toInternal() iPeer {
-	// TODO: this should probably be VerifiedCertificates also.
-	pcs := p.Conn.ConnectionState().TLS.PeerCertificates
-
 	return iPeer{
 		Conn: p.Conn,
+
+		Chain: p.Chain,
+		AA:    p.AA,
 
 		Admission:  p.Admission,
 		Disconnect: p.Disconnect,
 		Shuffle:    p.Shuffle,
 
-		CASPKI:   caSPKI(pcs[len(pcs)-1].RawSubjectPublicKeyInfo),
-		LeafSPKI: leafSPKI(pcs[0].RawSubjectPublicKeyInfo),
+		CASPKI:   caSPKI(p.Chain.Root.RawSubjectPublicKeyInfo),
+		LeafSPKI: leafSPKI(p.Chain.Leaf.RawSubjectPublicKeyInfo),
 	}
 }
 
 // iPeer is an internal representation of a peer.
 type iPeer struct {
 	Conn quic.Connection
+
+	Chain dcert.Chain
+	AA    daddr.AddressAttestation
 
 	Admission, Disconnect, Shuffle quic.Stream
 
@@ -60,6 +67,9 @@ type iPeer struct {
 func (ip iPeer) ToPeer() Peer {
 	return Peer{
 		Conn: ip.Conn,
+
+		Chain: ip.Chain,
+		AA:    ip.AA,
 
 		Admission:  ip.Admission,
 		Disconnect: ip.Disconnect,

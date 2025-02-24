@@ -837,6 +837,7 @@ func (n *Node) handleIncomingNeighbor(
 		QuicConn: qc,
 
 		Chain: chain,
+		AA:    nm.AA,
 
 		AdmissionStream:  qs,
 		DisconnectStream: res.Disconnect,
@@ -911,6 +912,7 @@ func (n *Node) DialAndJoin(ctx context.Context, addr net.Addr) error {
 		QuicConn: dr.Conn,
 
 		Chain: chain,
+		AA:    res.AA,
 
 		AdmissionStream:  res.AdmissionStream,
 		DisconnectStream: res.DisconnectStream,

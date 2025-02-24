@@ -31,6 +31,7 @@ func (h sendJoinHandler) Handle(
 	if err := jm.AA.SignWithTLSCert(h.Cfg.Cert); err != nil {
 		return nil, fmt.Errorf("failed to sign join message: %w", err)
 	}
+	res.AA = jm.AA
 
 	msg := jm.OpenStreamAndJoinBytes()
 

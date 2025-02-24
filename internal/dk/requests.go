@@ -1,6 +1,7 @@
 package dk
 
 import (
+	"github.com/gordian-engine/dragon/daddr"
 	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dview"
 	"github.com/gordian-engine/dragon/internal/dproto"
@@ -64,9 +65,9 @@ type NeighborDecisionRequest struct {
 type AddActivePeerRequest struct {
 	QuicConn quic.Connection
 
-	// TODO: this should have an address attestation too.
-
 	Chain dcert.Chain
+
+	AA daddr.AddressAttestation
 
 	AdmissionStream, DisconnectStream, ShuffleStream quic.Stream
 

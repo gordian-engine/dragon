@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/gordian-engine/dragon/daddr"
 	"github.com/quic-go/quic-go"
 )
 
@@ -68,6 +69,10 @@ type Result struct {
 	// We don't send or receive anything meaningful on them
 	// beyond just the protocol version header and stream identifier.
 	DisconnectStream, ShuffleStream quic.Stream
+
+	// We built and signed this message during the protocol,
+	// and the kernel needs it for active set management.
+	AA daddr.AddressAttestation
 }
 
 // Run runs the bootstrap outgoing join protocol to completion.

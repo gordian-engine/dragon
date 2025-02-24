@@ -79,6 +79,9 @@ func VerifySignatureWithTLSCert(
 	cert *x509.Certificate,
 	sig []byte,
 ) error {
+	// TODO: should this switch to cert.CheckSignature?
+	// I'm not sure about the SignatureAlgorithm part of that method.
+
 	switch k := cert.PublicKey.(type) {
 	case *rsa.PublicKey:
 		hasher := getRSAHasher(cert.SignatureAlgorithm)

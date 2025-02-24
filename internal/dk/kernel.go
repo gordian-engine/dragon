@@ -227,6 +227,7 @@ func (k *Kernel) handleAddActivePeerRequest(ctx context.Context, req AddActivePe
 
 	evicted, err := k.vm.AddPeering(ctx, dview.ActivePeer{
 		Chain: req.Chain,
+		AA:    req.AA,
 
 		LocalAddr:  req.QuicConn.LocalAddr(),
 		RemoteAddr: req.QuicConn.RemoteAddr(),
@@ -250,6 +251,9 @@ func (k *Kernel) handleAddActivePeerRequest(ctx context.Context, req AddActivePe
 	// And then we add it to the managed active peer set.
 	if err := k.aps.Add(ctx, dps.Peer{
 		Conn: req.QuicConn,
+
+		Chain: req.Chain,
+		AA:    req.AA,
 
 		Admission:  req.AdmissionStream,
 		Disconnect: req.DisconnectStream,

@@ -1,6 +1,7 @@
 package dps
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -286,6 +287,14 @@ func (a *Active) handleForwardJoinToNetwork(ctx context.Context, fj forwardJoinT
 	streams := make([]quic.Stream, 0, len(a.byCASPKI))
 	for spki, p := range a.byCASPKI {
 		if _, ok := fj.Exclude[string(spki)]; ok {
+			// Don't send it back to the node who sent it to us.
+			continue
+		}
+		if bytes.Equal(p.Chain.Leaf.RawSubjectPublicKeyInfo, fj.Msg.Chain.Leaf.RawSubjectPublicKeyInfo) {
+			// Also don't send it to the node who originated it.
+			// Note that we are matching the leaf, not the root, for this.
+			// This way, it is possible for two peers from the same CA
+			// to get a forward join from each other.
 			continue
 		}
 		streams = append(streams, p.Admission)
