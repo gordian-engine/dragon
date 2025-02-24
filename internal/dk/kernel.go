@@ -136,8 +136,8 @@ func (k *Kernel) mainLoop(ctx context.Context) {
 		case req := <-k.forwardJoinsFromNetwork:
 			k.handleForwardJoinFromNetwork(ctx, req)
 
-		case _, closed := <-k.shuffleSignal:
-			if closed {
+		case _, ok := <-k.shuffleSignal:
+			if !ok {
 				panic(errors.New(
 					"BUG: misuse of ShuffleSignal: channel must not be closed",
 				))

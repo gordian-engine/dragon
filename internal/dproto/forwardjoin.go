@@ -73,7 +73,6 @@ func (m *ForwardJoinMessage) Decode(r io.Reader) error {
 		return fmt.Errorf("failed to decode address attestation: %w", err)
 	}
 
-	// TODO: replace most of this with Chain.Decode.
 	if err := m.Chain.Decode(r); err != nil {
 		return fmt.Errorf("failed to decode chain: %w", err)
 	}

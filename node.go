@@ -333,6 +333,8 @@ func NewNode(ctx context.Context, log *slog.Logger, cfg NodeConfig) (*Node, erro
 	k := dk.NewKernel(ctx, log.With("node_sys", "kernel"), dk.KernelConfig{
 		ViewManager:      cfg.ViewManager,
 		NeighborRequests: neighborRequestsCh,
+
+		ShuffleSignal: cfg.ShuffleSignal,
 	})
 
 	baseTLSConf := cfg.customizedTLSConfig(log)

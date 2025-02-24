@@ -3,6 +3,7 @@ package dragon_test
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"math/rand/v2"
 	"net"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/gordian-engine/dragon"
 	"github.com/gordian-engine/dragon/dcert/dcerttest"
 	"github.com/gordian-engine/dragon/dragontest"
+	"github.com/gordian-engine/dragon/dview"
 	"github.com/gordian-engine/dragon/dview/dviewrand"
 	"github.com/gordian-engine/dragon/dview/dviewtest"
 	"github.com/gordian-engine/dragon/internal/dtest"
@@ -240,4 +242,69 @@ func TestNode_forwardJoin(t *testing.T) {
 	require.Equal(t, 2, nw.Nodes[0].Node.ActiveViewSize())
 	require.Equal(t, 2, nw.Nodes[1].Node.ActiveViewSize())
 	require.Equal(t, 2, nw.Nodes[2].Node.ActiveViewSize())
+}
+
+func TestNode_shuffle(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	vm0 := dviewtest.NewAsyncManagerMock()
+	vm1 := dviewtest.NewAsyncManagerMock()
+
+	shuffleSig0 := make(chan struct{})
+
+	nw := dragontest.NewNetwork(
+		t, ctx,
+		[]dcerttest.CAConfig{dcerttest.FastConfig(), dcerttest.FastConfig()},
+		func(i int, c dragontest.NodeConfig) dragon.NodeConfig {
+			out := c.ToDragonNodeConfig()
+
+			switch i {
+			case 0:
+				out.ViewManager = vm0
+				out.ShuffleSignal = shuffleSig0
+			case 1:
+				out.ViewManager = vm1
+			default:
+				panic(fmt.Errorf("unexpected node index %d", i))
+			}
+
+			return out
+		},
+	)
+	defer nw.Wait()
+	defer cancel()
+
+	// First, vm1 has to consider the Join.
+	go func() {
+		req := <-vm1.ConsiderJoinCh
+		req.Resp <- dview.AcceptJoinDecision
+	}()
+
+	// Then both sides have to add the peering.
+	go func() {
+		req := <-vm0.AddPeeringCh
+		req.Resp <- nil
+	}()
+	go func() {
+		req := <-vm1.AddPeeringCh
+		req.Resp <- nil
+	}()
+
+	// Now begin the join.
+	require.NoError(t, nw.Nodes[0].Node.DialAndJoin(ctx, nw.Nodes[1].UDP.LocalAddr()))
+
+	// Next, we initiate a shuffle on zero.
+	shuffleSig0 <- struct{}{}
+
+	// That was synchronously accepted,
+	// and now we can synchronously handle the outbound shuffle.
+	shufReq := <-vm0.MakeOutboundShuffleCh
+	shufReq.Resp <- dview.OutboundShuffle{
+		// TODO: these fields haven't been defined yet.
+	}
+
+	t.Skip("TODO: incomplete test")
 }
