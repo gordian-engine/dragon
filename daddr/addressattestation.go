@@ -1,4 +1,4 @@
-package dproto
+package daddr
 
 import (
 	"crypto/x509"
@@ -16,8 +16,8 @@ import (
 // was advertising a particular address at a particular time.
 //
 // This is used in:
-//   - [JoinMessage] so that the contact node can include the attestation in the [ForwardJoinMessage]
-//   - [NeighborMessage] so that the target node can use that attestation in a [ShuffleMessage].
+//   - Join messages so that the contact node can include the attestation in the forward join message.
+//   - Neighbor message so that the target node can use that attestation in a shuffle message.
 //
 // And we may eventually have a way for already peered nodes
 // to transfer an updated attestation,
@@ -38,16 +38,18 @@ type AddressAttestation struct {
 }
 
 func (a AddressAttestation) AppendSignContent(dst []byte) []byte {
-	sz := len(a.Addr) + 1 + 8
+	const prefix = "ADDRESS ATTESTATION\n"
+
+	sz := len(prefix) + len(a.Addr) + 1 + 8
 	if cap(dst) < sz {
 		dst = make([]byte, 0, sz)
 	}
 
-	ts := a.Timestamp.Unix()
-
+	dst = append(dst, prefix...)
 	dst = append(dst, a.Addr...)
 	dst = append(dst, '\n')
 
+	ts := a.Timestamp.Unix()
 	// There is no AppendInt64 method in the binary package.
 	// If you look at the general implementation of Append,
 	// you will see that they handle int64 this way:

@@ -280,7 +280,8 @@ func (k *Kernel) handleNewPeeringRequest(ctx context.Context, req NewPeeringRequ
 }
 
 func (k *Kernel) handleForwardJoinFromNetwork(ctx context.Context, req dps.ForwardJoinFromNetwork) {
-	d, err := k.vm.ConsiderForwardJoin(ctx, req.Msg)
+	fjm := req.Msg
+	d, err := k.vm.ConsiderForwardJoin(ctx, fjm.AA, fjm.JoiningCertChain)
 	if err != nil {
 		k.log.Warn(
 			"Received error from view manager when considering forward join",
@@ -306,7 +307,7 @@ func (k *Kernel) handleForwardJoinFromNetwork(ctx context.Context, req dps.Forwa
 	}
 
 	if d.MakeNeighborRequest {
-		addr := req.Msg.AA.Addr
+		addr := fjm.AA.Addr
 		select {
 		case k.neighborRequests <- addr:
 			// Okay.

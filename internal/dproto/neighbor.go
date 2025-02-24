@@ -3,10 +3,12 @@ package dproto
 import (
 	"fmt"
 	"io"
+
+	"github.com/gordian-engine/dragon/daddr"
 )
 
 type NeighborMessage struct {
-	AA AddressAttestation
+	AA daddr.AddressAttestation
 }
 
 // Decode reads from r and populates all fields in m.

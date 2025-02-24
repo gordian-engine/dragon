@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/gordian-engine/dragon/daddr"
 	"github.com/gordian-engine/dragon/internal/dcrypto"
 	"github.com/gordian-engine/dragon/internal/dproto"
 	"github.com/quic-go/quic-go"
@@ -22,7 +23,7 @@ func (h sendJoinHandler) Handle(
 	// so we need to set up the admission stream before anything else.
 
 	jm := dproto.JoinMessage{
-		AA: dproto.AddressAttestation{
+		AA: daddr.AddressAttestation{
 			Addr:      h.Cfg.AdvertiseAddr,
 			Timestamp: h.Cfg.Now(),
 		},

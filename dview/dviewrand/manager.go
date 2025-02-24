@@ -2,13 +2,14 @@ package dviewrand
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
 
+	"github.com/gordian-engine/dragon/daddr"
 	"github.com/gordian-engine/dragon/dview"
-	"github.com/gordian-engine/dragon/internal/dproto"
 )
 
 type Manager struct {
@@ -97,9 +98,9 @@ func (m *Manager) ConsiderNeighborRequest(
 // and it wants to connect to the new neighbor
 // if we don't already have one from the same CA.
 func (m *Manager) ConsiderForwardJoin(
-	_ context.Context, fjm dproto.ForwardJoinMessage,
+	_ context.Context, aa daddr.AddressAttestation, chain []*x509.Certificate,
 ) (dview.ForwardJoinDecision, error) {
-	caCert := fjm.JoiningCertChain[len(fjm.JoiningCertChain)-1]
+	caCert := chain[len(chain)-1]
 
 	_, alreadyHaveCA := m.aByCAPKI[string(caCert.RawSubjectPublicKeyInfo)]
 

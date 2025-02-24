@@ -2,10 +2,11 @@ package dviewtest
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 
+	"github.com/gordian-engine/dragon/daddr"
 	"github.com/gordian-engine/dragon/dview"
-	"github.com/gordian-engine/dragon/internal/dproto"
 )
 
 type DenyingManager struct{}
@@ -23,7 +24,7 @@ func (DenyingManager) ConsiderNeighborRequest(
 }
 
 func (DenyingManager) ConsiderForwardJoin(
-	context.Context, dproto.ForwardJoinMessage,
+	context.Context, daddr.AddressAttestation, []*x509.Certificate,
 ) (dview.ForwardJoinDecision, error) {
 	return dview.ForwardJoinDecision{
 		// Seems like we may as well continue forwarding in this test type.

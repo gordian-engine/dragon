@@ -1,4 +1,4 @@
-package dproto_test
+package daddr_test
 
 import (
 	"bytes"
@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gordian-engine/dragon/internal/dproto"
+	"github.com/gordian-engine/dragon/daddr"
 	"github.com/stretchr/testify/require"
 )
 
 func TestAddressAttestation_roundTrip(t *testing.T) {
-	aa := dproto.AddressAttestation{
+	aa := daddr.AddressAttestation{
 		Addr: "addr.example:12345",
 
 		// Arbitrary timestamp, but needs local so that when we parse it back,
@@ -28,7 +28,7 @@ func TestAddressAttestation_roundTrip(t *testing.T) {
 	var buf bytes.Buffer
 	require.NoError(t, aa.Encode(&buf))
 
-	var got dproto.AddressAttestation
+	var got daddr.AddressAttestation
 	require.NoError(t, got.Decode(&buf))
 
 	require.Equal(t, got, aa)

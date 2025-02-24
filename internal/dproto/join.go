@@ -5,13 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+
+	"github.com/gordian-engine/dragon/daddr"
 )
 
 // JoinMessage is the message a client sends to a server
 // when it wants to enter the p2p network.
 type JoinMessage struct {
 	// The join message currently only contains an address attestation.
-	AA AddressAttestation
+	AA daddr.AddressAttestation
 }
 
 // OpenStreamAndJoinBytes returns the byte slice to send
@@ -32,7 +34,7 @@ func (m JoinMessage) OpenStreamAndJoinBytes() []byte {
 	_ = buf.WriteByte(byte(JoinMessageType))
 
 	// bytes.Buffer is documented to always return nil for write operations.
-	// And currently, (AddressAttestation).Encode can only return an error
+	// And currently, (daddr.AddressAttestation).Encode can only return an error
 	// from the underlying writer, so this should never fail.
 	if err := m.AA.Encode(buf); err != nil {
 		panic(errors.New(

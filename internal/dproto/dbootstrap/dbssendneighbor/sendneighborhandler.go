@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/gordian-engine/dragon/daddr"
 	"github.com/gordian-engine/dragon/internal/dcrypto"
 	"github.com/gordian-engine/dragon/internal/dproto"
 	"github.com/quic-go/quic-go"
@@ -23,7 +24,7 @@ func (h sendNeighborHandler) Handle(
 	// We only have a bare connection at this point,
 	// so we need to set up the admission stream before anything else.
 
-	aa := dproto.AddressAttestation{
+	aa := daddr.AddressAttestation{
 		Addr:      h.Cfg.AdvertiseAddr,
 		Timestamp: h.Cfg.Now(),
 	}

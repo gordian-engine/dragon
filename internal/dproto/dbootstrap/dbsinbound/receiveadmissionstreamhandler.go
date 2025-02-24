@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 
+	"github.com/gordian-engine/dragon/daddr"
 	"github.com/gordian-engine/dragon/internal/dproto"
 	"github.com/quic-go/quic-go"
 )
@@ -94,7 +95,7 @@ func (h receiveAdmissionStreamHandler) handleNeighborMessage(
 }
 
 func (h receiveAdmissionStreamHandler) validateAddressAttestation(
-	aa dproto.AddressAttestation,
+	aa daddr.AddressAttestation,
 ) error {
 	// It's cheaper to validate the timestamp first.
 	now := h.Cfg.Now() // Prefer a single syscall for current time.

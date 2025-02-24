@@ -7,7 +7,7 @@ import (
 	"errors"
 	"net"
 
-	"github.com/gordian-engine/dragon/internal/dproto"
+	"github.com/gordian-engine/dragon/daddr"
 )
 
 // ActivePeer is a peer in the active view
@@ -70,12 +70,14 @@ type Manager interface {
 	// regardless of the actual value.
 	ConsiderJoin(context.Context, ActivePeer) (JoinDecision, error)
 
-	// ConsiderForwardJoin evaluates whether an incoming Forward Join message
-	// should continue to be propagated
+	// ConsiderForwardJoin evaluates whether the details
+	// of the incoming Forward Join message should continue to be propagated
 	// and whether the current node should attempt to make a neighbor request.
-	ConsiderForwardJoin(context.Context, dproto.ForwardJoinMessage) (
-		ForwardJoinDecision, error,
-	)
+	ConsiderForwardJoin(
+		ctx context.Context,
+		aa daddr.AddressAttestation,
+		certChain []*x509.Certificate,
+	) (ForwardJoinDecision, error)
 
 	// ConsiderNeighborRequest evaluates whether to accept
 	// an incoming Neighbor request.

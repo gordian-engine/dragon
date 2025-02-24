@@ -7,13 +7,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+
+	"github.com/gordian-engine/dragon/daddr"
 )
 
 // ForwardJoin message is conditionally sent to active peers
 // when a Node receives a [JoinMessage].
 type ForwardJoinMessage struct {
 	// The initial address attestation sent by the joining node.
-	AA AddressAttestation
+	AA daddr.AddressAttestation
 
 	// The certificate chain of the joining node.
 	JoiningCertChain []*x509.Certificate
@@ -59,7 +61,7 @@ func (m ForwardJoinMessage) Encode(w io.Writer) error {
 	_ = buf.WriteByte(byte(ForwardJoinMessageType))
 
 	// bytes.Buffer is documented to always return nil for write operations.
-	// And currently, (AddressAttestation).Encode can only return an error
+	// And currently, (daddr.AddressAttestation).Encode can only return an error
 	// from the underlying writer, so this should never fail.
 	if err := m.AA.Encode(buf); err != nil {
 		panic(errors.New(
