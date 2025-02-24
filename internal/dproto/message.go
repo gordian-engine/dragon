@@ -22,6 +22,12 @@ const (
 
 	// Response to neighbor request.
 	NeighborReplyMessageType MessageType = 4
+
+	// Self-initiated shuffle to a randomly chosen active peer.
+	ShuffleMessageType MessageType = 5
+
+	// Reply to shuffle message.
+	ShuffleReplyMessageType MessageType = 6
 )
 
 const (

@@ -1,10 +1,13 @@
 package dcert
 
 import (
+	"bytes"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"iter"
 	"slices"
 )
@@ -144,4 +147,109 @@ type MutableCert struct {
 // Set sets the mutable certificate to the given certificate.
 func (mc MutableCert) Set(cert *x509.Certificate) {
 	*mc.target = cert
+}
+
+func (c Chain) EncodedSize() int {
+	sz := 1 + (2 * c.Len()) // Number of intermediate certs, plus uint16 for each cert's size.
+	for cert := range c.All() {
+		sz += len(cert.Raw)
+	}
+	return sz
+}
+
+func (c Chain) Encode(w io.Writer) error {
+	if err := c.Validate(); err != nil {
+		return fmt.Errorf("refusing to encode invalid Chain: %w", err)
+	}
+
+	sz := c.EncodedSize()
+
+	buf := bytes.NewBuffer(make([]byte, 0, sz))
+	_ = buf.WriteByte(byte(c.Len()))
+
+	for cert := range c.All() {
+		const maxUint16 = (1 << 16) - 1
+		if len(cert.Raw) > maxUint16 {
+			panic(fmt.Errorf(
+				"ILLEGAL: cannot encode certificate with length greater than %d",
+				maxUint16,
+			))
+		}
+		if err := binary.Write(buf, binary.BigEndian, uint16(len(cert.Raw))); err != nil {
+			panic(fmt.Errorf(
+				"IMPOSSIBLE: failed to encode big endian uint16: %w", err,
+			))
+		}
+	}
+
+	// TODO: we could save a bit of space by not encoding the raw CA certificate.
+	// We expect the remote to already have it.
+	// So we could send the unique identifier of its RawSubjectPublicKeyInfo.
+
+	for cert := range c.All() {
+		_, _ = buf.Write(cert.Raw)
+	}
+
+	_, err := buf.WriteTo(w)
+	if err != nil {
+		return fmt.Errorf("failed to write encoded chain: %w", err)
+	}
+
+	return nil
+}
+
+func (c *Chain) Decode(r io.Reader) error {
+	var szBuf [1]byte
+	if _, err := io.ReadFull(r, szBuf[:]); err != nil {
+		return fmt.Errorf("failed to read certificate count: %w", err)
+	}
+
+	if szBuf[0] < 2 {
+		return fmt.Errorf("certificate count %d too small (must be at least 2)", szBuf[0])
+	}
+	if szBuf[0] > 2+MaxIntermediateLen {
+		return fmt.Errorf(
+			"certificate count %d too high (must be no greater than %d",
+			szBuf[0], 2+MaxIntermediateLen,
+		)
+	}
+
+	// Read in the certificate sizes.
+	cSizes := make([]byte, 2*szBuf[0])
+	if _, err := io.ReadFull(r, cSizes); err != nil {
+		return fmt.Errorf("failed to read certificate sizes: %w", err)
+	}
+
+	// Right-size the joining cert chain.
+	szBuf[0] -= 2
+	if cap(c.Intermediate) >= int(szBuf[0]) {
+		c.Intermediate = c.Intermediate[:szBuf[0]]
+	} else {
+		c.Intermediate = make([]*x509.Certificate, szBuf[0])
+	}
+
+	i := 0
+	for mc := range c.Mutable() {
+		// We have to allocate a byte slice,
+		// and the call to x509.ParseCertificate will take ownership of it.
+		raw := make([]byte, binary.BigEndian.Uint16(cSizes))
+		cSizes = cSizes[2:]
+
+		if _, err := io.ReadFull(r, raw); err != nil {
+			return fmt.Errorf("failed to read raw certificate at index %d: %w", i, err)
+		}
+
+		cert, err := x509.ParseCertificate(raw)
+		if err != nil {
+			return fmt.Errorf("failed to parse certificate at index %d: %w", i, err)
+		}
+		mc.Set(cert)
+		i++
+	}
+
+	if err := c.Validate(); err != nil {
+		return fmt.Errorf("parsed invalid chain: %w", err)
+	}
+
+	return nil
 }
