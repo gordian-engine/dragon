@@ -1,8 +1,7 @@
 package dps
 
 import (
-	"crypto/x509"
-
+	"github.com/gordian-engine/dragon/dcert"
 	"github.com/quic-go/quic-go"
 )
 
@@ -69,13 +68,13 @@ func (ip iPeer) ToPeer() Peer {
 }
 
 type PeerCertID struct {
-	caSPKI   caSPKI
 	leafSPKI leafSPKI
+	caSPKI   caSPKI
 }
 
-func PeerCertIDFromCerts(pcs []*x509.Certificate) PeerCertID {
+func PeerCertIDFromChain(chain dcert.Chain) PeerCertID {
 	return PeerCertID{
-		caSPKI:   caSPKI(pcs[len(pcs)-1].RawSubjectPublicKeyInfo),
-		leafSPKI: leafSPKI(pcs[0].RawSubjectPublicKeyInfo),
+		leafSPKI: leafSPKI(chain.Leaf.RawSubjectPublicKeyInfo),
+		caSPKI:   caSPKI(chain.Root.RawSubjectPublicKeyInfo),
 	}
 }

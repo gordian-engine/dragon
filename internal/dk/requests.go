@@ -1,6 +1,7 @@
 package dk
 
 import (
+	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dview"
 	"github.com/gordian-engine/dragon/internal/dproto"
 	"github.com/quic-go/quic-go"
@@ -62,6 +63,10 @@ type NeighborDecisionRequest struct {
 //     so they connected to us and directly opened sent a Neighbor message.
 type NewPeeringRequest struct {
 	QuicConn quic.Connection
+
+	// TODO: this should have an address attestation too.
+
+	Chain dcert.Chain
 
 	AdmissionStream, DisconnectStream, ShuffleStream quic.Stream
 

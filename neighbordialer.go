@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/internal/dk"
 	"github.com/gordian-engine/dragon/internal/dproto/dbootstrap/dbssendneighbor"
 	"github.com/quic-go/quic-go"
@@ -73,6 +74,16 @@ func (d *neighborDialer) dialAndNeighbor(ctx context.Context, addr string) {
 		)
 	}
 
+	chain, err := dcert.NewChainFromTLSConnectionState(dr.Conn.ConnectionState().TLS)
+	if err != nil {
+		d.Log.Warn(
+			"Failed to extract certificate chain from neighbor",
+			"addr", addr,
+			"err", err,
+		)
+		return
+	}
+
 	// TODO: start a new goroutine for a context.WithCancelCause paired with notify.
 
 	res, err := d.bootstrapNeighbor(ctx, dr.Conn)
@@ -90,6 +101,8 @@ func (d *neighborDialer) dialAndNeighbor(ctx context.Context, addr string) {
 	pResp := make(chan dk.NewPeeringResponse, 1)
 	req := dk.NewPeeringRequest{
 		QuicConn: dr.Conn,
+
+		Chain: chain,
 
 		AdmissionStream:  res.Admission,
 		DisconnectStream: res.Disconnect,

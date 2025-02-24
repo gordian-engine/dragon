@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dview"
 	"github.com/gordian-engine/dragon/internal/dproto"
 	"github.com/gordian-engine/dragon/internal/dps"
@@ -195,17 +194,9 @@ func (k *Kernel) handleJoinRequest(ctx context.Context, req JoinRequest) {
 	// so we delegate this to the active peer set.
 
 	// TODO: req.Peer should already have the chain set.
-	chain, err := dcert.NewChainFromTLSConnectionState(req.Peer.TLS)
-	if err != nil {
-		k.log.Info(
-			"Failed to extract certificate chain from peer's TLS connection state",
-			"err", err,
-		)
-		return
-	}
 	msg := dproto.ForwardJoinMessage{
 		AA:    req.Msg.AA,
-		Chain: chain,
+		Chain: req.Peer.Chain,
 
 		TTL: 4, // TODO: make this configurable.
 	}
@@ -237,7 +228,7 @@ func (k *Kernel) handleNewPeeringRequest(ctx context.Context, req NewPeeringRequ
 	// this one no longer met conditions to enter active view.
 
 	evicted, err := k.vm.AddPeering(ctx, dview.ActivePeer{
-		TLS: req.QuicConn.ConnectionState().TLS,
+		Chain: req.Chain,
 
 		LocalAddr:  req.QuicConn.LocalAddr(),
 		RemoteAddr: req.QuicConn.RemoteAddr(),
@@ -283,7 +274,7 @@ func (k *Kernel) handleNewPeeringRequest(ctx context.Context, req NewPeeringRequ
 
 		if err := k.aps.Remove(
 			ctx,
-			dps.PeerCertIDFromCerts(evicted.TLS.PeerCertificates), // TODO: shouldn't this be VerifiedCertificates?
+			dps.PeerCertIDFromChain(evicted.Chain),
 		); err != nil {
 			// The only error returned from Remove should be a context error.
 			// Not much we can do here but log it.

@@ -2,8 +2,6 @@ package dview
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"net"
 
@@ -14,8 +12,10 @@ import (
 // ActivePeer is a peer in the active view
 // (peers we have a direct connection with).
 type ActivePeer struct {
-	// TODO: replace the TLS field with a dcert.Chain.
-	TLS tls.ConnectionState
+	// The peer's certificate chain.
+	Chain dcert.Chain
+
+	// TODO: add an address attestation.
 
 	// The address of our local listener.
 	// Might be relevant if the system is configured with multiple listeners.
@@ -29,20 +29,15 @@ type ActivePeer struct {
 	RemoteAddr net.Addr
 }
 
-func (p ActivePeer) CACert() *x509.Certificate {
-	pcs := p.TLS.PeerCertificates // TODO: this is probably wrong and needs to be .VerifiedCertificates.
-	return pcs[len(pcs)-1]
-}
-
 // PassivePeer is a peer in the passive set
 // (peers we know about, but are not directly connected with).
 type PassivePeer struct {
 	Addr string
 
-	// TODO: this should contain an address attestation.
+	// TODO: add an address attestation.
 
-	// The trusted CA who signed this peer's leaf certificate.
-	CACert *x509.Certificate
+	// The peer's certificate chain.
+	Chain dcert.Chain
 }
 
 // Manager manages the set of active and passive peers.

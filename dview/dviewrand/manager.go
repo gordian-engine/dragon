@@ -70,8 +70,7 @@ func New(log *slog.Logger, cfg Config) *Manager {
 func (m *Manager) ConsiderJoin(
 	_ context.Context, p dview.ActivePeer,
 ) (dview.JoinDecision, error) {
-	caCert := p.CACert()
-
+	caCert := p.Chain.Root
 	if _, ok := m.aByCAPKI[string(caCert.RawSubjectPublicKeyInfo)]; ok {
 		// We already have an active peer from this CA.
 		return dview.DisconnectAndForwardJoinDecision, nil
@@ -86,8 +85,7 @@ func (m *Manager) ConsiderJoin(
 func (m *Manager) ConsiderNeighborRequest(
 	_ context.Context, p dview.ActivePeer,
 ) (bool, error) {
-	caCert := p.CACert()
-
+	caCert := p.Chain.Root
 	_, have := m.aByCAPKI[string(caCert.RawSubjectPublicKeyInfo)]
 
 	// Acceptable if we don't already have an active peer from this CA.
@@ -112,7 +110,7 @@ func (m *Manager) AddPeering(
 	_ context.Context, p dview.ActivePeer,
 ) (evicted *dview.ActivePeer, err error) {
 	// Make sure we don't have an active peer with the same CA.
-	caCert := p.CACert()
+	caCert := p.Chain.Root
 	if _, ok := m.aByCAPKI[string(caCert.RawSubjectPublicKeyInfo)]; ok {
 		// We already have an active peer from this CA.
 		return nil, dview.ErrAlreadyActiveCA
@@ -135,7 +133,7 @@ func (m *Manager) AddPeering(
 }
 
 func (m *Manager) RemoveActivePeer(_ context.Context, p dview.ActivePeer) {
-	caCert := p.CACert()
+	caCert := p.Chain.Root
 	if _, ok := m.aByCAPKI[string(caCert.RawSubjectPublicKeyInfo)]; !ok {
 		// Wasn't in the active set.
 		// We'll panic here for now at least.

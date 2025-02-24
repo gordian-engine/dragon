@@ -590,9 +590,16 @@ func (n *Node) handleIncomingJoin(
 	ctx context.Context, qc quic.Connection, qs quic.Stream,
 	jm dproto.JoinMessage,
 ) error {
+	chain, err := dcert.NewChainFromTLSConnectionState(qc.ConnectionState().TLS)
+	if err != nil {
+		return fmt.Errorf(
+			"failed to extract certificate chain from incoming join: %w", err,
+		)
+	}
+
 	// Now we have the advertise address and an admission stream.
 	peer := dview.ActivePeer{
-		TLS:        qc.ConnectionState().TLS,
+		Chain:      chain,
 		LocalAddr:  qc.LocalAddr(),
 		RemoteAddr: qc.RemoteAddr(),
 	}
@@ -673,6 +680,8 @@ func (n *Node) handleIncomingJoin(
 	pReq := dk.NewPeeringRequest{
 		QuicConn: qc,
 
+		Chain: chain,
+
 		AdmissionStream:  qs,
 		DisconnectStream: res.Disconnect,
 		ShuffleStream:    res.Shuffle,
@@ -715,10 +724,18 @@ func (n *Node) handleIncomingJoin(
 func (n *Node) handleIncomingNeighbor(
 	ctx context.Context, qc quic.Connection, qs quic.Stream, nm dproto.NeighborMessage,
 ) error {
+	chain, err := dcert.NewChainFromTLSConnectionState(qc.ConnectionState().TLS)
+	if err != nil {
+		return fmt.Errorf(
+			"failed to extract certificate chain from incoming neighbor request: %w", err,
+		)
+	}
+
 	// We received a neighbor message from the remote.
 	// Next, we have to consult the kernel to decide whether we will accept this neighbor request.
 	peer := dview.ActivePeer{
-		TLS:        qc.ConnectionState().TLS,
+		Chain: chain,
+		// TODO: use nm.AA once ActivePeer supports that field.
 		LocalAddr:  qc.LocalAddr(),
 		RemoteAddr: qc.RemoteAddr(),
 	}
@@ -796,6 +813,8 @@ func (n *Node) handleIncomingNeighbor(
 	pReq := dk.NewPeeringRequest{
 		QuicConn: qc,
 
+		Chain: chain,
+
 		AdmissionStream:  qs,
 		DisconnectStream: res.Disconnect,
 		ShuffleStream:    res.Shuffle,
@@ -850,6 +869,11 @@ func (n *Node) DialAndJoin(ctx context.Context, addr net.Addr) error {
 		return fmt.Errorf("DialAndJoin: dial failed: %w", err)
 	}
 
+	chain, err := dcert.NewChainFromTLSConnectionState(dr.Conn.ConnectionState().TLS)
+	if err != nil {
+		return fmt.Errorf("DialAndJoin: failed to extract certificate chain: %w", err)
+	}
+
 	// TODO: start a new goroutine for a context.WithCancelCause paired with notify.
 
 	res, err := n.bootstrapJoin(ctx, dr.Conn)
@@ -862,6 +886,8 @@ func (n *Node) DialAndJoin(ctx context.Context, addr net.Addr) error {
 	pResp := make(chan dk.NewPeeringResponse, 1)
 	req := dk.NewPeeringRequest{
 		QuicConn: dr.Conn,
+
+		Chain: chain,
 
 		AdmissionStream:  res.AdmissionStream,
 		DisconnectStream: res.DisconnectStream,
