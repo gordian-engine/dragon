@@ -140,8 +140,20 @@ type ForwardJoinDecision struct {
 	MakeNeighborRequest bool
 }
 
+// OutboundShuffle is a list of shuffle entries and a destination,
+// returned by [Manager.MakeOutboundShuffle]
+// when it is time to make an outbound shuffle.
 type OutboundShuffle struct {
-	// TODO: how will the target peer and payload peers be represented?
+	Dest    dcert.Chain
+	Entries []ShuffleEntry
+}
+
+// ShuffleEntry is a single shuffle entry,
+// containing a certificate chain indicating a particular peer
+// and its last known address attestation.
+type ShuffleEntry struct {
+	AA    daddr.AddressAttestation
+	Chain dcert.Chain
 }
 
 // ErrAlreadyActiveCA should be returned by [Manager] implementations

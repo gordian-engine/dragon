@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/gordian-engine/dragon"
+	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dcert/dcerttest"
 	"github.com/gordian-engine/dragon/dview/dviewrand"
 	"github.com/gordian-engine/dragon/internal/dtest"
@@ -24,6 +25,8 @@ type Network struct {
 	Log *slog.Logger
 
 	Nodes []NetworkNode
+
+	Chains []dcert.Chain
 }
 
 // NetworkNode contains the details for a node in this test network.
@@ -139,6 +142,7 @@ func NewNetwork(
 	}
 
 	nodes := make([]NetworkNode, len(cfgs))
+	chains := make([]dcert.Chain, len(cfgs))
 	for i, ca := range cas {
 		// Create listener first.
 		uc, err := net.ListenUDP("udp", &net.UDPAddr{
@@ -157,6 +161,7 @@ func NewNetwork(
 			DNSNames: []string{"localhost"},
 		})
 		require.NoError(t, err)
+		chains[i] = l.Chain
 
 		tc := tls.Config{
 			// The certificate this client presents.
@@ -200,8 +205,9 @@ func NewNetwork(
 	}
 
 	return &Network{
-		Log:   log,
-		Nodes: nodes,
+		Log:    log,
+		Nodes:  nodes,
+		Chains: chains,
 	}
 }
 

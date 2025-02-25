@@ -24,11 +24,14 @@ func NewSeedChannels(chanSz int) SeedChannels {
 
 type WorkChannels struct {
 	ForwardJoins chan WorkForwardJoin
+
+	OutboundShuffles chan WorkOutboundShuffle
 }
 
 func NewWorkChannels(chanSz int) WorkChannels {
 	return WorkChannels{
-		ForwardJoins: make(chan WorkForwardJoin, chanSz),
+		ForwardJoins:     make(chan WorkForwardJoin, chanSz),
+		OutboundShuffles: make(chan WorkOutboundShuffle, chanSz),
 	}
 }
 
@@ -45,6 +48,15 @@ type SeedForwardJoin struct {
 // WorkForwardJoin is the translation of a [SeedForwardJoin] into fanout work.
 type WorkForwardJoin struct {
 	Raw []byte
+
+	Stream quic.Stream
+}
+
+// WorkOutboundShuffle is a shuffle message destined for a particular peer.
+// Because this message has only one destination,
+// we skip the seed stage.
+type WorkOutboundShuffle struct {
+	Msg dproto.ShuffleMessage
 
 	Stream quic.Stream
 }

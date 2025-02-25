@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gordian-engine/dragon/daddr"
+	"github.com/gordian-engine/dragon/dcert"
 )
 
 // KeyType indicates which key type is used
@@ -84,7 +85,10 @@ type LeafCert struct {
 
 	KeyType         KeyType
 	PubKey, PrivKey any
+
+	Chain dcert.Chain
 }
+
 
 // FastConfig returns a config that is intended to be minimally resource intensive,
 // making it suitable for heavier use in test.
@@ -300,6 +304,11 @@ func (ca *CA) CreateLeafCert(cfg LeafConfig) (*LeafCert, error) {
 		PubKey:  pubKey,
 		PrivKey: privKey,
 		KeyType: keyType,
+
+		Chain: dcert.Chain{
+			Leaf: cert,
+			Root: ca.Cert,
+		},
 	}, nil
 }
 

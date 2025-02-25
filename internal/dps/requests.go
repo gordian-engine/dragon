@@ -41,3 +41,8 @@ type forwardJoinToNetwork struct {
 	// Exclude peers by their CA certificate's SPKI.
 	Exclude map[string]struct{}
 }
+
+type initiatedShuffle struct {
+	DstCASPKI string
+	Entries   map[string]dproto.ShuffleEntry
+}

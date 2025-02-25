@@ -3,7 +3,6 @@ package dps
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -40,7 +39,14 @@ type Active struct {
 	forwardJoinsToNetwork   chan forwardJoinToNetwork
 	forwardJoinsFromNetwork chan<- ForwardJoinFromNetwork
 
+	initiatedShuffles chan initiatedShuffle
+
+	// Depending on the particular message
+	// and whether it needs to be broadcast to all peers
+	// or just a single peer in the active view,
+	// the APS will send on either seed or work channels.
 	seedChannels dfanout.SeedChannels
+	workChannels dfanout.WorkChannels
 }
 
 // Type aliases to avoid mistakenly accessing a map incorrectly.
@@ -85,17 +91,18 @@ func NewActivePeerSet(ctx context.Context, log *slog.Logger, cfg ActiveConfig) *
 		// We don't want these to block.
 		// Unless otherwise noted, these are sized with arbitrary guesses.
 		forwardJoinsToNetwork: make(chan forwardJoinToNetwork, 8),
+		initiatedShuffles:     make(chan initiatedShuffle, 4),
 
 		// Channels that flow back upward to the kernel.
 		forwardJoinsFromNetwork: cfg.ForwardJoinsFromNetwork,
 
 		seedChannels: dfanout.NewSeedChannels(2 * seeders),
+		workChannels: dfanout.NewWorkChannels(2 * workers),
 	}
 
 	a.wg.Add(1)
 	go a.mainLoop(ctx)
 
-	workChannels := dfanout.NewWorkChannels(2 * workers)
 	a.wg.Add(seeders + workers)
 
 	for i := range seeders {
@@ -104,7 +111,7 @@ func NewActivePeerSet(ctx context.Context, log *slog.Logger, cfg ActiveConfig) *
 			log.With("seeder_idx", i),
 			&a.wg,
 			a.seedChannels,
-			workChannels,
+			a.workChannels,
 		)
 	}
 
@@ -113,7 +120,7 @@ func NewActivePeerSet(ctx context.Context, log *slog.Logger, cfg ActiveConfig) *
 			ctx,
 			log.With("worker_idx", i),
 			&a.wg,
-			workChannels,
+			a.workChannels,
 		)
 	}
 
@@ -317,9 +324,51 @@ func (a *Active) handleForwardJoinToNetwork(ctx context.Context, fj forwardJoinT
 
 func (a *Active) InitiateShuffle(
 	ctx context.Context,
-	// TODO: this will have more parameters.
-	// The kernel will need to translate from the dview.OutboundShuffle
-	// peer representation to the peer representation in this package.
+	dstCASPKI string,
+	entries map[string]dproto.ShuffleEntry,
 ) error {
-	return errors.New("TODO: implement this")
+	// The input here is effectively the final message,
+	// so we can just enqueue it as a work item.
+
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf(
+			"context canceled while attempting to initiate shuffle: %w",
+			context.Cause(ctx),
+		)
+	case a.initiatedShuffles <- initiatedShuffle{
+		DstCASPKI: dstCASPKI,
+		Entries:   entries,
+	}:
+		// Okay.
+		return nil
+	}
+}
+
+func (a *Active) handleInitiatedShuffle(ctx context.Context, is initiatedShuffle) {
+	p, ok := a.byCASPKI[caSPKI(is.DstCASPKI)]
+	if !ok {
+		a.log.Warn(
+			"No peer found for shuffle destination",
+		)
+		return
+	}
+
+	os := dfanout.WorkOutboundShuffle{
+		Msg: dproto.ShuffleMessage{
+			Entries: is.Entries,
+		},
+
+		Stream: p.Shuffle,
+	}
+
+	select {
+	case <-ctx.Done():
+		a.log.Info(
+			"Context canceled while attempting to send outbound shuffle work item",
+			"cause", context.Cause(ctx),
+		)
+	case a.workChannels.OutboundShuffles <- os:
+		// Okay.
+	}
 }

@@ -983,6 +983,8 @@ func (n *Node) bootstrapJoin(
 	return res, nil
 }
 
+// UpdateCAs replaces the existing trusted CAs
+// with the given list.
 func (n *Node) UpdateCAs(certs []*x509.Certificate) {
 	n.caPool.UpdateCAs(certs)
 }

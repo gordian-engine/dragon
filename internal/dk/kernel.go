@@ -328,17 +328,30 @@ func (k *Kernel) handleForwardJoinFromNetwork(ctx context.Context, req dps.Forwa
 	}
 }
 
+// initiateShuffle is triggered by a shuffle signal.
+//
+// It gets the outbound shuffle data from the view manager
+// and passes it to the active peer set,
+// so that the data transfer can happen on another goroutine.
 func (k *Kernel) initiateShuffle(ctx context.Context) {
-	// TODO: finish implementing this.
-
 	os, err := k.vm.MakeOutboundShuffle(ctx)
 	if err != nil {
 		k.log.Error("Outbound shuffle failed", "err", err)
 		return
 	}
-	_ = os
 
-	if err := k.aps.InitiateShuffle(ctx); err != nil {
+	pses := make(map[string]dproto.ShuffleEntry, len(os.Entries))
+	for _, e := range os.Entries {
+		pses[string(e.Chain.Root.RawSubjectPublicKeyInfo)] = dproto.ShuffleEntry{
+			AA:    e.AA,
+			Chain: e.Chain,
+		}
+
+		// TODO: handle case of two entries having the same chain root
+	}
+
+	dstCASPKI := string(os.Dest.Root.RawSubjectPublicKeyInfo)
+	if err := k.aps.InitiateShuffle(ctx, dstCASPKI, pses); err != nil {
 		k.log.Error("Failed to initiate shuffle", "err", err)
 		return
 	}

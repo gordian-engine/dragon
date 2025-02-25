@@ -3,6 +3,7 @@ package dragon_test
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"math/rand/v2"
 	"net"
@@ -250,23 +251,31 @@ func TestNode_shuffle(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Two mock view managers for this test,
+	// so we can intercept messages for nodes 0 and 1.
 	vm0 := dviewtest.NewAsyncManagerMock()
 	vm1 := dviewtest.NewAsyncManagerMock()
 
+	// We will override the shuffle signal for node 0.
 	shuffleSig0 := make(chan struct{})
+
+	origTrustedCAs := make([]*x509.Certificate, 2)
 
 	nw := dragontest.NewNetwork(
 		t, ctx,
 		[]dcerttest.CAConfig{dcerttest.FastConfig(), dcerttest.FastConfig()},
 		func(i int, c dragontest.NodeConfig) dragon.NodeConfig {
 			out := c.ToDragonNodeConfig()
-
 			switch i {
 			case 0:
 				out.ViewManager = vm0
 				out.ShuffleSignal = shuffleSig0
+				origTrustedCAs = out.InitialTrustedCAs
 			case 1:
 				out.ViewManager = vm1
+			case 2, 3, 4, 5:
+				// Still need to set a view manager.
+				out.ViewManager = dviewtest.DenyingManager{}
 			default:
 				panic(fmt.Errorf("unexpected node index %d", i))
 			}
@@ -277,19 +286,44 @@ func TestNode_shuffle(t *testing.T) {
 	defer nw.Wait()
 	defer cancel()
 
+	// Four extra CAs so each of the two connected nodes
+	// can shuffle two unknown nodes to the other.
+	extraCAs := make([]*dcerttest.CA, 4)
+	extraLeaves := make([]*dcerttest.LeafCert, 4)
+	for i := range extraCAs {
+		ca, err := dcerttest.GenerateCA(dcerttest.FastConfig())
+		require.NoError(t, err)
+		extraCAs[i] = ca
+
+		l, err := ca.CreateLeafCert(dcerttest.LeafConfig{
+			DNSNames: []string{
+				fmt.Sprintf("extra-%d.example", i+2),
+			},
+		})
+		extraLeaves[i] = l
+	}
+
+	// Both nodes should trust each other and the four extra CAs.
+	for _, n := range nw.Nodes {
+		n.Node.UpdateCAs([]*x509.Certificate{
+			origTrustedCAs[0], origTrustedCAs[1],
+			extraCAs[0].Cert, extraCAs[1].Cert, extraCAs[2].Cert, extraCAs[3].Cert,
+		})
+	}
+
 	// First, vm1 has to consider the Join.
+	// After that it can accept the peering.
 	go func() {
-		req := <-vm1.ConsiderJoinCh
-		req.Resp <- dview.AcceptJoinDecision
+		cjReq := <-vm1.ConsiderJoinCh
+		cjReq.Resp <- dview.AcceptJoinDecision
+
+		apReq := <-vm1.AddPeeringCh
+		apReq.Resp <- nil
 	}()
 
-	// Then both sides have to add the peering.
+	// Node 0 has to accept a peering eventually too.
 	go func() {
 		req := <-vm0.AddPeeringCh
-		req.Resp <- nil
-	}()
-	go func() {
-		req := <-vm1.AddPeeringCh
 		req.Resp <- nil
 	}()
 
@@ -301,10 +335,26 @@ func TestNode_shuffle(t *testing.T) {
 
 	// That was synchronously accepted,
 	// and now we can synchronously handle the outbound shuffle.
-	shufReq := <-vm0.MakeOutboundShuffleCh
-	shufReq.Resp <- dview.OutboundShuffle{
-		// TODO: these fields haven't been defined yet.
+	shuffleEntriesFrom0 := make([]dview.ShuffleEntry, 2)
+	for i := range shuffleEntriesFrom0 {
+		aa, err := extraLeaves[0].AddressAttestation(
+			fmt.Sprintf("extra-%d.example", i),
+		)
+		require.NoError(t, err)
+
+		shuffleEntriesFrom0[i] = dview.ShuffleEntry{
+			AA:    aa,
+			Chain: nw.Chains[0],
+		}
 	}
 
+	shufReq := <-vm0.MakeOutboundShuffleCh
+	shufReq.Resp <- dview.OutboundShuffle{
+		Dest:    nw.Chains[1],
+		Entries: shuffleEntriesFrom0,
+	}
+
+	// Allow some background work in case anything is going to panic here.
+	time.Sleep(50 * time.Millisecond)
 	t.Skip("TODO: incomplete test")
 }
