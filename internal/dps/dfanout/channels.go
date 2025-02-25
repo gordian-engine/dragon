@@ -55,8 +55,11 @@ type WorkForwardJoin struct {
 // WorkOutboundShuffle is a shuffle message destined for a particular peer.
 // Because this message has only one destination,
 // we skip the seed stage.
+//
+// The worker is responsible for creating the ephemeral stream
+// for the shuffle.
 type WorkOutboundShuffle struct {
 	Msg dproto.ShuffleMessage
 
-	Stream quic.Stream
+	Conn quic.Connection
 }

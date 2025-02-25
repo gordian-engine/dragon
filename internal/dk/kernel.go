@@ -21,6 +21,7 @@ type Kernel struct {
 
 	// Unexported channels passed to the active peer set.
 	forwardJoinsFromNetwork chan dps.ForwardJoinFromNetwork
+	shufflesFromPeers       chan dps.ShuffleFromPeer
 
 	// Unexported channels for work that has to happen
 	// outside the kernel and outside the active peer set.
@@ -69,6 +70,9 @@ func NewKernel(ctx context.Context, log *slog.Logger, cfg KernelConfig) *Kernel 
 	// The channel size is an arbitrary guess right now.
 	fjfns := make(chan dps.ForwardJoinFromNetwork, 8)
 
+	// Pretty much the same for shuffles from peers.
+	sfps := make(chan dps.ShuffleFromPeer, 4)
+
 	k := &Kernel{
 		log: log,
 
@@ -77,6 +81,7 @@ func NewKernel(ctx context.Context, log *slog.Logger, cfg KernelConfig) *Kernel 
 		addActivePeerRequests:    make(chan AddActivePeerRequest),
 
 		forwardJoinsFromNetwork: fjfns,
+		shufflesFromPeers:       sfps,
 
 		activeViewSizeCheck: make(chan chan int),
 
@@ -90,6 +95,7 @@ func NewKernel(ctx context.Context, log *slog.Logger, cfg KernelConfig) *Kernel 
 			log.With("dk_sys", "active_peer_set"),
 			dps.ActiveConfig{
 				ForwardJoinsFromNetwork: fjfns,
+				ShufflesFromPeers:       sfps,
 			},
 		),
 
@@ -126,6 +132,9 @@ func (k *Kernel) mainLoop(ctx context.Context) {
 
 		case req := <-k.forwardJoinsFromNetwork:
 			k.handleForwardJoinFromNetwork(ctx, req)
+
+		case sfp := <-k.shufflesFromPeers:
+			k.handleShuffleFromPeer(ctx, sfp)
 
 		case _, ok := <-k.shuffleSignal:
 			if !ok {
@@ -243,7 +252,7 @@ func (k *Kernel) handleAddActivePeerRequest(ctx context.Context, req AddActivePe
 		return
 	}
 
-	// Otherwise, since adding the peering succeeded,
+	// Otherwise, since adding the peer succeeded,
 	// we inform the requester of the success
 	// (indicated by an empty RejectReason).
 	req.Resp <- AddActivePeerResponse{}
@@ -348,11 +357,18 @@ func (k *Kernel) initiateShuffle(ctx context.Context) {
 		// TODO: handle case of two entries having the same chain root
 	}
 
-	dstCASPKI := string(os.Dest.Root.RawSubjectPublicKeyInfo)
-	if err := k.aps.InitiateShuffle(ctx, dstCASPKI, pses); err != nil {
+	if err := k.aps.InitiateShuffle(ctx, os.Dest, pses); err != nil {
 		k.log.Error("Failed to initiate shuffle", "err", err)
 		return
 	}
+}
+
+func (k *Kernel) handleShuffleFromPeer(
+	ctx context.Context, sfp dps.ShuffleFromPeer,
+) {
+	// TODO: vm.MakeShuffleResponse(ctx, sfp)
+	// then send outbound shuffle back out to the same stream,
+	// on an active peer set worker.
 }
 
 // GetActiveViewSize returns the current number of peers in the active view.

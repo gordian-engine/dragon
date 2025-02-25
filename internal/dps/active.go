@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/internal/dproto"
 	"github.com/gordian-engine/dragon/internal/dps/dfanout"
 	"github.com/quic-go/quic-go"
@@ -40,6 +41,7 @@ type Active struct {
 	forwardJoinsFromNetwork chan<- ForwardJoinFromNetwork
 
 	initiatedShuffles chan initiatedShuffle
+	shufflesFromPeers chan<- ShuffleFromPeer
 
 	// Depending on the particular message
 	// and whether it needs to be broadcast to all peers
@@ -70,6 +72,11 @@ type ActiveConfig struct {
 	// A forward join was received from the network.
 	// The active peer set sends the message on this channel.
 	ForwardJoinsFromNetwork chan<- ForwardJoinFromNetwork
+
+	// A peer sent a shuffle message.
+	// The message needs to go up to the kernel
+	// so that the view manager can handle it.
+	ShufflesFromPeers chan<- ShuffleFromPeer
 }
 
 func NewActivePeerSet(ctx context.Context, log *slog.Logger, cfg ActiveConfig) *Active {
@@ -96,6 +103,7 @@ func NewActivePeerSet(ctx context.Context, log *slog.Logger, cfg ActiveConfig) *
 
 		// Channels that flow back upward to the kernel.
 		forwardJoinsFromNetwork: cfg.ForwardJoinsFromNetwork,
+		shufflesFromPeers:       cfg.ShufflesFromPeers,
 
 		seedChannels: dfanout.NewSeedChannels(2 * seeders),
 		workChannels: dfanout.NewWorkChannels(2 * workers),
@@ -160,6 +168,9 @@ func (a *Active) mainLoop(ctx context.Context) {
 
 		case fj := <-a.forwardJoinsToNetwork:
 			a.handleForwardJoinToNetwork(ctx, fj)
+
+		case is := <-a.initiatedShuffles:
+			a.handleInitiatedShuffle(ctx, is)
 		}
 	}
 }
@@ -323,9 +334,11 @@ func (a *Active) handleForwardJoinToNetwork(ctx context.Context, fj forwardJoinT
 	}
 }
 
+// InitiateShuffle enqueues a task to send the given shuffle entries
+// to the destination peer given by its CA SPKI.
 func (a *Active) InitiateShuffle(
 	ctx context.Context,
-	dstCASPKI string,
+	dstChain dcert.Chain,
 	entries map[string]dproto.ShuffleEntry,
 ) error {
 	// The input here is effectively the final message,
@@ -338,7 +351,7 @@ func (a *Active) InitiateShuffle(
 			context.Cause(ctx),
 		)
 	case a.initiatedShuffles <- initiatedShuffle{
-		DstCASPKI: dstCASPKI,
+		DstCASPKI: string(dstChain.Root.RawSubjectPublicKeyInfo),
 		Entries:   entries,
 	}:
 		// Okay.
@@ -360,7 +373,7 @@ func (a *Active) handleInitiatedShuffle(ctx context.Context, is initiatedShuffle
 			Entries: is.Entries,
 		},
 
-		Stream: p.Shuffle,
+		Conn: p.Conn,
 	}
 
 	select {

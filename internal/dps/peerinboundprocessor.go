@@ -8,7 +8,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gordian-engine/dragon/internal/dproto"
 	"github.com/gordian-engine/dragon/internal/dproto/dpadmission"
+	"github.com/gordian-engine/dragon/internal/dproto/dpdynamic"
+	"github.com/quic-go/quic-go"
 )
 
 // peerInboundProcessor handles the work involved with accepting messages
@@ -20,12 +23,15 @@ type peerInboundProcessor struct {
 	// whose work this worker is responsible for.
 	peer Peer
 
-	// Backreference to parent.
-	// Once this type is more complete,
-	// it will probably be better to only reference individual fields on a,
-	// instead of holding a whole reference to it.
-	a *Active
+	// When observing a forward join,
+	// feed it back towards the kernel through this channel.
+	forwardJoinsFromNetwork chan<- ForwardJoinFromNetwork
+	// Same for shuffles.
+	shufflesFromPeers chan<- ShuffleFromPeer
 
+	// Wait group for the processor's main loop.
+	// Used by the owning active peer set
+	// to know when its processors have all finished.
 	mainLoopWG *sync.WaitGroup
 
 	// Own wait group, unrelated to Active.
@@ -55,7 +61,8 @@ func newPeerInboundProcessor(
 
 		peer: peer,
 
-		a: a,
+		forwardJoinsFromNetwork: a.forwardJoinsFromNetwork,
+		shufflesFromPeers:       a.shufflesFromPeers,
 
 		mainLoopWG: &a.processorWG,
 
@@ -71,7 +78,8 @@ func newPeerInboundProcessor(
 	// avoids that data race in test.
 	// That data race seems unlikely to happen in a real system
 	// that starts and is expected to stay running for a long time.
-	p.wg.Add(1)
+	p.wg.Add(2)
+	go p.acceptDynamicStreams(ctx)
 	go p.handleIncomingAdmission(ctx)
 
 	// The main loop is not part of the wait group.
@@ -109,6 +117,81 @@ func (p *peerInboundProcessor) Cancel() {
 // so that one invalid message ends up closing the entire worker.
 func (p *peerInboundProcessor) fail(e error) {
 	p.cancel(e)
+}
+
+func (p *peerInboundProcessor) acceptDynamicStreams(ctx context.Context) {
+	defer p.wg.Done()
+
+	proto := dpdynamic.Protocol{
+		Log: p.log.With("protocol", "dynamic"),
+		Cfg: dpdynamic.Config{
+			IdentifyStreamTimeout: 50 * time.Millisecond,
+		},
+	}
+
+	for {
+		s, err := p.peer.Conn.AcceptStream(ctx)
+		if err != nil {
+			p.fail(fmt.Errorf("failed to accept stream: %w", err))
+			return
+		}
+
+		// Upon accepting the stream, immediately delegate to a new goroutine.
+		// TODO: this should be a pool of goroutines instead so we can provide backpressure.
+		p.wg.Add(1)
+		go p.handleDynamicStream(ctx, proto, s)
+	}
+}
+
+func (p *peerInboundProcessor) handleDynamicStream(
+	ctx context.Context,
+	proto dpdynamic.Protocol,
+	s quic.Stream,
+) {
+	defer p.wg.Done()
+
+	res, err := proto.Run(ctx, s)
+	if err != nil {
+		p.fail(fmt.Errorf("failed to run dynamic protocol: %w", err))
+		return
+	}
+
+	if res.ShuffleMessage != nil {
+		p.handleShuffleFromPeer(ctx, s, *res.ShuffleMessage)
+		return
+	}
+
+	panic(fmt.Errorf(
+		"BUG: dynamic protocol accepted but unhandled with result: %v",
+		res,
+	))
+}
+
+func (p *peerInboundProcessor) handleShuffleFromPeer(
+	ctx context.Context,
+	s quic.Stream,
+	sm dproto.ShuffleMessage,
+) {
+	// The shuffle message we've parsed needs to go back to the view manager.
+	// So we send it on a channel back to the kernel first,
+	// which will delegate it correctly.
+	sfp := ShuffleFromPeer{
+		Src:    p.peer.Chain,
+		Stream: s,
+		Msg:    sm,
+	}
+
+	select {
+	case <-ctx.Done():
+		p.fail(fmt.Errorf(
+			"context canceled while sending shuffle from peer: %w",
+			context.Cause(ctx),
+		))
+		return
+	case p.shufflesFromPeers <- sfp:
+		// Done handling the inbound side of this stream.
+		// The kernel owns the stream now.
+	}
 }
 
 func (p *peerInboundProcessor) handleIncomingAdmission(ctx context.Context) {
@@ -155,7 +238,7 @@ func (p *peerInboundProcessor) handleIncomingAdmission(ctx context.Context) {
 				))
 				return
 
-			case p.a.forwardJoinsFromNetwork <- ForwardJoinFromNetwork{
+			case p.forwardJoinsFromNetwork <- ForwardJoinFromNetwork{
 				Msg:           fjm,
 				ForwarderCert: forwarderCert,
 			}:

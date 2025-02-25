@@ -17,11 +17,19 @@ type ShuffleMessage struct {
 	// It is a map because there is no inherent order to the collection,
 	// and being able to delete entries upon receipt
 	// makes other operations possibly simpler.
+	//
+	// TODO: this seems like it should just be a slice, in hindsight.
 	Entries map[string]ShuffleEntry
 }
 
 func (m ShuffleMessage) Encode(w io.Writer) error {
 	return encodeShuffle(ShuffleMessageType, m.Entries, w)
+}
+
+// EncodeBare encodes the message without a type header.
+func (m ShuffleMessage) EncodeBare(w io.Writer) error {
+	const skipTypeHeader = 0xff
+	return encodeShuffle(skipTypeHeader, m.Entries, w)
 }
 
 func (m *ShuffleMessage) Decode(r io.Reader) error {
@@ -41,6 +49,12 @@ type ShuffleReplyMessage struct {
 
 func (m ShuffleReplyMessage) Encode(w io.Writer) error {
 	return encodeShuffle(ShuffleMessageType, m.Entries, w)
+}
+
+// EncodeBare encodes the message without a type header.
+func (m ShuffleReplyMessage) EncodeBare(w io.Writer) error {
+	const skipTypeHeader = 0xff
+	return encodeShuffle(skipTypeHeader, m.Entries, w)
 }
 
 func (m *ShuffleReplyMessage) Decode(r io.Reader) error {
@@ -90,7 +104,11 @@ func encodeShuffle(
 	}
 
 	buf := bytes.NewBuffer(make([]byte, 0, sz))
-	_ = buf.WriteByte(byte(msgType))
+	if msgType != 0xff {
+		// Temporary workaround to enable EncodeBare.
+		// We may end up never needing a header for this message.
+		_ = buf.WriteByte(byte(msgType))
+	}
 	_ = buf.WriteByte(byte(len(entries)))
 
 	for _, e := range entries {

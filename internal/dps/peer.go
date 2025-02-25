@@ -39,7 +39,7 @@ type iPeer struct {
 	Chain dcert.Chain
 	AA    daddr.AddressAttestation
 
-	Admission, Disconnect, Shuffle quic.Stream
+	Admission quic.Stream
 
 	CASPKI   caSPKI
 	LeafSPKI leafSPKI

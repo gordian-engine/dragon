@@ -1,11 +1,14 @@
 package dfanout
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/gordian-engine/dragon/internal/dproto"
 )
 
 func RunWorker(
@@ -29,7 +32,7 @@ func RunWorker(
 			handleWorkForwardJoin(fj)
 
 		case os := <-work.OutboundShuffles:
-			handleWorkOutboundShuffle(os)
+			handleWorkOutboundShuffle(ctx, os)
 		}
 	}
 }
@@ -52,15 +55,38 @@ func handleWorkForwardJoin(fj WorkForwardJoin) {
 	}
 }
 
-func handleWorkOutboundShuffle(os WorkOutboundShuffle) {
+func handleWorkOutboundShuffle(ctx context.Context, os WorkOutboundShuffle) {
+	// Make an ephemeral stream for this outbound shuffle.
+	s, err := os.Conn.OpenStreamSync(ctx)
+	if err != nil {
+		panic(fmt.Errorf(
+			"TODO: handle error opening shuffle stream: %w", err,
+		))
+	}
+
+	// TODO: seems like this should delegate to a Protocol too.
+
 	// TODO: make time.Now a parameter intead of hardcoding it?
-	if err := os.Stream.SetWriteDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+	if err := s.SetWriteDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
 		panic(fmt.Errorf(
 			"TODO: handle error setting write deadline for outbound shuffle: %w",
 			err,
 		))
 	}
-	if err := os.Msg.Encode(os.Stream); err != nil {
+
+	// TODO: would be nice to have an EncodedSize method
+	// on the ShuffleMessage type.
+	var buf bytes.Buffer
+	_ = buf.WriteByte(dproto.CurrentProtocolVersion)
+	_ = buf.WriteByte(dproto.ShuffleStreamType)
+
+	if err := os.Msg.EncodeBare(&buf); err != nil {
+		panic(fmt.Errorf(
+			"TODO: handle error encoding shuffle message: %w", err,
+		))
+	}
+
+	if _, err := buf.WriteTo(s); err != nil {
 		// We probably need a way to feed back up the information that
 		// this stream is not working as intended.
 		panic(fmt.Errorf(
