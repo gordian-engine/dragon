@@ -224,7 +224,7 @@ func (k *Kernel) handleAddActivePeerRequest(ctx context.Context, req AddActivePe
 	// for instance if there were so many in flight that
 	// this one no longer met conditions to enter active view.
 
-	evicted, err := k.vm.AddPeering(ctx, dview.ActivePeer{
+	evicted, err := k.vm.AddActivePeer(ctx, dview.ActivePeer{
 		Chain: req.Chain,
 		AA:    req.AA,
 

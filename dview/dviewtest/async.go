@@ -12,7 +12,7 @@ type AsyncManagerMock struct {
 	ConsiderJoinCh            chan ConsiderJoinRequest
 	ConsiderForwardJoinCh     chan ConsiderForwardJoinRequest
 	ConsiderNeighborRequestCh chan ConsiderNeighborRequest
-	AddPeeringCh              chan AddPeeringRequest
+	AddActivePeerCh           chan AddActivePeerRequest
 	MakeOutboundShuffleCh     chan MakeOutboundShuffleRequest
 
 	// Keys are the CA cert SPKI for both of these maps.
@@ -25,7 +25,7 @@ func NewAsyncManagerMock() *AsyncManagerMock {
 		ConsiderJoinCh:            make(chan ConsiderJoinRequest),
 		ConsiderForwardJoinCh:     make(chan ConsiderForwardJoinRequest),
 		ConsiderNeighborRequestCh: make(chan ConsiderNeighborRequest),
-		AddPeeringCh:              make(chan AddPeeringRequest),
+		AddActivePeerCh:           make(chan AddActivePeerRequest),
 		MakeOutboundShuffleCh:     make(chan MakeOutboundShuffleRequest),
 
 		ActivePeers:  map[string]dview.ActivePeer{},
@@ -72,11 +72,11 @@ func (m *AsyncManagerMock) ConsiderNeighborRequest(
 	return <-resp, nil
 }
 
-func (m *AsyncManagerMock) AddPeering(
+func (m *AsyncManagerMock) AddActivePeer(
 	ctx context.Context, p dview.ActivePeer,
 ) (*dview.ActivePeer, error) {
 	resp := make(chan *dview.ActivePeer, 1)
-	m.AddPeeringCh <- AddPeeringRequest{
+	m.AddActivePeerCh <- AddActivePeerRequest{
 		P:    p,
 		Resp: resp,
 	}
@@ -126,7 +126,7 @@ type ConsiderNeighborRequest struct {
 	Resp chan bool
 }
 
-type AddPeeringRequest struct {
+type AddActivePeerRequest struct {
 	P    dview.ActivePeer
 	Resp chan *dview.ActivePeer
 }

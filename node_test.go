@@ -317,13 +317,13 @@ func TestNode_shuffle(t *testing.T) {
 		cjReq := <-vm1.ConsiderJoinCh
 		cjReq.Resp <- dview.AcceptJoinDecision
 
-		apReq := <-vm1.AddPeeringCh
+		apReq := <-vm1.AddActivePeerCh
 		apReq.Resp <- nil
 	}()
 
 	// Node 0 has to accept a peering eventually too.
 	go func() {
-		req := <-vm0.AddPeeringCh
+		req := <-vm0.AddActivePeerCh
 		req.Resp <- nil
 	}()
 

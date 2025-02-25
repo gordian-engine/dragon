@@ -55,7 +55,7 @@ func TestManager_ConsiderJoin(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, dview.AcceptJoinDecision, jd)
 
-	evicted, err := m.AddPeering(ctx, p1)
+	evicted, err := m.AddActivePeer(ctx, p1)
 	require.NoError(t, err)
 	require.Nil(t, evicted) // There was nothing to evict.
 

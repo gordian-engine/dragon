@@ -106,7 +106,7 @@ func (m *Manager) ConsiderForwardJoin(
 	}, nil
 }
 
-func (m *Manager) AddPeering(
+func (m *Manager) AddActivePeer(
 	_ context.Context, p dview.ActivePeer,
 ) (evicted *dview.ActivePeer, err error) {
 	// Make sure we don't have an active peer with the same CA.

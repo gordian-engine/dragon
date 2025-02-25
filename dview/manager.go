@@ -75,7 +75,7 @@ type Manager interface {
 	// The same notes in ConsiderJoin apply to ConsiderNeighborRequest.
 	ConsiderNeighborRequest(context.Context, ActivePeer) (bool, error)
 
-	// AddPeering attempts to commit the peer to the active set.
+	// AddActivePeer attempts to commit the peer to the active set.
 	// It is possible that we decided to accept multiple joins concurrently,
 	// and after adding some of them, one that was considered accepted
 	// was no longer able to be added to the active view.
@@ -86,7 +86,7 @@ type Manager interface {
 	// without the caller needing to invoke any other method.
 	// However, the caller is responsible for closing any network streams
 	// or freeing any other resources related to the evicted peer.
-	AddPeering(context.Context, ActivePeer) (evicted *ActivePeer, err error)
+	AddActivePeer(context.Context, ActivePeer) (evicted *ActivePeer, err error)
 
 	// RemoveActivePeer removes a given active peer from the active set.
 	//

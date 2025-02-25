@@ -33,10 +33,10 @@ func (DenyingManager) ConsiderForwardJoin(
 	}, nil
 }
 
-func (DenyingManager) AddPeering(
+func (DenyingManager) AddActivePeer(
 	context.Context, dview.ActivePeer,
 ) (*dview.ActivePeer, error) {
-	return nil, errors.New("peering denied")
+	return nil, errors.New("adding peers denied")
 }
 
 func (DenyingManager) RemoveActivePeer(context.Context, dview.ActivePeer) {}
