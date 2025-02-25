@@ -26,9 +26,6 @@ type Config struct {
 	// Timeout for receiving the neighbor reply.
 	NeighborReplyTimeout time.Duration
 
-	// Timeout to initialize both the disconnect and shuffle streams.
-	InitializeStreamsTimeout time.Duration
-
 	NowFn func() time.Time
 }
 
@@ -41,7 +38,7 @@ func (c Config) Now() time.Time {
 }
 
 type Result struct {
-	Disconnect, Shuffle quic.Stream
+	// TODO: maybe exclude the result then?
 }
 
 func (p *Protocol) Run(ctx context.Context) (Result, error) {

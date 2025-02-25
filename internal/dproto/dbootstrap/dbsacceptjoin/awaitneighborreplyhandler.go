@@ -45,10 +45,8 @@ func (h awaitNeighborReplyHandler) Handle(
 		return nil, errors.New("received neighbor reply rejecting our request")
 	case 1:
 		// Accepted.
-		return finishInitializingStreamsHandler{
-			OuterLog: h.OuterLog,
-			Cfg:      h.Cfg,
-		}, nil
+		// No more work to do now.
+		return nil, nil
 	default:
 		return nil, fmt.Errorf("received invalid neighbor reply byte 0x%x", tv[1])
 	}

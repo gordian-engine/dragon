@@ -256,8 +256,6 @@ func (k *Kernel) handleAddActivePeerRequest(ctx context.Context, req AddActivePe
 		AA:    req.AA,
 
 		Admission:  req.AdmissionStream,
-		Disconnect: req.DisconnectStream,
-		Shuffle:    req.ShuffleStream,
 	}); err != nil {
 		// This currently can only be a context error,
 		// so it is terminal.

@@ -69,7 +69,7 @@ type AddActivePeerRequest struct {
 
 	AA daddr.AddressAttestation
 
-	AdmissionStream, DisconnectStream, ShuffleStream quic.Stream
+	AdmissionStream quic.Stream
 
 	Resp chan AddActivePeerResponse
 }

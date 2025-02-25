@@ -689,9 +689,8 @@ func (n *Node) handleIncomingJoin(
 		),
 
 		Cfg: dbsacceptjoin.Config{
-			NeighborRequestTimeout:   100 * time.Millisecond,
-			NeighborReplyTimeout:     100 * time.Millisecond,
-			InitializeStreamsTimeout: 100 * time.Millisecond,
+			NeighborRequestTimeout: 100 * time.Millisecond,
+			NeighborReplyTimeout:   100 * time.Millisecond,
 		},
 
 		Conn: qc,
@@ -699,8 +698,7 @@ func (n *Node) handleIncomingJoin(
 		AdmissionStream: qs,
 	}
 
-	res, err := p.Run(ctx)
-	if err != nil {
+	if _, err := p.Run(ctx); err != nil {
 		return fmt.Errorf("failed to accept join: %w", err)
 	}
 
@@ -712,9 +710,7 @@ func (n *Node) handleIncomingJoin(
 
 		Chain: chain,
 
-		AdmissionStream:  qs,
-		DisconnectStream: res.Disconnect,
-		ShuffleStream:    res.Shuffle,
+		AdmissionStream: qs,
 
 		Resp: pResp,
 	}
@@ -822,12 +818,10 @@ func (n *Node) handleIncomingNeighbor(
 
 		Cfg: dbsacceptneighbor.Config{
 			NeighborReplyTimeout: 50 * time.Millisecond,
-			AcceptStreamsTimeout: 75 * time.Millisecond,
 		},
 	}
 
-	res, err := p.RunAccept(ctx)
-	if err != nil {
+	if _, err := p.RunAccept(ctx); err != nil {
 		// We don't need to close the connection here,
 		// because the caller closes the connection upon error.
 		return fmt.Errorf("failed while accepting neighbor request: %w", err)
@@ -841,9 +835,7 @@ func (n *Node) handleIncomingNeighbor(
 		Chain: chain,
 		AA:    nm.AA,
 
-		AdmissionStream:  qs,
-		DisconnectStream: res.Disconnect,
-		ShuffleStream:    res.Shuffle,
+		AdmissionStream: qs,
 
 		Resp: pResp,
 	}
@@ -916,9 +908,7 @@ func (n *Node) DialAndJoin(ctx context.Context, addr net.Addr) error {
 		Chain: chain,
 		AA:    res.AA,
 
-		AdmissionStream:  res.AdmissionStream,
-		DisconnectStream: res.DisconnectStream,
-		ShuffleStream:    res.ShuffleStream,
+		AdmissionStream: res.AdmissionStream,
 
 		Resp: pResp,
 	}

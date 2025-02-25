@@ -9,6 +9,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
+// sendAcceptNeighborReplyHandler sends an accepted neighbor message on the stream.
 type sendAcceptNeighborReplyHandler struct {
 	OuterLog *slog.Logger
 	Cfg      *Config
@@ -28,10 +29,7 @@ func (h sendAcceptNeighborReplyHandler) Handle(
 		return nil, fmt.Errorf("failed to send accepting neighbor reply: %w", err)
 	}
 
-	return streamAcceptHandler{
-		OuterLog: h.OuterLog,
-		Cfg:      h.Cfg,
-	}, nil
+	return nil, nil
 }
 
 func (h sendAcceptNeighborReplyHandler) Name() string {

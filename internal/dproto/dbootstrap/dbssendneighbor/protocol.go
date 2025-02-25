@@ -37,9 +37,6 @@ type Config struct {
 	// after we open the stream.
 	AwaitNeighborReplyTimeout time.Duration
 
-	// How long to allow for initializing the streams.
-	InitializeStreamsTimeout time.Duration
-
 	NowFn func() time.Time
 }
 
@@ -52,9 +49,7 @@ func (c Config) Now() time.Time {
 }
 
 type Result struct {
-	Admission  quic.Stream
-	Disconnect quic.Stream
-	Shuffle    quic.Stream
+	Admission quic.Stream
 }
 
 func (p *Protocol) Run(ctx context.Context) (Result, error) {

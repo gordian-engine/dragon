@@ -64,10 +64,8 @@ func newPeerWorker(
 	// avoids that data race in test.
 	// That data race seems unlikely to happen in a real system
 	// that starts and is expected to stay running for a long time.
-	w.wg.Add(3)
+	w.wg.Add(1)
 	go w.handleIncomingAdmission(ctx)
-	go w.handleIncomingDisconnect()
-	go w.handleIncomingShuffle()
 
 	// The main loop is not part of the wait group.
 	go w.mainLoop(ctx)
@@ -161,20 +159,4 @@ func (w *peerWorker) handleIncomingAdmission(ctx context.Context) {
 			"IMPOSSIBLE: admission protocol returned without setting any result",
 		))
 	}
-}
-
-func (w *peerWorker) handleIncomingDisconnect() {
-	defer w.wg.Done()
-
-	w.p.Disconnect.SetReadDeadline(time.Time{})
-
-	// TODO: need protocol handler for this.
-}
-
-func (w *peerWorker) handleIncomingShuffle() {
-	defer w.wg.Done()
-
-	w.p.Shuffle.SetReadDeadline(time.Time{})
-
-	// TODO: need protocol handler for this.
 }

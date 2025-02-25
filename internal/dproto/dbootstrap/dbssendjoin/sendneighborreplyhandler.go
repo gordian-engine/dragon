@@ -39,10 +39,7 @@ func (h sendNeighborReplyHandler) Handle(
 		)
 	}
 
-	return streamAcceptHandler{
-		OuterLog: h.OuterLog,
-		Cfg:      h.Cfg,
-	}, nil
+	return nil, nil
 }
 
 func (h sendNeighborReplyHandler) Name() string {

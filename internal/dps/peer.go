@@ -12,27 +12,10 @@ type Peer struct {
 	Chain dcert.Chain
 	AA    daddr.AddressAttestation
 
-	// TODO: first, these should probably all be quic.SendStream,
+	// TODO: this could possibly be just a quic.SendStream,
 	// as the read side happens in the peerWorker type,
 	// and we must not interfere with that work.
-	//
-	// Furthermore, while it is true that we only do one action at a time
-	// on a worker goroutine,
-	// it is plausible that two actions could happen concurrently.
-	// For example, if two peers happen to independently pick each other
-	// for a shuffle near the same instant in time,
-	// two independent workers could both attempt to write to the same stream.
-	// And even though the writes wouldn't be interleaved
-	// (at least as long as they were single write calls),
-	// independent write deadlines could be applied in the wrong order.
-	//
-	// We could try adding two different streams, so that each peer
-	// has their own "I write a shuffle and you write the response" stream,
-	// but it feels like that may be just papering over the problem.
-	//
-	// This basically only leaves the solution of wrapping the stream
-	// with a protocol-level mutex.
-	Admission, Disconnect, Shuffle quic.Stream
+	Admission quic.Stream
 }
 
 func (p Peer) toInternal() iPeer {
@@ -42,9 +25,7 @@ func (p Peer) toInternal() iPeer {
 		Chain: p.Chain,
 		AA:    p.AA,
 
-		Admission:  p.Admission,
-		Disconnect: p.Disconnect,
-		Shuffle:    p.Shuffle,
+		Admission: p.Admission,
 
 		CASPKI:   caSPKI(p.Chain.Root.RawSubjectPublicKeyInfo),
 		LeafSPKI: leafSPKI(p.Chain.Leaf.RawSubjectPublicKeyInfo),
@@ -71,9 +52,7 @@ func (ip iPeer) ToPeer() Peer {
 		Chain: ip.Chain,
 		AA:    ip.AA,
 
-		Admission:  ip.Admission,
-		Disconnect: ip.Disconnect,
-		Shuffle:    ip.Shuffle,
+		Admission: ip.Admission,
 	}
 }
 

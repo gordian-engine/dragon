@@ -104,9 +104,7 @@ func (d *neighborDialer) dialAndNeighbor(ctx context.Context, addr string) {
 
 		Chain: chain,
 
-		AdmissionStream:  res.Admission,
-		DisconnectStream: res.Disconnect,
-		ShuffleStream:    res.Shuffle,
+		AdmissionStream: res.Admission,
 
 		Resp: pResp,
 	}
@@ -164,7 +162,6 @@ func (d *neighborDialer) bootstrapNeighbor(
 
 			OpenStreamTimeout:         100 * time.Millisecond,
 			AwaitNeighborReplyTimeout: 75 * time.Millisecond,
-			InitializeStreamsTimeout:  75 * time.Millisecond,
 
 			NowFn: time.Now,
 		},

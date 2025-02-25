@@ -43,10 +43,9 @@ func (h awaitNeighborReplyHandler) Handle(
 		return nil, errors.New("neighbor request denied")
 
 	case 1:
-		return finishInitializingStreamsHandler{
-			OuterLog: h.OuterLog,
-			Cfg:      h.Cfg,
-		}, nil
+		// Accepted.
+		// No more work to do now.
+		return nil, nil
 
 	default:
 		return nil, fmt.Errorf("peer sent bad neighbor reply byte: %d", nm[1])
