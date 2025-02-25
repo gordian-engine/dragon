@@ -35,9 +35,6 @@ type Config struct {
 	// How long to wait for the Neighbor reply to our join message.
 	AwaitNeighborTimeout time.Duration
 
-	// How long we will wait to accept streams from the new neighbor.
-	AcceptStreamsTimeout time.Duration
-
 	// Our TLS certificate.
 	// This is used for signing the outgoing join message.
 	// We sign the message because it gets forwarded to other peers

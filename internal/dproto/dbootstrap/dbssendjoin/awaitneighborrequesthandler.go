@@ -24,7 +24,7 @@ func (h awaitNeighborRequestHandler) Handle(
 	ctx context.Context, c quic.Connection, res *Result,
 ) (streamHandler, error) {
 	s := res.AdmissionStream
-	if err := s.SetReadDeadline(h.Cfg.NowFn().Add(h.Cfg.AwaitNeighborTimeout)); err != nil {
+	if err := s.SetReadDeadline(h.Cfg.Now().Add(h.Cfg.AwaitNeighborTimeout)); err != nil {
 		return nil, fmt.Errorf(
 			"failed to set read deadline on stream: %w", err,
 		)

@@ -8,6 +8,21 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
+// The set of channels that allow the kernel owner to make requests.
+type Requests struct {
+	// Sender needs a decision about what to do with
+	// a Join message received from an unknown peer.
+	JoinRequests chan<- JoinRequest
+
+	// Sender needs a decision about what to do with
+	// a Neighbor message received from an unknown peer.
+	NeighborDecisionRequests chan<- NeighborDecisionRequest
+
+	// Sender has a completely bootstrapped connection
+	// and wants to add it to the active set.
+	AddActivePeerRequests chan<- AddActivePeerRequest
+}
+
 // JoinRequest is sent from the outer Node to the [Kernel],
 // so that the Kernel can determine if we should
 // ignore, reject, or accept the join request.

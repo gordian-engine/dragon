@@ -390,7 +390,7 @@ func NewNode(ctx context.Context, log *slog.Logger, cfg NodeConfig) (*Node, erro
 
 		NeighborRequests: neighborRequestsCh,
 
-		NewPeeringRequests: k.AddActivePeerRequests,
+		NewPeeringRequests: n.k.Requests().AddActivePeerRequests,
 
 		AdvertiseAddr: n.advertiseAddr,
 
@@ -645,7 +645,7 @@ func (n *Node) handleIncomingJoin(
 		return fmt.Errorf(
 			"context cancelled while sending join request to kernel: %w", context.Cause(ctx),
 		)
-	case n.k.JoinRequests <- req:
+	case n.k.Requests().JoinRequests <- req:
 		// Okay.
 	}
 
@@ -722,7 +722,7 @@ func (n *Node) handleIncomingJoin(
 			context.Cause(ctx),
 		)
 
-	case n.k.AddActivePeerRequests <- pReq:
+	case n.k.Requests().AddActivePeerRequests <- pReq:
 		// Okay.
 	}
 
@@ -772,7 +772,7 @@ func (n *Node) handleIncomingNeighbor(
 			"context canceled while sending neighbor decision request to kernel: %w",
 			context.Cause(ctx),
 		)
-	case n.k.NeighborDecisionRequests <- req:
+	case n.k.Requests().NeighborDecisionRequests <- req:
 		// Okay.
 	}
 
@@ -847,7 +847,7 @@ func (n *Node) handleIncomingNeighbor(
 			context.Cause(ctx),
 		)
 
-	case n.k.AddActivePeerRequests <- pReq:
+	case n.k.Requests().AddActivePeerRequests <- pReq:
 		// Okay.
 	}
 
@@ -916,7 +916,7 @@ func (n *Node) DialAndJoin(ctx context.Context, addr net.Addr) error {
 	case <-ctx.Done():
 		return context.Cause(ctx)
 
-	case n.k.AddActivePeerRequests <- req:
+	case n.k.Requests().AddActivePeerRequests <- req:
 		// Okay.
 	}
 
@@ -939,7 +939,7 @@ func (n *Node) DialAndJoin(ctx context.Context, addr net.Addr) error {
 	}
 }
 
-// bootstrapJoin bootstraps all protocol streams on the given connection.
+// bootstrapJoin bootstraps the protocol streams on the given connection.
 func (n *Node) bootstrapJoin(
 	ctx context.Context, qc quic.Connection,
 ) (dbssendjoin.Result, error) {
@@ -953,15 +953,10 @@ func (n *Node) bootstrapJoin(
 			// but they need to be configurable.
 			OpenStreamTimeout:    100 * time.Millisecond,
 			AwaitNeighborTimeout: 100 * time.Millisecond,
-			AcceptStreamsTimeout: 100 * time.Millisecond,
 
 			// TODO: we should probably not rely on
 			// this particular method of getting our certificate.
 			Cert: n.baseTLSConf.Certificates[0],
-
-			// For now this is just hardcoded to time.Now,
-			// but maybe it makes sense to inject something else for tests.
-			NowFn: time.Now,
 		},
 	}
 

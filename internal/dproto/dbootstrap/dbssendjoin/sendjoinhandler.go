@@ -43,7 +43,7 @@ func (h sendJoinHandler) Handle(
 
 	// Set write deadline, so that we don't block for a long time
 	// in case writing the stream blocks for whatever reason.
-	if err := s.SetWriteDeadline(h.Cfg.NowFn().Add(h.Cfg.OpenStreamTimeout)); err != nil {
+	if err := s.SetWriteDeadline(h.Cfg.Now().Add(h.Cfg.OpenStreamTimeout)); err != nil {
 		return nil, fmt.Errorf("failed to set stream write deadline: %w", err)
 	}
 

@@ -14,19 +14,10 @@ import (
 type Kernel struct {
 	log *slog.Logger
 
-	// Exported channels exposed directly to the owning Node.
-
-	// Sender needs a decision about what to do with
-	// a Join message received from an unknown peer.
-	JoinRequests chan JoinRequest
-
-	// Sender needs a decision about what to do with
-	// a Neighbor message received from an unknown peer.
-	NeighborDecisionRequests chan NeighborDecisionRequest
-
-	// Sender has a completely bootstrapped connection
-	// and wants to add it to the active set.
-	AddActivePeerRequests chan AddActivePeerRequest
+	// Channels created in NewKernel and exposed via the [Requests] type.
+	joinRequests             chan JoinRequest
+	neighborDecisionRequests chan NeighborDecisionRequest
+	addActivePeerRequests    chan AddActivePeerRequest
 
 	// Unexported channels passed to the active peer set.
 	forwardJoinsFromNetwork chan dps.ForwardJoinFromNetwork
@@ -81,9 +72,9 @@ func NewKernel(ctx context.Context, log *slog.Logger, cfg KernelConfig) *Kernel 
 	k := &Kernel{
 		log: log,
 
-		JoinRequests:             make(chan JoinRequest),
-		NeighborDecisionRequests: make(chan NeighborDecisionRequest),
-		AddActivePeerRequests:    make(chan AddActivePeerRequest),
+		joinRequests:             make(chan JoinRequest),
+		neighborDecisionRequests: make(chan NeighborDecisionRequest),
+		addActivePeerRequests:    make(chan AddActivePeerRequest),
 
 		forwardJoinsFromNetwork: fjfns,
 
@@ -124,13 +115,13 @@ func (k *Kernel) mainLoop(ctx context.Context) {
 			k.log.Info("Stopping due to context cancellation", "cause", context.Cause(ctx))
 			return
 
-		case req := <-k.JoinRequests:
+		case req := <-k.joinRequests:
 			k.handleJoinRequest(ctx, req)
 
-		case req := <-k.NeighborDecisionRequests:
+		case req := <-k.neighborDecisionRequests:
 			k.handleNeighborDecisionRequest(ctx, req)
 
-		case req := <-k.AddActivePeerRequests:
+		case req := <-k.addActivePeerRequests:
 			k.handleAddActivePeerRequest(ctx, req)
 
 		case req := <-k.forwardJoinsFromNetwork:
@@ -149,6 +140,14 @@ func (k *Kernel) mainLoop(ctx context.Context) {
 			// Assuming the incoming request is buffered.
 			ch <- k.vm.NActivePeers()
 		}
+	}
+}
+
+func (k *Kernel) Requests() Requests {
+	return Requests{
+		JoinRequests:             k.joinRequests,
+		NeighborDecisionRequests: k.neighborDecisionRequests,
+		AddActivePeerRequests:    k.addActivePeerRequests,
 	}
 }
 
@@ -255,7 +254,7 @@ func (k *Kernel) handleAddActivePeerRequest(ctx context.Context, req AddActivePe
 		Chain: req.Chain,
 		AA:    req.AA,
 
-		Admission:  req.AdmissionStream,
+		Admission: req.AdmissionStream,
 	}); err != nil {
 		// This currently can only be a context error,
 		// so it is terminal.

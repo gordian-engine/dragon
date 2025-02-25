@@ -26,7 +26,7 @@ func (h sendNeighborReplyHandler) Handle(
 	nReply := dproto.NeighborReplyMessage{Accepted: true}
 
 	if err := s.SetWriteDeadline(
-		h.Cfg.NowFn().Add(h.Cfg.OpenStreamTimeout),
+		h.Cfg.Now().Add(h.Cfg.OpenStreamTimeout),
 	); err != nil {
 		return nil, fmt.Errorf(
 			"failed to set write deadline on stream: %w", err,
