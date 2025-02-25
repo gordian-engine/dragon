@@ -20,10 +20,10 @@ type Active struct {
 	// This wait group is directly tied to the lifecycle of this type.
 	wg sync.WaitGroup
 
-	// Wait group for workers' main loops.
-	// The workers are associated with individual peers,
+	// Wait group for peer inbound processors' main loops.
+	// The processors are associated with individual peers,
 	// which can come and go during the lifecycle of the active peer set.
-	workerWG sync.WaitGroup
+	processorWG sync.WaitGroup
 
 	// Allow looking up a peer by its CA or its own SPKI.
 	// Since an iPeer only contains references,
@@ -31,7 +31,7 @@ type Active struct {
 	byCASPKI   map[caSPKI]iPeer
 	byLeafSPKI map[leafSPKI]iPeer
 
-	workers map[caSPKI]*peerWorker
+	processors map[caSPKI]*peerInboundProcessor
 
 	addRequests    chan addRequest
 	removeRequests chan removeRequest
@@ -58,8 +58,8 @@ type (
 type ActiveConfig struct {
 	// Number of seed goroutines to run.
 	// In this context, a seeder is the buffer between
-	// the kernel goroutine (whose contention we want to minimze)
-	// and the active peer workers.
+	// the kernel goroutine (whose contention we want to minimize)
+	// and the active peer's inbound processors.
 	Seeders int
 
 	// Number of worker goroutines to run.
@@ -82,7 +82,8 @@ func NewActivePeerSet(ctx context.Context, log *slog.Logger, cfg ActiveConfig) *
 		// Not trying to pre-size these, for now at least.
 		byCASPKI:   map[caSPKI]iPeer{},
 		byLeafSPKI: map[leafSPKI]iPeer{},
-		workers:    map[caSPKI]*peerWorker{},
+
+		processors: map[caSPKI]*peerInboundProcessor{},
 
 		// Unbuffered because the caller blocks on these requests anyway.
 		addRequests:    make(chan addRequest),
@@ -128,7 +129,7 @@ func NewActivePeerSet(ctx context.Context, log *slog.Logger, cfg ActiveConfig) *
 }
 
 func (a *Active) Wait() {
-	a.workerWG.Wait()
+	a.processorWG.Wait()
 	a.wg.Wait()
 }
 
@@ -206,10 +207,10 @@ func (a *Active) handleAddRequest(ctx context.Context, req addRequest) {
 	a.byCASPKI[req.IPeer.CASPKI] = req.IPeer
 	a.byLeafSPKI[req.IPeer.LeafSPKI] = req.IPeer
 
-	a.workerWG.Add(1)
-	a.workers[req.IPeer.CASPKI] = newPeerWorker(
+	a.processorWG.Add(1)
+	a.processors[req.IPeer.CASPKI] = newPeerInboundProcessor(
 		ctx,
-		a.log.With("worker", req.IPeer.Conn.RemoteAddr().String()),
+		a.log.With("peer_inbound_processor", req.IPeer.Conn.RemoteAddr().String()),
 		req.IPeer.ToPeer(), a,
 	)
 
@@ -259,13 +260,13 @@ func (a *Active) handleRemoveRequest(req removeRequest) {
 	delete(a.byCASPKI, req.PCI.caSPKI)
 	delete(a.byLeafSPKI, req.PCI.leafSPKI)
 
-	// We delete the worker from the map we manage,
-	// but we still indirectly ensure the worker finishes its work
-	// by waiting on a.workerWG in a.Wait.
+	// We delete the processor from the map we manage,
+	// but we still indirectly ensure the processor finishes its work
+	// by waiting on a.processorWG in a.Wait.
 	//
 	// TODO: we may need some distinct methods beyond just Cancel.
-	a.workers[req.PCI.caSPKI].Cancel()
-	delete(a.workers, req.PCI.caSPKI)
+	a.processors[req.PCI.caSPKI].Cancel()
+	delete(a.processors, req.PCI.caSPKI)
 
 	close(req.Resp)
 }

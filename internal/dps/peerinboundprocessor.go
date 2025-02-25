@@ -11,20 +11,22 @@ import (
 	"github.com/gordian-engine/dragon/internal/dproto/dpadmission"
 )
 
-// peerWorker handles the work involved with accepting messages
+// peerInboundProcessor handles the work involved with accepting messages
 // from a single peer.
-type peerWorker struct {
+type peerInboundProcessor struct {
 	log *slog.Logger
 
 	// The Peer holds the connection and streams
 	// whose work this worker is responsible for.
-	p Peer
+	peer Peer
 
 	// Backreference to parent.
 	// Once this type is more complete,
 	// it will probably be better to only reference individual fields on a,
 	// instead of holding a whole reference to it.
 	a *Active
+
+	mainLoopWG *sync.WaitGroup
 
 	// Own wait group, unrelated to Active.
 	// This only tracks the separate worker goroutines,
@@ -39,18 +41,23 @@ type peerWorker struct {
 	mainLoopDone chan struct{}
 }
 
-func newPeerWorker(
+func newPeerInboundProcessor(
 	ctx context.Context, log *slog.Logger,
-	p Peer, a *Active,
-) *peerWorker {
+	peer Peer, a *Active,
+) *peerInboundProcessor {
+	// We need a cancelable root context for the type,
+	// because a failed message on one stream needs to
+	// stop all the work for the peer.
 	ctx, cancel := context.WithCancelCause(ctx)
 
-	w := &peerWorker{
+	p := &peerInboundProcessor{
 		log: log,
 
-		p: p,
+		peer: peer,
 
 		a: a,
+
+		mainLoopWG: &a.processorWG,
 
 		cancel: cancel,
 
@@ -64,50 +71,52 @@ func newPeerWorker(
 	// avoids that data race in test.
 	// That data race seems unlikely to happen in a real system
 	// that starts and is expected to stay running for a long time.
-	w.wg.Add(1)
-	go w.handleIncomingAdmission(ctx)
+	p.wg.Add(1)
+	go p.handleIncomingAdmission(ctx)
 
 	// The main loop is not part of the wait group.
-	go w.mainLoop(ctx)
+	go p.mainLoop(ctx)
 
-	return w
+	return p
 }
 
-func (w *peerWorker) mainLoop(ctx context.Context) {
+func (p *peerInboundProcessor) mainLoop(ctx context.Context) {
 	// Closing the parent-owned wait group
 	// prevents us from needing to do any kind of messaging to the ActivePeerSet,
 	// which could more easily result in a deadlock.
-	defer w.a.workerWG.Done()
+	defer p.mainLoopWG.Done()
 
 	for {
 		select {
 		case <-ctx.Done():
-			w.log.Info("Main loop stopping due to context cancellation", "cause", context.Cause(ctx))
+			p.log.Info("Main loop stopping due to context cancellation", "cause", context.Cause(ctx))
 
 			// TODO: this should cancel reads on all the other streams,
 			// so that we can be sure that Wait finishes.
-			w.wg.Wait()
+			p.wg.Wait()
 			return
 		}
 	}
 }
 
-func (w *peerWorker) Cancel() {
+func (p *peerInboundProcessor) Cancel() {
 	// TODO: better error handling with the cancel cause func.
-	w.cancel(errors.New("worker manually canceled"))
+	p.cancel(errors.New("worker manually canceled"))
 }
 
 // fail cancels the worker.
-func (w *peerWorker) fail(e error) {
-	w.cancel(e)
+// This is used internally to the worker,
+// so that one invalid message ends up closing the entire worker.
+func (p *peerInboundProcessor) fail(e error) {
+	p.cancel(e)
 }
 
-func (w *peerWorker) handleIncomingAdmission(ctx context.Context) {
-	defer w.wg.Done()
+func (p *peerInboundProcessor) handleIncomingAdmission(ctx context.Context) {
+	defer p.wg.Done()
 
-	p := dpadmission.Protocol{
-		Log:    w.log.With("protocol", "admission"),
-		Stream: w.p.Admission,
+	proto := dpadmission.Protocol{
+		Log:    p.log.With("protocol", "admission"),
+		Stream: p.peer.Admission,
 		Cfg: dpadmission.Config{
 			AcceptForwardJoinTimeout: 50 * time.Millisecond,
 		},
@@ -115,14 +124,14 @@ func (w *peerWorker) handleIncomingAdmission(ctx context.Context) {
 
 	for {
 		// We can wait for as long as necessary.
-		if err := w.p.Admission.SetReadDeadline(time.Time{}); err != nil {
-			w.fail(fmt.Errorf("failed to set read deadline on admission stream: %w", err))
+		if err := p.peer.Admission.SetReadDeadline(time.Time{}); err != nil {
+			p.fail(fmt.Errorf("failed to set read deadline on admission stream: %w", err))
 			return
 		}
 
-		res, err := p.Run(ctx)
+		res, err := proto.Run(ctx)
 		if err != nil {
-			w.fail(fmt.Errorf("failed to run admission protocol: %w", err))
+			p.fail(fmt.Errorf("failed to run admission protocol: %w", err))
 			return
 		}
 
@@ -132,21 +141,21 @@ func (w *peerWorker) handleIncomingAdmission(ctx context.Context) {
 			// but doesn't validate it.
 			fjm := *res.ForwardJoinMessage
 			if err := fjm.AA.VerifySignature(fjm.Chain.Leaf); err != nil {
-				w.fail(fmt.Errorf(
+				p.fail(fmt.Errorf(
 					"received forward join message with invalid signature: %w", err,
 				))
 			}
 
-			forwarderCert := w.p.Conn.ConnectionState().TLS.PeerCertificates[0]
+			forwarderCert := p.peer.Conn.ConnectionState().TLS.PeerCertificates[0]
 			select {
 			case <-ctx.Done():
-				w.fail(fmt.Errorf(
+				p.fail(fmt.Errorf(
 					"context canceled while sending forward join from network: %w",
 					context.Cause(ctx),
 				))
 				return
 
-			case w.a.forwardJoinsFromNetwork <- ForwardJoinFromNetwork{
+			case p.a.forwardJoinsFromNetwork <- ForwardJoinFromNetwork{
 				Msg:           fjm,
 				ForwarderCert: forwarderCert,
 			}:

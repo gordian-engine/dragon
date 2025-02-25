@@ -244,7 +244,8 @@ func (k *Kernel) handleAddActivePeerRequest(ctx context.Context, req AddActivePe
 	}
 
 	// Otherwise, since adding the peering succeeded,
-	// we inform the requester of the success.
+	// we inform the requester of the success
+	// (indicated by an empty RejectReason).
 	req.Resp <- AddActivePeerResponse{}
 
 	// And then we add it to the managed active peer set.
