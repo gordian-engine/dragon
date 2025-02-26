@@ -1,14 +1,13 @@
 package dfanout
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
-	"github.com/gordian-engine/dragon/internal/dproto"
+	"github.com/gordian-engine/dragon/internal/dproto/dpshuffle"
 )
 
 func RunWorker(
@@ -32,7 +31,7 @@ func RunWorker(
 			handleWorkForwardJoin(fj)
 
 		case os := <-work.OutboundShuffles:
-			handleWorkOutboundShuffle(ctx, os)
+			handleWorkOutboundShuffle(ctx, log, os)
 		}
 	}
 }
@@ -55,43 +54,19 @@ func handleWorkForwardJoin(fj WorkForwardJoin) {
 	}
 }
 
-func handleWorkOutboundShuffle(ctx context.Context, os WorkOutboundShuffle) {
-	// Make an ephemeral stream for this outbound shuffle.
-	s, err := os.Conn.OpenStreamSync(ctx)
+func handleWorkOutboundShuffle(ctx context.Context, log *slog.Logger, os WorkOutboundShuffle) {
+	p := dpshuffle.Protocol{
+		Log: log,
+		Cfg: dpshuffle.Config{
+			SendShuffleTimeout: 50 * time.Millisecond,
+		},
+	}
+
+	s, err := p.Run(ctx, os.Conn, os.Msg)
 	if err != nil {
-		panic(fmt.Errorf(
-			"TODO: handle error opening shuffle stream: %w", err,
-		))
+		panic(fmt.Errorf("TODO: handle error running shuffle protocol: %w", err))
 	}
 
-	// TODO: seems like this should delegate to a Protocol too.
-
-	// TODO: make time.Now a parameter intead of hardcoding it?
-	if err := s.SetWriteDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
-		panic(fmt.Errorf(
-			"TODO: handle error setting write deadline for outbound shuffle: %w",
-			err,
-		))
-	}
-
-	// TODO: would be nice to have an EncodedSize method
-	// on the ShuffleMessage type.
-	var buf bytes.Buffer
-	_ = buf.WriteByte(dproto.CurrentProtocolVersion)
-	_ = buf.WriteByte(dproto.ShuffleStreamType)
-
-	if err := os.Msg.EncodeBare(&buf); err != nil {
-		panic(fmt.Errorf(
-			"TODO: handle error encoding shuffle message: %w", err,
-		))
-	}
-
-	if _, err := buf.WriteTo(s); err != nil {
-		// We probably need a way to feed back up the information that
-		// this stream is not working as intended.
-		panic(fmt.Errorf(
-			"TODO: handle error when writing outbound shuffle to stream: %w",
-			err,
-		))
-	}
+	// TODO: we need to read the response on s.
+	_ = s
 }
