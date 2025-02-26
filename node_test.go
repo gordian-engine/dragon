@@ -337,14 +337,14 @@ func TestNode_shuffle(t *testing.T) {
 	// and now we can synchronously handle the outbound shuffle.
 	shuffleEntriesFrom0 := make([]dview.ShuffleEntry, 2)
 	for i := range shuffleEntriesFrom0 {
-		aa, err := extraLeaves[0].AddressAttestation(
+		aa, err := extraLeaves[i].AddressAttestation(
 			fmt.Sprintf("extra-%d.example", i),
 		)
 		require.NoError(t, err)
 
 		shuffleEntriesFrom0[i] = dview.ShuffleEntry{
 			AA:    aa,
-			Chain: nw.Chains[0],
+			Chain: extraLeaves[i].Chain,
 		}
 	}
 
@@ -353,6 +353,25 @@ func TestNode_shuffle(t *testing.T) {
 		Dest:    nw.Chains[1],
 		Entries: shuffleEntriesFrom0,
 	}
+
+	// Now since the outbound shuffle went out to chain 1,
+	// vm1 needs to produce a shuffle response.
+
+	shufRespReq := <-vm1.MakeShuffleResponseCh
+
+	shuffleEntriesFrom1 := make([]dview.ShuffleEntry, 2)
+	for i := range shuffleEntriesFrom1 {
+		aa, err := extraLeaves[i+2].AddressAttestation(
+			fmt.Sprintf("extra-%d.example", i+2),
+		)
+		require.NoError(t, err)
+
+		shuffleEntriesFrom1[i] = dview.ShuffleEntry{
+			AA:    aa,
+			Chain: extraLeaves[i+2].Chain,
+		}
+	}
+	shufRespReq.Resp <- shuffleEntriesFrom1
 
 	// Allow some background work in case anything is going to panic here.
 	time.Sleep(50 * time.Millisecond)

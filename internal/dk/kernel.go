@@ -367,9 +367,33 @@ func (k *Kernel) initiateShuffle(ctx context.Context) {
 func (k *Kernel) handleShuffleFromPeer(
 	ctx context.Context, sfp dmsg.ShuffleFromPeer,
 ) {
-	// TODO: vm.MakeShuffleResponse(ctx, sfp)
-	// then send outbound shuffle back out to the same stream,
-	// on an active peer set worker.
+	// Need to translate the dproto shuffle entries to dview shuffle entries.
+	entries := make([]dview.ShuffleEntry, 0, len(sfp.Msg.Entries))
+	for _, e := range sfp.Msg.Entries {
+		entries = append(entries, dview.ShuffleEntry{
+			AA:    e.AA,
+			Chain: e.Chain,
+		})
+	}
+
+	got, err := k.vm.MakeShuffleResponse(ctx, sfp.Src, entries)
+	if err != nil {
+		go panic(fmt.Errorf(
+			"TODO: handle error when making shuffle response: %w", err,
+		))
+	}
+
+	// Now translate the dview entries back to dproto entries again.
+	outbound := make([]dproto.ShuffleEntry, len(got))
+	for i, e := range got {
+		outbound[i] = dproto.ShuffleEntry{
+			AA:    e.AA,
+			Chain: e.Chain,
+		}
+	}
+
+	// TODO:
+	// k.aps.SendShuffleReply(ctx, sfp.Stream, outbound)
 }
 
 // GetActiveViewSize returns the current number of peers in the active view.
