@@ -93,9 +93,17 @@ type Manager interface {
 	// Currently, if the provided peer was not in the active set, RemoveActivePeer panics.
 	RemoveActivePeer(context.Context, ActivePeer)
 
+	// MakeOutboundShuffle is called when the Node receives a shuffle signal.
+	// When and how often the shuffle signal arrives is application-dependent.
 	MakeOutboundShuffle(context.Context) (OutboundShuffle, error)
 
-	// TODO: MakeShuffleResponse and HandleShuffleResponse.
+	// MakeShuffleResponse handles a shuffle message from an active peer
+	// and returns the response to send back.
+	MakeShuffleResponse(
+		ctx context.Context, src dcert.Chain, entries []ShuffleEntry,
+	) ([]ShuffleEntry, error)
+
+	// TODO: HandleShuffleResponse.
 
 	// The number of active peers being managed.
 	NActivePeers() int
