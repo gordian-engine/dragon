@@ -103,7 +103,10 @@ type Manager interface {
 		ctx context.Context, src dcert.Chain, entries []ShuffleEntry,
 	) ([]ShuffleEntry, error)
 
-	// TODO: HandleShuffleResponse.
+	// HandleShuffleResponse handles the response to our outbound shuffle.
+	HandleShuffleResponse(
+		ctx context.Context, src dcert.Chain, entries []ShuffleEntry,
+	) error
 
 	// The number of active peers being managed.
 	NActivePeers() int

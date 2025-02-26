@@ -359,9 +359,12 @@ func TestNode_shuffle(t *testing.T) {
 
 	shufRespReq := <-vm1.MakeShuffleResponseCh
 
-	// TODO: fix these subtly off assertions.
+	// Make sure the input to MakeShuffleResponse
+	// matches what was sent in the initiated shuffle.
 	require.Equal(t, nw.Chains[0], shufRespReq.Src)
-	// require.Equal(t, shuffleEntriesFrom0, shufResp.Entries)
+	// TODO: this doesn't always arrive in the same order.
+	// We need to revert the shuffle messages to just be a slice instead of a map.
+	// require.Equal(t, shuffleEntriesFrom0, shufRespReq.Entries)
 
 	shuffleEntriesFrom1 := make([]dview.ShuffleEntry, 2)
 	for i := range shuffleEntriesFrom1 {
@@ -376,6 +379,12 @@ func TestNode_shuffle(t *testing.T) {
 		}
 	}
 	shufRespReq.Resp <- shuffleEntriesFrom1
+
+	// Now that 1 sent its response, 0 should handle the response.
+	handleRespReq := <-vm0.HandleShuffleResponseCh
+	require.Equal(t, nw.Chains[1], handleRespReq.Src)
+	// require.Equal(t, shuffleEntriesFrom1, handleRespReq.Entries)
+	close(handleRespReq.Resp)
 
 	// Allow some background work in case anything is going to panic here.
 	time.Sleep(50 * time.Millisecond)

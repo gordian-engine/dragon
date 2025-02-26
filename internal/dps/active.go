@@ -80,6 +80,8 @@ type ActiveConfig struct {
 	// so that the view manager can handle it.
 	ShufflesFromPeers chan<- dmsg.ShuffleFromPeer
 
+	// A peer replied to our outgoing shuffle message.
+	// We need to pass it through the kernel to the view manager.
 	ShuffleRepliesFromPeers chan<- dmsg.ShuffleReplyFromPeer
 }
 
@@ -379,6 +381,7 @@ func (a *Active) handleInitiatedShuffle(ctx context.Context, is initiatedShuffle
 	}
 
 	os := dfanout.WorkOutboundShuffle{
+		Chain: p.Chain,
 		Msg: dproto.ShuffleMessage{
 			Entries: is.Entries,
 		},

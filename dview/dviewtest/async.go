@@ -15,6 +15,7 @@ type AsyncManagerMock struct {
 	AddActivePeerCh           chan AddActivePeerRequest
 	MakeOutboundShuffleCh     chan MakeOutboundShuffleRequest
 	MakeShuffleResponseCh     chan MakeShuffleResponseRequest
+	HandleShuffleResponseCh   chan HandleShuffleResponseRequest
 
 	// Keys are the CA cert SPKI for both of these maps.
 	ActivePeers  map[string]dview.ActivePeer
@@ -29,6 +30,7 @@ func NewAsyncManagerMock() *AsyncManagerMock {
 		AddActivePeerCh:           make(chan AddActivePeerRequest),
 		MakeOutboundShuffleCh:     make(chan MakeOutboundShuffleRequest),
 		MakeShuffleResponseCh:     make(chan MakeShuffleResponseRequest),
+		HandleShuffleResponseCh:   make(chan HandleShuffleResponseRequest),
 
 		ActivePeers:  map[string]dview.ActivePeer{},
 		PassivePeers: map[string]dview.PassivePeer{},
@@ -110,6 +112,18 @@ func (m *AsyncManagerMock) MakeShuffleResponse(
 	return <-resp, nil
 }
 
+func (m *AsyncManagerMock) HandleShuffleResponse(
+	ctx context.Context, src dcert.Chain, entries []dview.ShuffleEntry,
+) error {
+	resp := make(chan struct{}, 1)
+	m.HandleShuffleResponseCh <- HandleShuffleResponseRequest{
+		Src:     src,
+		Entries: entries,
+		Resp:    resp,
+	}
+	return nil
+}
+
 func (m *AsyncManagerMock) RemoveActivePeer(
 	ctx context.Context, p dview.ActivePeer,
 ) {
@@ -154,4 +168,10 @@ type MakeShuffleResponseRequest struct {
 	Src     dcert.Chain
 	Entries []dview.ShuffleEntry
 	Resp    chan []dview.ShuffleEntry
+}
+
+type HandleShuffleResponseRequest struct {
+	Src     dcert.Chain
+	Entries []dview.ShuffleEntry
+	Resp    chan struct{}
 }

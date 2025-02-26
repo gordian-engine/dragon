@@ -51,5 +51,11 @@ func (DenyingManager) MakeShuffleResponse(
 	return nil, errors.New("shuffle not supported in DenyingManager")
 }
 
+func (DenyingManager) HandleShuffleResponse(
+	ctx context.Context, src dcert.Chain, entries []dview.ShuffleEntry,
+) error {
+	return errors.New("shuffle not supported in DenyingManager")
+}
+
 func (DenyingManager) NActivePeers() int  { return 0 }
 func (DenyingManager) NPassivePeers() int { return 0 }

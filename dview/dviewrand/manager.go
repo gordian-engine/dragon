@@ -178,6 +178,12 @@ func (m *Manager) MakeShuffleResponse(
 	return nil, errors.New("TODO")
 }
 
+func (m *Manager) HandleShuffleResponse(
+	ctx context.Context, src dcert.Chain, entries []dview.ShuffleEntry,
+) error {
+	return errors.New("TODO")
+}
+
 func (m *Manager) NActivePeers() int {
 	return len(m.aByCAPKI)
 }

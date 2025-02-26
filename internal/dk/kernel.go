@@ -23,6 +23,7 @@ type Kernel struct {
 	// Unexported channels passed to the active peer set.
 	forwardJoinsFromNetwork chan dmsg.ForwardJoinFromNetwork
 	shufflesFromPeers       chan dmsg.ShuffleFromPeer
+	shuffleRepliesFromPeers chan dmsg.ShuffleReplyFromPeer
 
 	// Unexported channels for work that has to happen
 	// outside the kernel and outside the active peer set.
@@ -84,6 +85,7 @@ func NewKernel(ctx context.Context, log *slog.Logger, cfg KernelConfig) *Kernel 
 
 		forwardJoinsFromNetwork: fjfns,
 		shufflesFromPeers:       sfps,
+		shuffleRepliesFromPeers: srfps,
 
 		activeViewSizeCheck: make(chan chan int),
 
@@ -138,6 +140,9 @@ func (k *Kernel) mainLoop(ctx context.Context) {
 
 		case sfp := <-k.shufflesFromPeers:
 			k.handleShuffleFromPeer(ctx, sfp)
+
+		case srfp := <-k.shuffleRepliesFromPeers:
+			k.handleShuffleReplyFromPeer(ctx, srfp)
 
 		case _, ok := <-k.shuffleSignal:
 			if !ok {
@@ -380,7 +385,7 @@ func (k *Kernel) handleShuffleFromPeer(
 
 	got, err := k.vm.MakeShuffleResponse(ctx, sfp.Src, entries)
 	if err != nil {
-		go panic(fmt.Errorf(
+		panic(fmt.Errorf(
 			"TODO: handle error when making shuffle response: %w", err,
 		))
 	}
@@ -395,6 +400,25 @@ func (k *Kernel) handleShuffleFromPeer(
 	}
 
 	k.aps.SendShuffleReply(ctx, sfp.Stream, outbound)
+}
+
+func (k *Kernel) handleShuffleReplyFromPeer(
+	ctx context.Context, srfp dmsg.ShuffleReplyFromPeer,
+) {
+	// Need to translate the dproto shuffle entries to dview shuffle entries.
+	entries := make([]dview.ShuffleEntry, 0, len(srfp.Msg.Entries))
+	for _, e := range srfp.Msg.Entries {
+		entries = append(entries, dview.ShuffleEntry{
+			AA:    e.AA,
+			Chain: e.Chain,
+		})
+	}
+
+	if err := k.vm.HandleShuffleResponse(ctx, srfp.Src, entries); err != nil {
+		panic(fmt.Errorf(
+			"TODO: handle error when handling shuffle response: %w", err,
+		))
+	}
 }
 
 // GetActiveViewSize returns the current number of peers in the active view.
