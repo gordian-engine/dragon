@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gordian-engine/dragon/internal/dmsg"
 	"github.com/gordian-engine/dragon/internal/dproto"
 	"github.com/gordian-engine/dragon/internal/dproto/dpadmission"
 	"github.com/gordian-engine/dragon/internal/dproto/dpdynamic"
@@ -25,9 +26,9 @@ type peerInboundProcessor struct {
 
 	// When observing a forward join,
 	// feed it back towards the kernel through this channel.
-	forwardJoinsFromNetwork chan<- ForwardJoinFromNetwork
+	forwardJoinsFromNetwork chan<- dmsg.ForwardJoinFromNetwork
 	// Same for shuffles.
-	shufflesFromPeers chan<- ShuffleFromPeer
+	shufflesFromPeers chan<- dmsg.ShuffleFromPeer
 
 	// Wait group for the processor's main loop.
 	// Used by the owning active peer set
@@ -175,7 +176,7 @@ func (p *peerInboundProcessor) handleShuffleFromPeer(
 	// The shuffle message we've parsed needs to go back to the view manager.
 	// So we send it on a channel back to the kernel first,
 	// which will delegate it correctly.
-	sfp := ShuffleFromPeer{
+	sfp := dmsg.ShuffleFromPeer{
 		Src:    p.peer.Chain,
 		Stream: s,
 		Msg:    sm,
@@ -238,7 +239,7 @@ func (p *peerInboundProcessor) handleIncomingAdmission(ctx context.Context) {
 				))
 				return
 
-			case p.forwardJoinsFromNetwork <- ForwardJoinFromNetwork{
+			case p.forwardJoinsFromNetwork <- dmsg.ForwardJoinFromNetwork{
 				Msg:           fjm,
 				ForwarderCert: forwarderCert,
 			}:

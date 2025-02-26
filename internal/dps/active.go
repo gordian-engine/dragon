@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/gordian-engine/dragon/dcert"
+	"github.com/gordian-engine/dragon/internal/dmsg"
 	"github.com/gordian-engine/dragon/internal/dproto"
 	"github.com/gordian-engine/dragon/internal/dps/dfanout"
 	"github.com/quic-go/quic-go"
@@ -38,10 +39,10 @@ type Active struct {
 	removeRequests chan removeRequest
 
 	forwardJoinsToNetwork   chan forwardJoinToNetwork
-	forwardJoinsFromNetwork chan<- ForwardJoinFromNetwork
+	forwardJoinsFromNetwork chan<- dmsg.ForwardJoinFromNetwork
 
 	initiatedShuffles chan initiatedShuffle
-	shufflesFromPeers chan<- ShuffleFromPeer
+	shufflesFromPeers chan<- dmsg.ShuffleFromPeer
 
 	// Depending on the particular message
 	// and whether it needs to be broadcast to all peers
@@ -71,12 +72,12 @@ type ActiveConfig struct {
 
 	// A forward join was received from the network.
 	// The active peer set sends the message on this channel.
-	ForwardJoinsFromNetwork chan<- ForwardJoinFromNetwork
+	ForwardJoinsFromNetwork chan<- dmsg.ForwardJoinFromNetwork
 
 	// A peer sent a shuffle message.
 	// The message needs to go up to the kernel
 	// so that the view manager can handle it.
-	ShufflesFromPeers chan<- ShuffleFromPeer
+	ShufflesFromPeers chan<- dmsg.ShuffleFromPeer
 }
 
 func NewActivePeerSet(ctx context.Context, log *slog.Logger, cfg ActiveConfig) *Active {

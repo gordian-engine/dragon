@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/gordian-engine/dragon/dview"
+	"github.com/gordian-engine/dragon/internal/dmsg"
 	"github.com/gordian-engine/dragon/internal/dproto"
 	"github.com/gordian-engine/dragon/internal/dps"
 )
@@ -20,8 +21,8 @@ type Kernel struct {
 	addActivePeerRequests    chan AddActivePeerRequest
 
 	// Unexported channels passed to the active peer set.
-	forwardJoinsFromNetwork chan dps.ForwardJoinFromNetwork
-	shufflesFromPeers       chan dps.ShuffleFromPeer
+	forwardJoinsFromNetwork chan dmsg.ForwardJoinFromNetwork
+	shufflesFromPeers       chan dmsg.ShuffleFromPeer
 
 	// Unexported channels for work that has to happen
 	// outside the kernel and outside the active peer set.
@@ -68,10 +69,10 @@ func NewKernel(ctx context.Context, log *slog.Logger, cfg KernelConfig) *Kernel 
 	// back upwards toward the kernel.
 	// Plus, it's fine if these messages aren't handled instantly.
 	// The channel size is an arbitrary guess right now.
-	fjfns := make(chan dps.ForwardJoinFromNetwork, 8)
+	fjfns := make(chan dmsg.ForwardJoinFromNetwork, 8)
 
 	// Pretty much the same for shuffles from peers.
-	sfps := make(chan dps.ShuffleFromPeer, 4)
+	sfps := make(chan dmsg.ShuffleFromPeer, 4)
 
 	k := &Kernel{
 		log: log,
@@ -294,7 +295,7 @@ func (k *Kernel) handleAddActivePeerRequest(ctx context.Context, req AddActivePe
 	}
 }
 
-func (k *Kernel) handleForwardJoinFromNetwork(ctx context.Context, req dps.ForwardJoinFromNetwork) {
+func (k *Kernel) handleForwardJoinFromNetwork(ctx context.Context, req dmsg.ForwardJoinFromNetwork) {
 	fjm := req.Msg
 	d, err := k.vm.ConsiderForwardJoin(ctx, fjm.AA, fjm.Chain)
 	if err != nil {
@@ -364,7 +365,7 @@ func (k *Kernel) initiateShuffle(ctx context.Context) {
 }
 
 func (k *Kernel) handleShuffleFromPeer(
-	ctx context.Context, sfp dps.ShuffleFromPeer,
+	ctx context.Context, sfp dmsg.ShuffleFromPeer,
 ) {
 	// TODO: vm.MakeShuffleResponse(ctx, sfp)
 	// then send outbound shuffle back out to the same stream,

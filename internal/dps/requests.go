@@ -1,11 +1,7 @@
 package dps
 
 import (
-	"crypto/x509"
-
-	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/internal/dproto"
-	"github.com/quic-go/quic-go"
 )
 
 // addRequest is a request to add a peer to the active peer set.
@@ -23,20 +19,6 @@ type removeRequest struct {
 	Resp chan struct{}
 }
 
-// ForwardJoinFromNetwork is a request for a forward join
-// that gets passed back to the kernel.
-//
-// The dk package already depends on this package,
-// so we declare this request type here.
-type ForwardJoinFromNetwork struct {
-	Msg dproto.ForwardJoinMessage
-
-	// We received this request from an active peer,
-	// so we track who sent it to us,
-	// in order to not send it back to them.
-	ForwarderCert *x509.Certificate
-}
-
 type forwardJoinToNetwork struct {
 	Msg dproto.ForwardJoinMessage
 
@@ -47,15 +29,4 @@ type forwardJoinToNetwork struct {
 type initiatedShuffle struct {
 	DstCASPKI string
 	Entries   map[string]dproto.ShuffleEntry
-}
-
-// ShuffleFromPeer is a shuffle message that a peer sent directly to us.
-// It has to go back to the kernel,
-// so that the view manager can handle it.
-type ShuffleFromPeer struct {
-	Src dcert.Chain
-
-	Stream quic.Stream
-
-	Msg dproto.ShuffleMessage
 }
