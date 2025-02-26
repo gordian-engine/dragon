@@ -89,7 +89,6 @@ type LeafCert struct {
 	Chain dcert.Chain
 }
 
-
 // FastConfig returns a config that is intended to be minimally resource intensive,
 // making it suitable for heavier use in test.
 func FastConfig() CAConfig {
@@ -314,8 +313,11 @@ func (ca *CA) CreateLeafCert(cfg LeafConfig) (*LeafCert, error) {
 
 func (c LeafCert) AddressAttestation(advertise string) (daddr.AddressAttestation, error) {
 	aa := daddr.AddressAttestation{
-		Addr:      advertise,
-		Timestamp: time.Now(),
+		Addr: advertise,
+
+		// It isn't strictly necessary to truncate to seconds,
+		// but this lines up correctly with decoded values in tests.
+		Timestamp: time.Now().Truncate(time.Second),
 	}
 
 	if err := aa.SignWithTLSCert(c.TLSCert); err != nil {
