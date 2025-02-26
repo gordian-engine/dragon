@@ -355,15 +355,19 @@ func (k *Kernel) initiateShuffle(ctx context.Context) {
 		return
 	}
 
-	pses := make(map[string]dproto.ShuffleEntry, len(os.Entries))
-	for _, e := range os.Entries {
-		pses[string(e.Chain.Root.RawSubjectPublicKeyInfo)] = dproto.ShuffleEntry{
+	// Convert the dview entries to dproto entries.
+	// They are functionally equivalent,
+	// but we will not cross-contaminate the public API
+	// with the internal representation.
+	pses := make([]dproto.ShuffleEntry, len(os.Entries))
+	for i, e := range os.Entries {
+		pses[i] = dproto.ShuffleEntry{
 			AA:    e.AA,
 			Chain: e.Chain,
 		}
-
-		// TODO: handle case of two entries having the same chain root
 	}
+
+	// TODO: handle case of two entries having the same chain root
 
 	if err := k.aps.InitiateShuffle(ctx, os.Dest, pses); err != nil {
 		k.log.Error("Failed to initiate shuffle", "err", err)

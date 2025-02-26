@@ -28,5 +28,5 @@ type forwardJoinToNetwork struct {
 
 type initiatedShuffle struct {
 	DstCASPKI string
-	Entries   map[string]dproto.ShuffleEntry
+	Entries   []dproto.ShuffleEntry
 }

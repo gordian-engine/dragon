@@ -33,12 +33,12 @@ func TestShuffleMessage_roundTrip(t *testing.T) {
 	require.NoError(t, err)
 
 	msg := dproto.ShuffleMessage{
-		Entries: map[string]dproto.ShuffleEntry{
-			string(leaf1.Chain.Root.RawSubjectPublicKeyInfo): {
+		Entries: []dproto.ShuffleEntry{
+			{
 				AA:    aa1,
 				Chain: leaf1.Chain,
 			},
-			string(leaf2.Chain.Root.RawSubjectPublicKeyInfo): {
+			{
 				AA:    aa2,
 				Chain: leaf2.Chain,
 			},

@@ -10,16 +10,10 @@ import (
 	"github.com/gordian-engine/dragon/dcert"
 )
 
+// ShuffleMessage is the outgoing message
+// when a node initiates a shuffle.
 type ShuffleMessage struct {
-	// This map is keyed by the entry's chain's
-	// CA raw subject public key info.
-	//
-	// It is a map because there is no inherent order to the collection,
-	// and being able to delete entries upon receipt
-	// makes other operations possibly simpler.
-	//
-	// TODO: this seems like it should just be a slice, in hindsight.
-	Entries map[string]ShuffleEntry
+	Entries []ShuffleEntry
 }
 
 func (m ShuffleMessage) Encode(w io.Writer) error {
@@ -42,9 +36,9 @@ func (m *ShuffleMessage) Decode(r io.Reader) error {
 	return nil
 }
 
+// ShuffleReplyMessage is the reply to a [ShuffleMessage].
 type ShuffleReplyMessage struct {
-	// Same notes apply as in the ShuffleMessage.
-	Entries map[string]ShuffleEntry
+	Entries []ShuffleEntry
 }
 
 func (m ShuffleReplyMessage) Encode(w io.Writer) error {
@@ -76,7 +70,7 @@ type ShuffleEntry struct {
 
 func encodeShuffle(
 	msgType MessageType,
-	entries map[string]ShuffleEntry,
+	entries []ShuffleEntry,
 	w io.Writer,
 ) error {
 	if len(entries) == 0 {
@@ -129,7 +123,7 @@ func encodeShuffle(
 	return err
 }
 
-func decodeShuffle(r io.Reader) (map[string]ShuffleEntry, error) {
+func decodeShuffle(r io.Reader) ([]ShuffleEntry, error) {
 	// Assume the message type byte has already been read by the caller.
 
 	// Read the number of entries for the map.
@@ -143,9 +137,9 @@ func decodeShuffle(r io.Reader) (map[string]ShuffleEntry, error) {
 		return nil, errors.New("decoded invalid shuffle entry count of zero")
 	}
 
-	out := make(map[string]ShuffleEntry, remaining)
+	out := make([]ShuffleEntry, remaining)
 
-	for remaining > 0 {
+	for i := range out {
 		var e ShuffleEntry
 		if err := e.AA.Decode(r); err != nil {
 			return nil, fmt.Errorf(
@@ -158,10 +152,7 @@ func decodeShuffle(r io.Reader) (map[string]ShuffleEntry, error) {
 			)
 		}
 
-		key := string(e.Chain.Root.RawSubjectPublicKeyInfo)
-		out[key] = e
-
-		remaining--
+		out[i] = e
 	}
 
 	return out, nil

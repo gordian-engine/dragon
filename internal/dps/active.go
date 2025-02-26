@@ -351,7 +351,7 @@ func (a *Active) handleForwardJoinToNetwork(ctx context.Context, fj forwardJoinT
 func (a *Active) InitiateShuffle(
 	ctx context.Context,
 	dstChain dcert.Chain,
-	entries map[string]dproto.ShuffleEntry,
+	entries []dproto.ShuffleEntry,
 ) error {
 	// The input here is effectively the final message,
 	// so we can just enqueue it as a work item.
@@ -405,17 +405,10 @@ func (a *Active) SendShuffleReply(
 	s quic.Stream,
 	entries []dproto.ShuffleEntry,
 ) {
-	// Construct the shuffle reply message.
-	msg := dproto.ShuffleReplyMessage{
-		Entries: make(map[string]dproto.ShuffleEntry, len(entries)),
-	}
-
-	for _, e := range entries {
-		msg.Entries[string(e.Chain.Root.RawSubjectPublicKeyInfo)] = e
-	}
-
 	reply := dfanout.WorkOutboundShuffleReply{
-		Msg:    msg,
+		Msg: dproto.ShuffleReplyMessage{
+			Entries: entries,
+		},
 		Stream: s,
 	}
 
