@@ -35,7 +35,11 @@ func (h shuffleHandler) Handle(
 	// This seems like a good idea for now,
 	// but it is also possible this is error-prone,
 	// based on the subtleties in the stream cancellation in the QUIC docs.
-	s.CancelRead(1) // TODO: pick a meaningful code for this.
+	//
+	// Need to think on this before deciding whether to enable it.
+	// When canceled, the close call fails with message like "close called for canceled stream N".
+
+	// s.CancelRead(1) // TODO: pick a meaningful code for this.
 
 	return nil, nil
 }

@@ -41,8 +41,9 @@ type Active struct {
 	forwardJoinsToNetwork   chan forwardJoinToNetwork
 	forwardJoinsFromNetwork chan<- dmsg.ForwardJoinFromNetwork
 
-	initiatedShuffles chan initiatedShuffle
-	shufflesFromPeers chan<- dmsg.ShuffleFromPeer
+	initiatedShuffles       chan initiatedShuffle
+	shufflesFromPeers       chan<- dmsg.ShuffleFromPeer
+	shuffleRepliesFromPeers chan<- dmsg.ShuffleReplyFromPeer
 
 	// Depending on the particular message
 	// and whether it needs to be broadcast to all peers
@@ -78,6 +79,8 @@ type ActiveConfig struct {
 	// The message needs to go up to the kernel
 	// so that the view manager can handle it.
 	ShufflesFromPeers chan<- dmsg.ShuffleFromPeer
+
+	ShuffleRepliesFromPeers chan<- dmsg.ShuffleReplyFromPeer
 }
 
 func NewActivePeerSet(ctx context.Context, log *slog.Logger, cfg ActiveConfig) *Active {
@@ -105,6 +108,7 @@ func NewActivePeerSet(ctx context.Context, log *slog.Logger, cfg ActiveConfig) *
 		// Channels that flow back upward to the kernel.
 		forwardJoinsFromNetwork: cfg.ForwardJoinsFromNetwork,
 		shufflesFromPeers:       cfg.ShufflesFromPeers,
+		shuffleRepliesFromPeers: cfg.ShuffleRepliesFromPeers,
 
 		seedChannels: dfanout.NewSeedChannels(2 * seeders),
 		workChannels: dfanout.NewWorkChannels(2 * workers),
@@ -125,12 +129,17 @@ func NewActivePeerSet(ctx context.Context, log *slog.Logger, cfg ActiveConfig) *
 		)
 	}
 
+	woCh := dfanout.WorkerOutputChannels{
+		ShuffleRepliesFromPeers: cfg.ShuffleRepliesFromPeers,
+	}
+
 	for i := range workers {
 		go dfanout.RunWorker(
 			ctx,
 			log.With("worker_idx", i),
 			&a.wg,
 			a.workChannels,
+			woCh,
 		)
 	}
 
@@ -156,7 +165,7 @@ func (a *Active) mainLoop(ctx context.Context) {
 			// but for now in tests,
 			// this ensures that all wait groups finish correctly.
 			for _, p := range a.byCASPKI {
-				p.Conn.CloseWithError(1, "TODO: ungraceful shutdown")
+				p.Conn.CloseWithError(1, "TODO: ungraceful shutdown due to context cancellation: "+context.Cause(ctx).Error())
 			}
 
 			return
@@ -384,6 +393,36 @@ func (a *Active) handleInitiatedShuffle(ctx context.Context, is initiatedShuffle
 			"cause", context.Cause(ctx),
 		)
 	case a.workChannels.OutboundShuffles <- os:
+		// Okay.
+	}
+}
+
+func (a *Active) SendShuffleReply(
+	ctx context.Context,
+	s quic.Stream,
+	entries []dproto.ShuffleEntry,
+) {
+	// Construct the shuffle reply message.
+	msg := dproto.ShuffleReplyMessage{
+		Entries: make(map[string]dproto.ShuffleEntry, len(entries)),
+	}
+
+	for _, e := range entries {
+		msg.Entries[string(e.Chain.Root.RawSubjectPublicKeyInfo)] = e
+	}
+
+	reply := dfanout.WorkOutboundShuffleReply{
+		Msg:    msg,
+		Stream: s,
+	}
+
+	select {
+	case <-ctx.Done():
+		a.log.Info(
+			"Context canceled while attempting to send shuffle reply work item",
+			"cause", context.Cause(ctx),
+		)
+	case a.workChannels.OutboundShuffleReplies <- reply:
 		// Okay.
 	}
 }

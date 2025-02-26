@@ -359,6 +359,10 @@ func TestNode_shuffle(t *testing.T) {
 
 	shufRespReq := <-vm1.MakeShuffleResponseCh
 
+	// TODO: fix these subtly off assertions.
+	// require.Equal(t, nw.Chains[0], shufResp.Src)
+	// require.Equal(t, shuffleEntriesFrom0, shufResp.Entries)
+
 	shuffleEntriesFrom1 := make([]dview.ShuffleEntry, 2)
 	for i := range shuffleEntriesFrom1 {
 		aa, err := extraLeaves[i+2].AddressAttestation(

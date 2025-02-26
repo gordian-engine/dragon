@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gordian-engine/dragon/internal/dmsg"
 	"github.com/gordian-engine/dragon/internal/dproto/dpshuffle"
 )
 
@@ -15,6 +16,7 @@ func RunWorker(
 	log *slog.Logger,
 	wg *sync.WaitGroup,
 	work WorkChannels,
+	out WorkerOutputChannels,
 ) {
 	defer wg.Done()
 
@@ -31,7 +33,12 @@ func RunWorker(
 			handleWorkForwardJoin(fj)
 
 		case os := <-work.OutboundShuffles:
-			handleWorkOutboundShuffle(ctx, log, os)
+			handleWorkOutboundShuffle(ctx, log, os, out.ShuffleRepliesFromPeers)
+
+		case osr := <-work.OutboundShuffleReplies:
+			handleWorkOutboundShuffleReply(
+				ctx, log, osr,
+			)
 		}
 	}
 }
@@ -54,19 +61,46 @@ func handleWorkForwardJoin(fj WorkForwardJoin) {
 	}
 }
 
-func handleWorkOutboundShuffle(ctx context.Context, log *slog.Logger, os WorkOutboundShuffle) {
-	p := dpshuffle.Protocol{
+func handleWorkOutboundShuffle(
+	ctx context.Context,
+	log *slog.Logger,
+	os WorkOutboundShuffle,
+	replyCh chan<- dmsg.ShuffleReplyFromPeer,
+) {
+	shuf := dpshuffle.InitiateProtocol{
 		Log: log,
 		Cfg: dpshuffle.Config{
-			SendShuffleTimeout: 50 * time.Millisecond,
+			SendShuffleTimeout:  50 * time.Millisecond,
+			ReceiveReplyTimeout: 75 * time.Millisecond,
+
+			ShuffleRepliesFromPeers: replyCh,
 		},
 	}
 
-	s, err := p.Run(ctx, os.Conn, os.Msg)
-	if err != nil {
+	if err := shuf.Run(ctx, os.Chain, os.Conn, os.Msg); err != nil {
 		panic(fmt.Errorf("TODO: handle error running shuffle protocol: %w", err))
 	}
+}
 
-	// TODO: we need to read the response on s.
-	_ = s
+func handleWorkOutboundShuffleReply(
+	ctx context.Context,
+	log *slog.Logger,
+	osr WorkOutboundShuffleReply,
+) {
+	defer func() {
+		if err := osr.Stream.Close(); err != nil {
+			log.Info("Error closing shuffle stream", "err", err)
+		}
+	}()
+
+	shuf := dpshuffle.ReplyProtocol{
+		Log: log,
+		Cfg: dpshuffle.ReplyConfig{
+			SendReplyTimeout: 50 * time.Millisecond,
+		},
+	}
+
+	if err := shuf.Run(ctx, osr.Stream, osr.Msg); err != nil {
+		panic(fmt.Errorf("TODO: handle error running shuffle reply protocol: %w", err))
+	}
 }

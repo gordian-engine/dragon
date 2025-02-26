@@ -1,6 +1,8 @@
 package dfanout
 
 import (
+	"github.com/gordian-engine/dragon/dcert"
+	"github.com/gordian-engine/dragon/internal/dmsg"
 	"github.com/gordian-engine/dragon/internal/dproto"
 	"github.com/quic-go/quic-go"
 )
@@ -25,13 +27,15 @@ func NewSeedChannels(chanSz int) SeedChannels {
 type WorkChannels struct {
 	ForwardJoins chan WorkForwardJoin
 
-	OutboundShuffles chan WorkOutboundShuffle
+	OutboundShuffles       chan WorkOutboundShuffle
+	OutboundShuffleReplies chan WorkOutboundShuffleReply
 }
 
 func NewWorkChannels(chanSz int) WorkChannels {
 	return WorkChannels{
-		ForwardJoins:     make(chan WorkForwardJoin, chanSz),
-		OutboundShuffles: make(chan WorkOutboundShuffle, chanSz),
+		ForwardJoins:           make(chan WorkForwardJoin, chanSz),
+		OutboundShuffles:       make(chan WorkOutboundShuffle, chanSz),
+		OutboundShuffleReplies: make(chan WorkOutboundShuffleReply, chanSz),
 	}
 }
 
@@ -62,4 +66,24 @@ type WorkOutboundShuffle struct {
 	Msg dproto.ShuffleMessage
 
 	Conn quic.Connection
+
+	// We should already have the chain anyway,
+	// so include it here so the worker
+	// so that the worker doesn't have to recalculate it.
+	Chain dcert.Chain
+}
+
+// WorkOutboundShuffleReply is the shuffle reply sent in response to a peer's
+// initiated shuffle to us.
+//
+// After sending the reply, the worker is responsible
+// for closing the ephemeral stream.
+type WorkOutboundShuffleReply struct {
+	Msg dproto.ShuffleReplyMessage
+
+	Stream quic.Stream
+}
+
+type WorkerOutputChannels struct {
+	ShuffleRepliesFromPeers chan<- dmsg.ShuffleReplyFromPeer
 }

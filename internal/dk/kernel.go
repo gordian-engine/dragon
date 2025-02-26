@@ -71,8 +71,9 @@ func NewKernel(ctx context.Context, log *slog.Logger, cfg KernelConfig) *Kernel 
 	// The channel size is an arbitrary guess right now.
 	fjfns := make(chan dmsg.ForwardJoinFromNetwork, 8)
 
-	// Pretty much the same for shuffles from peers.
+	// Pretty much the same for shuffles to/from peers.
 	sfps := make(chan dmsg.ShuffleFromPeer, 4)
+	srfps := make(chan dmsg.ShuffleReplyFromPeer, 4)
 
 	k := &Kernel{
 		log: log,
@@ -97,6 +98,7 @@ func NewKernel(ctx context.Context, log *slog.Logger, cfg KernelConfig) *Kernel 
 			dps.ActiveConfig{
 				ForwardJoinsFromNetwork: fjfns,
 				ShufflesFromPeers:       sfps,
+				ShuffleRepliesFromPeers: srfps,
 			},
 		),
 
@@ -392,8 +394,7 @@ func (k *Kernel) handleShuffleFromPeer(
 		}
 	}
 
-	// TODO:
-	// k.aps.SendShuffleReply(ctx, sfp.Stream, outbound)
+	k.aps.SendShuffleReply(ctx, sfp.Stream, outbound)
 }
 
 // GetActiveViewSize returns the current number of peers in the active view.
