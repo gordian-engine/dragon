@@ -360,7 +360,7 @@ func TestNode_shuffle(t *testing.T) {
 	shufRespReq := <-vm1.MakeShuffleResponseCh
 
 	// TODO: fix these subtly off assertions.
-	// require.Equal(t, nw.Chains[0], shufResp.Src)
+	require.Equal(t, nw.Chains[0], shufRespReq.Src)
 	// require.Equal(t, shuffleEntriesFrom0, shufResp.Entries)
 
 	shuffleEntriesFrom1 := make([]dview.ShuffleEntry, 2)

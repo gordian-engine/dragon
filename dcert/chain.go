@@ -52,11 +52,20 @@ func NewChainFromCerts(certs []*x509.Certificate) (Chain, error) {
 		)
 	}
 
-	return Chain{
-		Leaf:         certs[0],
-		Intermediate: slices.Clip(certs[1 : len(certs)-1]),
-		Root:         certs[len(certs)-1],
-	}, nil
+	chain := Chain{
+		Leaf: certs[0],
+		Root: certs[len(certs)-1],
+	}
+
+	if len(certs) > 2 {
+		// We want chain.Intermediate to be nil, not an empty slice,
+		// when there are no intermediates.
+		// If it is an empty slice, some tests involving decoding can fail.
+		// Using slices.Clip has a chance of helping GC.
+		chain.Intermediate = slices.Clip(certs[1 : len(certs)-1])
+	}
+
+	return chain, nil
 }
 
 func NewChainFromTLSConnectionState(s tls.ConnectionState) (Chain, error) {
