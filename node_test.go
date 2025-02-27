@@ -188,6 +188,69 @@ func TestNode_DialAndJoin_accept(t *testing.T) {
 	require.Equal(t, 1, nw.Nodes[1].Node.ActiveViewSize())
 }
 
+func TestNode_DialAndJoin_accept_intermediates(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	nw := dragontest.NewNetwork(
+		t, ctx,
+		[]dcerttest.CAConfig{dcerttest.FastConfig(), dcerttest.FastConfig()},
+		func(_ int, c dragontest.NodeConfig) dragon.NodeConfig {
+
+			// Use the CA on the test node config,
+			// to generate an intermediate CA,
+			// and use that intermediate to generate a new leaf,
+			// overriding the TLS config.
+			i, err := c.CA.CreateIntermediate(dcerttest.FastConfig())
+			require.NoError(t, err)
+
+			leaf, err := i.CreateLeafCert(dcerttest.LeafConfig{
+				DNSNames: []string{"localhost"},
+			})
+
+			c.TLS.Certificates = []tls.Certificate{
+				{
+					Certificate: [][]byte{leaf.Cert.Raw, i.Cert.Raw},
+					PrivateKey:  leaf.PrivKey,
+
+					Leaf: leaf.Cert,
+				},
+			}
+
+			out := c.ToDragonNodeConfig()
+			// Explicitly accept join requests.
+			out.ViewManager = dviewrand.New(
+				dtest.NewLogger(t).With("node_sys", "view_manager"),
+				dviewrand.Config{
+					ActiveViewSize:  4,
+					PassiveViewSize: 8,
+
+					RNG: rand.New(rand.NewPCG(10, 20)), // Arbitrary fixed seed for this test.
+				},
+			)
+
+			return out
+		},
+	)
+	defer nw.Wait()
+	defer cancel()
+
+	// No active views before joining.
+	require.Zero(t, nw.Nodes[0].Node.ActiveViewSize())
+	require.Zero(t, nw.Nodes[1].Node.ActiveViewSize())
+
+	require.NoError(t, nw.Nodes[0].Node.DialAndJoin(ctx, nw.Nodes[1].UDP.LocalAddr()))
+
+	// Short delay to allow background work to happen on the join request.
+	time.Sleep(50 * time.Millisecond)
+
+	// Now both nodes report 1 active view member.
+	require.Equal(t, 1, nw.Nodes[0].Node.ActiveViewSize())
+	require.Equal(t, 1, nw.Nodes[1].Node.ActiveViewSize())
+}
+
 func TestNode_forwardJoin(t *testing.T) {
 	t.Parallel()
 

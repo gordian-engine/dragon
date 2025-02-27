@@ -48,8 +48,12 @@ type NodeConfig struct {
 	TLS *tls.Config
 
 	// The config used to set up the TLS config.
-	// Possibly useful if you need to inspect the CA or leaf certificate details.
-	CA dcerttest.CAConfig
+	// Possibly useful if you need to inspect the CAConfig or leaf certificate details.
+	CAConfig dcerttest.CAConfig
+
+	// The actual CA used for the node config.
+	// Useful if you need to create sibling leaves, intermediate CAs, etc.
+	CA *dcerttest.CA
 
 	// Initial trusted CAs to set on the outgoing [dragon.NodeConfig].
 	TrustedCAs []*x509.Certificate
@@ -179,17 +183,18 @@ func NewNetwork(
 			ClientAuth: tls.RequireAndVerifyClientCert,
 		}
 
-		initialCAs := make([]*x509.Certificate, len(cas))
+		initialCACerts := make([]*x509.Certificate, len(cas))
 		for i, ca := range cas {
-			initialCAs[i] = ca.Cert
+			initialCACerts[i] = ca.Cert
 		}
 		nc := configCreator(i, NodeConfig{
-			udpConn: uc,
-			QUIC:    dragon.DefaultQUICConfig(),
-			TLS:     &tc,
-			CA:      cfgs[i],
+			udpConn:  uc,
+			QUIC:     dragon.DefaultQUICConfig(),
+			TLS:      &tc,
+			CAConfig: cfgs[i],
+			CA:       cas[i],
 
-			TrustedCAs: initialCAs,
+			TrustedCAs: initialCACerts,
 		})
 
 		n, err := dragon.NewNode(ctx, log.With("node", i), nc)
