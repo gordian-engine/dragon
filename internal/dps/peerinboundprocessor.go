@@ -46,10 +46,28 @@ type peerInboundProcessor struct {
 	cancel context.CancelCauseFunc
 }
 
+// pipConfig is the configuration for a peerInboundProcessor.
+type pipConfig struct {
+	// The peer from which the processor receives and processes messages.
+	Peer Peer
+
+	// The owner of the peerInboundProcessor.
+	Active *Active
+
+	// How many dynamic handlers to run.
+	// Dynamic handlers are goroutines that do initial handling of new QUIC streams.
+	DynamicHandlers int
+}
+
 func newPeerInboundProcessor(
-	ctx context.Context, log *slog.Logger,
-	peer Peer, a *Active,
+	ctx context.Context, log *slog.Logger, cfg pipConfig,
 ) *peerInboundProcessor {
+	if cfg.DynamicHandlers <= 0 {
+		panic(fmt.Errorf(
+			"BUG: pipConfig.DynamicHandlers must be positive (got %d)", cfg.DynamicHandlers,
+		))
+	}
+
 	// We need a cancelable root context for the type,
 	// because a failed message on one stream needs to
 	// stop all the work for the peer.
@@ -58,12 +76,12 @@ func newPeerInboundProcessor(
 	p := &peerInboundProcessor{
 		log: log,
 
-		peer: peer,
+		peer: cfg.Peer,
 
-		forwardJoinsFromNetwork: a.forwardJoinsFromNetwork,
-		shufflesFromPeers:       a.shufflesFromPeers,
+		forwardJoinsFromNetwork: cfg.Active.forwardJoinsFromNetwork,
+		shufflesFromPeers:       cfg.Active.shufflesFromPeers,
 
-		mainLoopWG: &a.processorWG,
+		mainLoopWG: &cfg.Active.processorWG,
 
 		cancel: cancel,
 	}
@@ -76,7 +94,7 @@ func newPeerInboundProcessor(
 	// That data race seems unlikely to happen in a real system
 	// that starts and is expected to stay running for a long time.
 	p.wg.Add(2)
-	go p.acceptDynamicStreams(ctx)
+	go p.acceptDynamicStreams(ctx, cfg.DynamicHandlers)
 	go p.handleIncomingAdmission(ctx)
 
 	// The main loop is not part of the wait group.
@@ -106,17 +124,78 @@ func (p *peerInboundProcessor) mainLoop(ctx context.Context) {
 
 func (p *peerInboundProcessor) Cancel() {
 	// TODO: better error handling with the cancel cause func.
-	p.cancel(errors.New("worker manually canceled"))
+	p.cancel(errors.New("peer inbound processor manually canceled"))
 }
 
-// fail cancels the worker.
-// This is used internally to the worker,
-// so that one invalid message ends up closing the entire worker.
+// fail cancels the processor.
+// This is used internally to the processor,
+// so that one invalid message ends up closing the entire processor.
 func (p *peerInboundProcessor) fail(e error) {
 	p.cancel(e)
 }
 
-func (p *peerInboundProcessor) acceptDynamicStreams(ctx context.Context) {
+// acceptDynamicStreams accepts new streams on the peer's connection
+// and then passes that stream to worker goroutines,
+// either to process protocol-level messages
+// or to hand the work off to the application.
+//
+// hLimit is the maximum number of handler goroutines to start.
+//
+// Only one instance of this goroutine is started, in [newPeerInboundProcessor].
+func (p *peerInboundProcessor) acceptDynamicStreams(
+	ctx context.Context,
+	hLimit int,
+) {
+	defer p.wg.Done()
+
+	// Channel that dynamic stream handlers read from.
+	// It must be unbuffered so that we know the stream is being handled
+	// before we accept the next stream.
+	ch := make(chan quic.Stream)
+
+	for {
+		s, err := p.peer.Conn.AcceptStream(ctx)
+		if err != nil {
+			p.fail(fmt.Errorf("failed to accept stream: %w", err))
+			return
+		}
+
+		// We are lazily creating goroutines here,
+		// only if the new stream cannot be immediately handled
+		// and if we have not reached the goroutine limit.
+		if hLimit > 0 {
+			select {
+			case ch <- s:
+				// Success.
+				continue
+			default:
+				// Start another goroutine for it.
+				// We could have passed s as an initial argument to handleDynamicStreams,
+				// but that complicates the loop enough that it doesn't seem
+				// like a worthwhile optimization.
+				p.wg.Add(1)
+				go p.handleDynamicStreams(ctx, ch)
+				hLimit--
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			p.fail(fmt.Errorf(
+				"context canceled while sending dynamic stream to handler: %w",
+				context.Cause(ctx),
+			))
+			return
+		case ch <- s:
+			// Okay.
+		}
+	}
+}
+
+func (p *peerInboundProcessor) handleDynamicStreams(
+	ctx context.Context,
+	ch <-chan quic.Stream,
+) {
 	defer p.wg.Done()
 
 	proto := dpdynamic.Protocol{
@@ -127,41 +206,38 @@ func (p *peerInboundProcessor) acceptDynamicStreams(ctx context.Context) {
 	}
 
 	for {
-		s, err := p.peer.Conn.AcceptStream(ctx)
+		// The goroutine is started with a valid stream,
+		// so we handle work before reading from the channel.
+		var s quic.Stream
+		select {
+		case <-ctx.Done():
+			p.fail(fmt.Errorf(
+				"context canceled while waiting for dynamic stream: %w",
+				context.Cause(ctx),
+			))
+			return
+		case s = <-ch:
+			// Okay, do main handling.
+		}
+
+		res, err := proto.Run(ctx, s)
 		if err != nil {
-			p.fail(fmt.Errorf("failed to accept stream: %w", err))
+			p.fail(fmt.Errorf("failed to run dynamic protocol: %w", err))
 			return
 		}
 
-		// Upon accepting the stream, immediately delegate to a new goroutine.
-		// TODO: this should be a pool of goroutines instead so we can provide backpressure.
-		p.wg.Add(1)
-		go p.handleDynamicStream(ctx, proto, s)
+		if res.ShuffleMessage != nil {
+			p.handleShuffleFromPeer(ctx, s, *res.ShuffleMessage)
+			continue
+		}
+
+		// TODO: update dynamic protocol result to allow application streams.
+
+		panic(fmt.Errorf(
+			"BUG: dynamic protocol accepted but unhandled with result: %v",
+			res,
+		))
 	}
-}
-
-func (p *peerInboundProcessor) handleDynamicStream(
-	ctx context.Context,
-	proto dpdynamic.Protocol,
-	s quic.Stream,
-) {
-	defer p.wg.Done()
-
-	res, err := proto.Run(ctx, s)
-	if err != nil {
-		p.fail(fmt.Errorf("failed to run dynamic protocol: %w", err))
-		return
-	}
-
-	if res.ShuffleMessage != nil {
-		p.handleShuffleFromPeer(ctx, s, *res.ShuffleMessage)
-		return
-	}
-
-	panic(fmt.Errorf(
-		"BUG: dynamic protocol accepted but unhandled with result: %v",
-		res,
-	))
 }
 
 func (p *peerInboundProcessor) handleShuffleFromPeer(

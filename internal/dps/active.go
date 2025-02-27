@@ -234,7 +234,12 @@ func (a *Active) handleAddRequest(ctx context.Context, req addRequest) {
 	a.processors[req.IPeer.CASPKI] = newPeerInboundProcessor(
 		ctx,
 		a.log.With("peer_inbound_processor", req.IPeer.Conn.RemoteAddr().String()),
-		req.IPeer.ToPeer(), a,
+		pipConfig{
+			Peer:   req.IPeer.ToPeer(),
+			Active: a,
+
+			DynamicHandlers: 4, // TODO: needs to be configurable.
+		},
 	)
 
 	close(req.Resp)

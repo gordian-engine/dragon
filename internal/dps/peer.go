@@ -13,7 +13,7 @@ type Peer struct {
 	AA    daddr.AddressAttestation
 
 	// TODO: this could possibly be just a quic.SendStream,
-	// as the read side happens in the peerWorker type,
+	// as the read side happens in the peerInboundProcessor type,
 	// and we must not interfere with that work.
 	Admission quic.Stream
 }
@@ -33,6 +33,7 @@ func (p Peer) toInternal() iPeer {
 }
 
 // iPeer is an internal representation of a peer.
+// It contains some extra fields that seem worth calculating only once.
 type iPeer struct {
 	Conn quic.Connection
 
