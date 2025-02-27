@@ -44,8 +44,6 @@ type peerInboundProcessor struct {
 	// Needed for finer-grained control over shutdown,
 	// in particular when the peer is removed from the active set.
 	cancel context.CancelCauseFunc
-
-	mainLoopDone chan struct{}
 }
 
 func newPeerInboundProcessor(
@@ -68,8 +66,6 @@ func newPeerInboundProcessor(
 		mainLoopWG: &a.processorWG,
 
 		cancel: cancel,
-
-		mainLoopDone: make(chan struct{}),
 	}
 
 	// Usually we run the main goroutine first,
