@@ -8,6 +8,7 @@ import (
 	"github.com/gordian-engine/dragon/internal/dpeerset"
 	"github.com/gordian-engine/dragon/internal/dpeerset/dpeersettest"
 	"github.com/gordian-engine/dragon/internal/dquictest"
+	"github.com/gordian-engine/dragon/internal/dtest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,7 +47,7 @@ func TestActiveView_NewConnections(t *testing.T) {
 
 	require.NoError(t, av.Add(ctx, peer))
 
-	nc := <-fx.NewConnections
+	nc := dtest.ReceiveSoon(t, fx.NewConnections)
 	require.Equal(t, conn, nc.QUIC)
 	require.Equal(t, leaf.Chain, nc.Chain)
 

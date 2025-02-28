@@ -380,6 +380,7 @@ func TestNode_shuffle(t *testing.T) {
 	// First, vm1 has to consider the Join.
 	// After that it can accept the peering.
 	go func() {
+		// Explicitly not using dtest.ReceiveSoon or SendSoon in this goroutine.
 		cjReq := <-vm1.ConsiderJoinCh
 		cjReq.Resp <- dview.AcceptJoinDecision
 
@@ -389,6 +390,7 @@ func TestNode_shuffle(t *testing.T) {
 
 	// Node 0 has to accept a peering eventually too.
 	go func() {
+		// Explicitly not using dtest.ReceiveSoon or SendSoon in this goroutine.
 		req := <-vm0.AddActivePeerCh
 		req.Resp <- nil
 	}()
@@ -397,7 +399,7 @@ func TestNode_shuffle(t *testing.T) {
 	require.NoError(t, nw.Nodes[0].Node.DialAndJoin(ctx, nw.Nodes[1].UDP.LocalAddr()))
 
 	// Next, we initiate a shuffle on zero.
-	shuffleSig0 <- struct{}{}
+	dtest.SendSoon(t, shuffleSig0, struct{}{})
 
 	// That was synchronously accepted,
 	// and now we can synchronously handle the outbound shuffle.
@@ -414,17 +416,17 @@ func TestNode_shuffle(t *testing.T) {
 		}
 	}
 
-	shufReq := <-vm0.MakeOutboundShuffleCh
+	shufReq := dtest.ReceiveSoon(t, vm0.MakeOutboundShuffleCh)
 	// Nothing to assert on shufReq.
-	shufReq.Resp <- dview.OutboundShuffle{
+	dtest.SendSoon(t, shufReq.Resp, dview.OutboundShuffle{
 		Dest:    nw.Chains[1],
 		Entries: shuffleEntriesFrom0,
-	}
+	})
 
 	// Now since the outbound shuffle went out to chain 1,
 	// vm1 needs to produce a shuffle response.
 
-	shufRespReq := <-vm1.MakeShuffleResponseCh
+	shufRespReq := dtest.ReceiveSoon(t, vm1.MakeShuffleResponseCh)
 
 	// Make sure the input to MakeShuffleResponse
 	// matches what was sent in the initiated shuffle.
@@ -443,10 +445,10 @@ func TestNode_shuffle(t *testing.T) {
 			Chain: extraLeaves[i+2].Chain,
 		}
 	}
-	shufRespReq.Resp <- shuffleEntriesFrom1
+	dtest.SendSoon(t, shufRespReq.Resp, shuffleEntriesFrom1)
 
 	// Now that 1 sent its response, 0 should handle the response.
-	handleRespReq := <-vm0.HandleShuffleResponseCh
+	handleRespReq := dtest.ReceiveSoon(t, vm0.HandleShuffleResponseCh)
 	require.Equal(t, nw.Chains[1], handleRespReq.Src)
 	require.Equal(t, shuffleEntriesFrom1, handleRespReq.Entries)
 	close(handleRespReq.Resp)
