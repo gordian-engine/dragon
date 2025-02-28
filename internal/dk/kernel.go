@@ -100,7 +100,7 @@ func NewKernel(ctx context.Context, log *slog.Logger, cfg KernelConfig) *Kernel 
 		shuffleSignal: cfg.ShuffleSignal,
 
 		vm: cfg.ViewManager,
-		av: dpeerset.NewActivePeerSet(
+		av: dpeerset.NewActiveView(
 			ctx,
 			log.With("dk_sys", "active_peer_set"),
 			dpeerset.ActiveViewConfig{

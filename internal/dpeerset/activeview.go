@@ -100,7 +100,7 @@ type ActiveViewConfig struct {
 	NewConnections chan<- dconn.Conn
 }
 
-func NewActivePeerSet(ctx context.Context, log *slog.Logger, cfg ActiveViewConfig) *ActiveView {
+func NewActiveView(ctx context.Context, log *slog.Logger, cfg ActiveViewConfig) *ActiveView {
 	if cfg.NewConnections == nil {
 		panic(errors.New("BUG: cfg.NewConnections must not be nil"))
 	}
