@@ -51,5 +51,12 @@ func TestActiveView_NewConnections(t *testing.T) {
 	require.Equal(t, conn, nc.QUIC)
 	require.Equal(t, leaf.Chain, nc.Chain)
 
-	// TODO: add test for leaving signal.
+	// The channel isn't closed yet, of course.
+	dtest.NotSending(t, nc.LeavingActiveView)
+
+	require.NoError(t, av.Remove(ctx, dpeerset.PeerCertIDFromChain(peer.Chain)))
+
+	// Following the synchronous call to remove,
+	// the channel should immediately be closed.
+	_ = dtest.IsSending(t, nc.LeavingActiveView)
 }

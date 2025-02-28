@@ -35,6 +35,11 @@ type ActiveView struct {
 	byCASPKI   map[caSPKI]iPeer
 	byLeafSPKI map[leafSPKI]iPeer
 
+	// The connections we emit through the newConnections channel
+	// have a channel we need to close,
+	// when the connection leaves the active set.
+	onRemove map[leafSPKI]chan<- struct{}
+
 	processors map[caSPKI]*peerInboundProcessor
 
 	addRequests    chan addRequest
@@ -114,6 +119,7 @@ func NewActiveView(ctx context.Context, log *slog.Logger, cfg ActiveViewConfig) 
 		// Not trying to pre-size these, for now at least.
 		byCASPKI:   map[caSPKI]iPeer{},
 		byLeafSPKI: map[leafSPKI]iPeer{},
+		onRemove:   map[leafSPKI]chan<- struct{}{},
 
 		processors: map[caSPKI]*peerInboundProcessor{},
 
@@ -266,6 +272,9 @@ func (a *ActiveView) handleAddRequest(ctx context.Context, req addRequest) {
 		},
 	)
 
+	leavingCh := make(chan struct{})
+	a.onRemove[req.IPeer.LeafSPKI] = leavingCh
+
 	// Closing the response allows the kernel to unblock.
 	close(req.Resp)
 
@@ -276,7 +285,7 @@ func (a *ActiveView) handleAddRequest(ctx context.Context, req addRequest) {
 		QUIC:  req.IPeer.Conn,
 		Chain: req.IPeer.Chain,
 
-		LeavingActiveView: nil, // TODO
+		LeavingActiveView: leavingCh,
 	}
 	select {
 	case <-ctx.Done():
@@ -341,6 +350,18 @@ func (a *ActiveView) handleRemoveRequest(req removeRequest) {
 	// TODO: we may need some distinct methods beyond just Cancel.
 	a.processors[req.PCI.caSPKI].Cancel()
 	delete(a.processors, req.PCI.caSPKI)
+
+	// The connection we emitted on add,
+	// includes a channel that needs to be closed to signify that the connection
+	// is no longer in the active set.
+	//
+	// We have documented the timing of closing this channel
+	// to not follow particular coordination with the connection being closed.
+	// We are currently closing the channel after the connection is closed,
+	// but if there is a compelling reason to close the channel before the connection,
+	// we could swap these.
+	close(a.onRemove[req.PCI.leafSPKI])
+	delete(a.onRemove, req.PCI.leafSPKI)
 
 	close(req.Resp)
 }
