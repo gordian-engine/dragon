@@ -12,6 +12,8 @@ import (
 	"github.com/gordian-engine/dragon/dview"
 )
 
+// Manager is a randomness-based [dview.Manager],
+// closely following the behavior specified in the HyParView whitepaper.
 type Manager struct {
 	log *slog.Logger
 
@@ -27,12 +29,11 @@ type Config struct {
 	// Target sizes for active and passive views.
 	ActiveViewSize, PassiveViewSize int
 
-	// We actually aren't using the RNG yet.
-	// If it turns out we can get by solely on random map iteration,
-	// then we should remove the RNG field.
+	// The RNG is used for randomness in decisions.
 	RNG *rand.Rand
 }
 
+// New returns a new Manager.
 func New(log *slog.Logger, cfg Config) *Manager {
 	if cfg.ActiveViewSize <= 0 {
 		panic(fmt.Errorf(
@@ -147,10 +148,14 @@ func (m *Manager) RemoveActivePeer(_ context.Context, p dview.ActivePeer) {
 }
 
 func (m *Manager) randomActivePeer() (string, *dview.ActivePeer) {
-	// First entry by random map iteration.
-	// TODO: use RNG to actually skip a random count.
+	// Map iteration order simply is unspecified, not random,
+	// so use the RNG to pick.
+	more := m.rng.IntN(len(m.aByCAPKI))
 	for k, p := range m.aByCAPKI {
-		return k, p
+		if more == 0 {
+			return k, p
+		}
+		more--
 	}
 
 	// Map was empty.
@@ -158,10 +163,14 @@ func (m *Manager) randomActivePeer() (string, *dview.ActivePeer) {
 }
 
 func (m *Manager) randomPassivePeer() (string, *dview.PassivePeer) {
-	// First entry by random map iteration.
-	// TODO: use RNG to actually skip a random count.
+	// Map iteration order simply is unspecified, not random,
+	// so use the RNG to pick.
+	more := m.rng.IntN(len(m.aByCAPKI))
 	for k, p := range m.pByCAPKI {
-		return k, p
+		if more == 0 {
+			return k, p
+		}
+		more--
 	}
 
 	// Map was empty.
