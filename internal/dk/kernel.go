@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/dview"
 	"github.com/gordian-engine/dragon/internal/dmsg"
 	"github.com/gordian-engine/dragon/internal/dproto"
@@ -59,6 +60,11 @@ type KernelConfig struct {
 
 	// A value sent on this channel indicates that a shuffle is due.
 	ShuffleSignal <-chan struct{}
+
+	// Outgoing channel announcing new connections in the active view.
+	// Passed through directly to the active peer set,
+	// otherwise unused in the Kernel.
+	NewConnections chan<- dconn.Conn
 }
 
 func NewKernel(ctx context.Context, log *slog.Logger, cfg KernelConfig) *Kernel {
@@ -101,6 +107,8 @@ func NewKernel(ctx context.Context, log *slog.Logger, cfg KernelConfig) *Kernel 
 				ForwardJoinsFromNetwork: fjfns,
 				ShufflesFromPeers:       sfps,
 				ShuffleRepliesFromPeers: srfps,
+
+				NewConnections: cfg.NewConnections,
 			},
 		),
 

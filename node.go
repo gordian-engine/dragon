@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gordian-engine/dragon/dcert"
+	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/dview"
 	"github.com/gordian-engine/dragon/internal/dk"
 	"github.com/gordian-engine/dragon/internal/dproto"
@@ -73,6 +74,10 @@ type NodeConfig struct {
 	// Externally controlled channel to signal when
 	// this node should initiate an outgoing shuffle.
 	ShuffleSignal <-chan struct{}
+
+	// Dragon internals write to this channel
+	// to notify the application of new connections in the active view.
+	NewConnections chan<- dconn.Conn
 }
 
 // validate panics if there are any illegal settings in the configuration.
@@ -335,6 +340,8 @@ func NewNode(ctx context.Context, log *slog.Logger, cfg NodeConfig) (*Node, erro
 		NeighborRequests: neighborRequestsCh,
 
 		ShuffleSignal: cfg.ShuffleSignal,
+
+		NewConnections: cfg.NewConnections,
 	})
 
 	baseTLSConf := cfg.customizedTLSConfig(log)

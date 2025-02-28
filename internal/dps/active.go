@@ -3,11 +3,13 @@ package dps
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
 
 	"github.com/gordian-engine/dragon/dcert"
+	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/internal/dmsg"
 	"github.com/gordian-engine/dragon/internal/dproto"
 	"github.com/gordian-engine/dragon/internal/dps/dfanout"
@@ -44,6 +46,8 @@ type Active struct {
 	initiatedShuffles       chan initiatedShuffle
 	shufflesFromPeers       chan<- dmsg.ShuffleFromPeer
 	shuffleRepliesFromPeers chan<- dmsg.ShuffleReplyFromPeer
+
+	newConnections chan<- dconn.Conn
 
 	// Depending on the particular message
 	// and whether it needs to be broadcast to all peers
@@ -83,9 +87,24 @@ type ActiveConfig struct {
 	// A peer replied to our outgoing shuffle message.
 	// We need to pass it through the kernel to the view manager.
 	ShuffleRepliesFromPeers chan<- dmsg.ShuffleReplyFromPeer
+
+	// When a peer is added to the active view,
+	// a connection is sent on this channel.
+	//
+	// The active peer set will block on writes to this channel,
+	// so it is recommended that the channel is buffered
+	// and that a dedicated goroutine is reading from it.
+	//
+	// In tests, it may suffice to use a large buffered channel,
+	// to avoid setting up a separate reader goroutine.
+	NewConnections chan<- dconn.Conn
 }
 
 func NewActivePeerSet(ctx context.Context, log *slog.Logger, cfg ActiveConfig) *Active {
+	if cfg.NewConnections == nil {
+		panic(errors.New("BUG: cfg.NewConnections must not be nil"))
+	}
+
 	seeders := max(2, cfg.Seeders)
 	workers := max(4, cfg.Workers)
 
@@ -111,6 +130,9 @@ func NewActivePeerSet(ctx context.Context, log *slog.Logger, cfg ActiveConfig) *
 		forwardJoinsFromNetwork: cfg.ForwardJoinsFromNetwork,
 		shufflesFromPeers:       cfg.ShufflesFromPeers,
 		shuffleRepliesFromPeers: cfg.ShuffleRepliesFromPeers,
+
+		// Channels that flow out to the application.
+		newConnections: cfg.NewConnections,
 
 		seedChannels: dfanout.NewSeedChannels(2 * seeders),
 		workChannels: dfanout.NewWorkChannels(2 * workers),
@@ -201,7 +223,7 @@ func (a *Active) Add(ctx context.Context, p Peer) error {
 	select {
 	case <-ctx.Done():
 		return fmt.Errorf(
-			"context cancelled while making add request: %w", context.Cause(ctx),
+			"context canceled while making add request: %w", context.Cause(ctx),
 		)
 
 	case a.addRequests <- req:
@@ -211,7 +233,7 @@ func (a *Active) Add(ctx context.Context, p Peer) error {
 	select {
 	case <-ctx.Done():
 		return fmt.Errorf(
-			"context cancelled while waiting for add response: %w", context.Cause(ctx),
+			"context canceled while waiting for add response: %w", context.Cause(ctx),
 		)
 
 	case <-resp:
@@ -221,6 +243,8 @@ func (a *Active) Add(ctx context.Context, p Peer) error {
 
 func (a *Active) handleAddRequest(ctx context.Context, req addRequest) {
 	if _, ok := a.byCASPKI[req.IPeer.CASPKI]; ok {
+		// We might not want to panic here if and when allowing active connections
+		// to "cousin" peers (who have the same CA and are highly trusted).
 		panic(fmt.Errorf(
 			"BUG: attempted to add peer with CA SPKI %q when one already existed",
 			req.IPeer.CASPKI,
@@ -242,7 +266,29 @@ func (a *Active) handleAddRequest(ctx context.Context, req addRequest) {
 		},
 	)
 
+	// Closing the response allows the kernel to unblock.
 	close(req.Resp)
+
+	// Now we need to notify of the new connection.
+	// We expect the other end of the channel to be actively reading,
+	// or at least to have buffered the channel.
+	newConn := dconn.Conn{
+		QUIC:  req.IPeer.Conn,
+		Chain: req.IPeer.Chain,
+
+		LeavingActiveView: nil, // TODO
+	}
+	select {
+	case <-ctx.Done():
+		a.log.Warn(
+			"Context canceled while sending new connection notification",
+			"cause", context.Cause(ctx),
+		)
+		return
+
+	case a.newConnections <- newConn:
+		// Okay.
+	}
 }
 
 // Remove removes the peer with the given ID from the active set.
@@ -259,7 +305,7 @@ func (a *Active) Remove(ctx context.Context, pid PeerCertID) error {
 	select {
 	case <-ctx.Done():
 		return fmt.Errorf(
-			"context cancelled while making remove request: %w", context.Cause(ctx),
+			"context canceled while making remove request: %w", context.Cause(ctx),
 		)
 
 	case a.removeRequests <- req:
@@ -269,7 +315,7 @@ func (a *Active) Remove(ctx context.Context, pid PeerCertID) error {
 	select {
 	case <-ctx.Done():
 		return fmt.Errorf(
-			"context cancelled while waiting for remove response: %w", context.Cause(ctx),
+			"context canceled while waiting for remove response: %w", context.Cause(ctx),
 		)
 
 	case <-resp:

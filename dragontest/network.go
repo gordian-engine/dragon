@@ -13,6 +13,7 @@ import (
 	"github.com/gordian-engine/dragon"
 	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dcert/dcerttest"
+	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/dview/dviewrand"
 	"github.com/gordian-engine/dragon/internal/dtest"
 	"github.com/quic-go/quic-go"
@@ -27,6 +28,16 @@ type Network struct {
 	Nodes []NetworkNode
 
 	Chains []dcert.Chain
+
+	// Slice of receive-only channels broadcasting
+	// new connections for the node at the same index.
+	//
+	// The corresponding element in this slice is only populated
+	// if [NewNetwork] had to provide a default NewConnections value
+	// on the injected [dragon.NodeConfig].
+	// In other words, the element will be nil if the configCreator
+	// passed to NewNetwork provided its own NewConnections value.
+	NewConnections []<-chan dconn.Conn
 }
 
 // NetworkNode contains the details for a node in this test network.
@@ -147,6 +158,7 @@ func NewNetwork(
 
 	nodes := make([]NetworkNode, len(cfgs))
 	chains := make([]dcert.Chain, len(cfgs))
+	nwNewConns := make([]<-chan dconn.Conn, len(cfgs))
 	for i, ca := range cas {
 		// Create listener first.
 		uc, err := net.ListenUDP("udp", &net.UDPAddr{
@@ -197,6 +209,13 @@ func NewNetwork(
 			TrustedCAs: initialCACerts,
 		})
 
+		if nc.NewConnections == nil {
+			// Decently sized buffered channel by default.
+			newConns := make(chan dconn.Conn, 16)
+			nc.NewConnections = newConns
+			nwNewConns[i] = newConns
+		}
+
 		n, err := dragon.NewNode(ctx, log.With("node", i), nc)
 		require.NoError(t, err)
 
@@ -213,6 +232,8 @@ func NewNetwork(
 		Log:    log,
 		Nodes:  nodes,
 		Chains: chains,
+
+		NewConnections: nwNewConns,
 	}
 }
 

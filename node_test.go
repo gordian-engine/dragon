@@ -12,6 +12,7 @@ import (
 
 	"github.com/gordian-engine/dragon"
 	"github.com/gordian-engine/dragon/dcert/dcerttest"
+	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/dragontest"
 	"github.com/gordian-engine/dragon/dview"
 	"github.com/gordian-engine/dragon/dview/dviewrand"
@@ -61,6 +62,8 @@ func TestNewNode(t *testing.T) {
 
 		ViewManager:   dviewtest.DenyingManager{},
 		ShuffleSignal: make(chan struct{}),
+
+		NewConnections: make(chan dconn.Conn, 8),
 	})
 
 	require.NoError(t, err)
