@@ -1,4 +1,4 @@
-package dps
+package dpeerset
 
 import (
 	"bytes"
@@ -11,13 +11,13 @@ import (
 	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/internal/dmsg"
+	"github.com/gordian-engine/dragon/internal/dpeerset/dfanout"
 	"github.com/gordian-engine/dragon/internal/dproto"
-	"github.com/gordian-engine/dragon/internal/dps/dfanout"
 	"github.com/quic-go/quic-go"
 )
 
-// Active handles the network interactions for an active peer set.
-type Active struct {
+// ActiveView handles the network interactions for an active peer set.
+type ActiveView struct {
 	log *slog.Logger
 
 	// Wait group for directly owned goroutines.
@@ -63,7 +63,7 @@ type (
 	leafSPKI string
 )
 
-type ActiveConfig struct {
+type ActiveViewConfig struct {
 	// Number of seed goroutines to run.
 	// In this context, a seeder is the buffer between
 	// the kernel goroutine (whose contention we want to minimize)
@@ -100,7 +100,7 @@ type ActiveConfig struct {
 	NewConnections chan<- dconn.Conn
 }
 
-func NewActivePeerSet(ctx context.Context, log *slog.Logger, cfg ActiveConfig) *Active {
+func NewActivePeerSet(ctx context.Context, log *slog.Logger, cfg ActiveViewConfig) *ActiveView {
 	if cfg.NewConnections == nil {
 		panic(errors.New("BUG: cfg.NewConnections must not be nil"))
 	}
@@ -108,7 +108,7 @@ func NewActivePeerSet(ctx context.Context, log *slog.Logger, cfg ActiveConfig) *
 	seeders := max(2, cfg.Seeders)
 	workers := max(4, cfg.Workers)
 
-	a := &Active{
+	a := &ActiveView{
 		log: log,
 
 		// Not trying to pre-size these, for now at least.
@@ -170,12 +170,12 @@ func NewActivePeerSet(ctx context.Context, log *slog.Logger, cfg ActiveConfig) *
 	return a
 }
 
-func (a *Active) Wait() {
+func (a *ActiveView) Wait() {
 	a.processorWG.Wait()
 	a.wg.Wait()
 }
 
-func (a *Active) mainLoop(ctx context.Context) {
+func (a *ActiveView) mainLoop(ctx context.Context) {
 	defer a.wg.Done()
 
 	for {
@@ -212,7 +212,7 @@ func (a *Active) mainLoop(ctx context.Context) {
 // Add adds the given peer to the active set.
 // An error is only returned if the given context was canceled
 // before the add operation completes.
-func (a *Active) Add(ctx context.Context, p Peer) error {
+func (a *ActiveView) Add(ctx context.Context, p Peer) error {
 	resp := make(chan struct{})
 	req := addRequest{
 		IPeer: p.toInternal(),
@@ -241,7 +241,7 @@ func (a *Active) Add(ctx context.Context, p Peer) error {
 	}
 }
 
-func (a *Active) handleAddRequest(ctx context.Context, req addRequest) {
+func (a *ActiveView) handleAddRequest(ctx context.Context, req addRequest) {
 	if _, ok := a.byCASPKI[req.IPeer.CASPKI]; ok {
 		// We might not want to panic here if and when allowing active connections
 		// to "cousin" peers (who have the same CA and are highly trusted).
@@ -259,8 +259,8 @@ func (a *Active) handleAddRequest(ctx context.Context, req addRequest) {
 		ctx,
 		a.log.With("peer_inbound_processor", req.IPeer.Conn.RemoteAddr().String()),
 		pipConfig{
-			Peer:   req.IPeer.ToPeer(),
-			Active: a,
+			Peer:       req.IPeer.ToPeer(),
+			ActiveView: a,
 
 			DynamicHandlers: 4, // TODO: needs to be configurable.
 		},
@@ -294,7 +294,7 @@ func (a *Active) handleAddRequest(ctx context.Context, req addRequest) {
 // Remove removes the peer with the given ID from the active set.
 // An error is only returned if the given context was canceled
 // before the remove operation completes.
-func (a *Active) Remove(ctx context.Context, pid PeerCertID) error {
+func (a *ActiveView) Remove(ctx context.Context, pid PeerCertID) error {
 	resp := make(chan struct{})
 	req := removeRequest{
 		PCI: pid,
@@ -323,7 +323,7 @@ func (a *Active) Remove(ctx context.Context, pid PeerCertID) error {
 	}
 }
 
-func (a *Active) handleRemoveRequest(req removeRequest) {
+func (a *ActiveView) handleRemoveRequest(req removeRequest) {
 	if _, ok := a.byCASPKI[req.PCI.caSPKI]; !ok {
 		panic(fmt.Errorf(
 			"BUG: attempted to remove peer with CA SPKI %q when none existed",
@@ -345,7 +345,7 @@ func (a *Active) handleRemoveRequest(req removeRequest) {
 	close(req.Resp)
 }
 
-func (a *Active) ForwardJoinToNetwork(
+func (a *ActiveView) ForwardJoinToNetwork(
 	ctx context.Context,
 	m dproto.ForwardJoinMessage,
 	excludeByCA map[string]struct{},
@@ -365,7 +365,7 @@ func (a *Active) ForwardJoinToNetwork(
 	}
 }
 
-func (a *Active) handleForwardJoinToNetwork(ctx context.Context, fj forwardJoinToNetwork) {
+func (a *ActiveView) handleForwardJoinToNetwork(ctx context.Context, fj forwardJoinToNetwork) {
 	streams := make([]quic.Stream, 0, len(a.byCASPKI))
 	for spki, p := range a.byCASPKI {
 		if _, ok := fj.Exclude[string(spki)]; ok {
@@ -399,7 +399,7 @@ func (a *Active) handleForwardJoinToNetwork(ctx context.Context, fj forwardJoinT
 
 // InitiateShuffle enqueues a task to send the given shuffle entries
 // to the destination peer given by its CA SPKI.
-func (a *Active) InitiateShuffle(
+func (a *ActiveView) InitiateShuffle(
 	ctx context.Context,
 	dstChain dcert.Chain,
 	entries []dproto.ShuffleEntry,
@@ -422,7 +422,7 @@ func (a *Active) InitiateShuffle(
 	}
 }
 
-func (a *Active) handleInitiatedShuffle(ctx context.Context, is initiatedShuffle) {
+func (a *ActiveView) handleInitiatedShuffle(ctx context.Context, is initiatedShuffle) {
 	p, ok := a.byCASPKI[caSPKI(is.DstCASPKI)]
 	if !ok {
 		a.log.Warn(
@@ -451,7 +451,7 @@ func (a *Active) handleInitiatedShuffle(ctx context.Context, is initiatedShuffle
 	}
 }
 
-func (a *Active) SendShuffleReply(
+func (a *ActiveView) SendShuffleReply(
 	ctx context.Context,
 	s quic.Stream,
 	entries []dproto.ShuffleEntry,

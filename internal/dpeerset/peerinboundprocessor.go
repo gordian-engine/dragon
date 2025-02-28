@@ -1,4 +1,4 @@
-package dps
+package dpeerset
 
 import (
 	"context"
@@ -52,7 +52,7 @@ type pipConfig struct {
 	Peer Peer
 
 	// The owner of the peerInboundProcessor.
-	Active *Active
+	ActiveView *ActiveView
 
 	// How many dynamic handlers to run.
 	// Dynamic handlers are goroutines that do initial handling of new QUIC streams.
@@ -78,10 +78,10 @@ func newPeerInboundProcessor(
 
 		peer: cfg.Peer,
 
-		forwardJoinsFromNetwork: cfg.Active.forwardJoinsFromNetwork,
-		shufflesFromPeers:       cfg.Active.shufflesFromPeers,
+		forwardJoinsFromNetwork: cfg.ActiveView.forwardJoinsFromNetwork,
+		shufflesFromPeers:       cfg.ActiveView.shufflesFromPeers,
 
-		mainLoopWG: &cfg.Active.processorWG,
+		mainLoopWG: &cfg.ActiveView.processorWG,
 
 		cancel: cancel,
 	}

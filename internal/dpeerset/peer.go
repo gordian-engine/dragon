@@ -1,4 +1,4 @@
-package dps
+package dpeerset
 
 import (
 	"github.com/gordian-engine/dragon/daddr"
