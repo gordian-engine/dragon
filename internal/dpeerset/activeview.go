@@ -13,6 +13,7 @@ import (
 	"github.com/gordian-engine/dragon/internal/dmsg"
 	"github.com/gordian-engine/dragon/internal/dpeerset/dfanout"
 	"github.com/gordian-engine/dragon/internal/dproto"
+	"github.com/gordian-engine/dragon/internal/dqw"
 	"github.com/quic-go/quic-go"
 )
 
@@ -257,6 +258,9 @@ func (a *ActiveView) handleAddRequest(ctx context.Context, req addRequest) {
 		))
 	}
 
+	// Channel for the peerInboundProcessor to send to the application connection.
+	appStreams := make(chan *dqw.Stream, 4) // TODO: what is the right size?
+
 	a.byCASPKI[req.IPeer.CASPKI] = req.IPeer
 	a.byLeafSPKI[req.IPeer.LeafSPKI] = req.IPeer
 
@@ -269,6 +273,8 @@ func (a *ActiveView) handleAddRequest(ctx context.Context, req addRequest) {
 			ActiveView: a,
 
 			DynamicHandlers: 4, // TODO: needs to be configurable.
+
+			ApplicationStreams: appStreams,
 		},
 	)
 
@@ -282,7 +288,12 @@ func (a *ActiveView) handleAddRequest(ctx context.Context, req addRequest) {
 	// We expect the other end of the channel to be actively reading,
 	// or at least to have buffered the channel.
 	newConn := dconn.Conn{
-		QUIC:  req.IPeer.Conn,
+		// For this application-layer connection,
+		// we must make sure their AcceptStream calls
+		// do not interfere with our protocol layer AcceptStream;
+		// hence the dqw wrapper.
+		QUIC: dqw.NewConn(req.IPeer.Conn, appStreams),
+
 		Chain: req.IPeer.Chain,
 
 		LeavingActiveView: leavingCh,

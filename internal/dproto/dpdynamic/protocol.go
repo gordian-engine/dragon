@@ -33,6 +33,8 @@ func (c Config) Now() time.Time {
 
 type Result struct {
 	ShuffleMessage *dproto.ShuffleMessage
+
+	ApplicationProtocolID uint8
 }
 
 func (p *Protocol) Run(ctx context.Context, s quic.Stream) (Result, error) {

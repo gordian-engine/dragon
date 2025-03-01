@@ -2,6 +2,7 @@ package dqw
 
 import (
 	"context"
+	"fmt"
 	"net"
 
 	"github.com/quic-go/quic-go"
@@ -14,13 +15,30 @@ import (
 // about the behavior of every method.
 type Conn struct {
 	q quic.Connection
+
+	streams <-chan *Stream
+}
+
+func NewConn(q quic.Connection, incomingStreams <-chan *Stream) *Conn {
+	return &Conn{
+		q:       q,
+		streams: incomingStreams,
+	}
 }
 
 var _ quic.Connection = (*Conn)(nil)
 
 // AcceptStream implements [quic.Connection].
 func (c *Conn) AcceptStream(ctx context.Context) (quic.Stream, error) {
-	panic("TODO: need to coordinate with internal packages")
+	select {
+	case <-ctx.Done():
+		return nil, fmt.Errorf(
+			"context canceled while waiting to accept stream: %w",
+			context.Cause(ctx),
+		)
+	case s := <-c.streams:
+		return s, nil
+	}
 }
 
 // AcceptUniStream implements [quic.Connection].
@@ -39,7 +57,7 @@ func (c *Conn) OpenStream() (quic.Stream, error) {
 		return nil, err
 	}
 
-	return newStream(s), nil
+	return NewStream(s, 0), nil
 }
 
 // OpenStreamSync implements [quic.Connection].
@@ -50,7 +68,7 @@ func (c *Conn) OpenStreamSync(ctx context.Context) (quic.Stream, error) {
 		return nil, err
 	}
 
-	return newStream(s), nil
+	return NewStream(s, 0), nil
 }
 
 // OpenUniStream implements [quic.Connection].

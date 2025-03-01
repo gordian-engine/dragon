@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"net"
 	"testing"
@@ -158,6 +159,7 @@ func TestNode_DialAndJoin_accept(t *testing.T) {
 		t, ctx,
 		[]dcerttest.CAConfig{dcerttest.FastConfig(), dcerttest.FastConfig()},
 		func(_ int, c dragontest.NodeConfig) dragon.NodeConfig {
+			// TODO: extract this function.
 			out := c.ToDragonNodeConfig()
 
 			// Explicitly accept join requests.
@@ -264,6 +266,7 @@ func TestNode_forwardJoin(t *testing.T) {
 		t, ctx,
 		[]dcerttest.CAConfig{dcerttest.FastConfig(), dcerttest.FastConfig(), dcerttest.FastConfig()},
 		func(_ int, c dragontest.NodeConfig) dragon.NodeConfig {
+			// TODO: extract this function.
 			out := c.ToDragonNodeConfig()
 
 			// Explicitly accept join requests.
@@ -455,4 +458,68 @@ func TestNode_shuffle(t *testing.T) {
 
 	// Allow some background work in case anything is going to panic here.
 	time.Sleep(20 * time.Millisecond)
+}
+
+func TestNode_applicationStreams(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	nw := dragontest.NewNetwork(
+		t, ctx,
+		[]dcerttest.CAConfig{dcerttest.FastConfig(), dcerttest.FastConfig()},
+		func(_ int, c dragontest.NodeConfig) dragon.NodeConfig {
+			// TODO: extract this function.
+			out := c.ToDragonNodeConfig()
+
+			// Explicitly accept join requests.
+			out.ViewManager = dviewrand.New(
+				dtest.NewLogger(t).With("node_sys", "view_manager"),
+				dviewrand.Config{
+					ActiveViewSize:  4,
+					PassiveViewSize: 8,
+
+					RNG: rand.New(rand.NewPCG(10, 20)), // Arbitrary fixed seed for this test.
+				},
+			)
+
+			return out
+		},
+	)
+	defer nw.Wait()
+	defer cancel()
+
+	require.NoError(t, nw.Nodes[0].Node.DialAndJoin(ctx, nw.Nodes[1].UDP.LocalAddr()))
+
+	conn0 := dtest.ReceiveSoon(t, nw.NewConnections[0])
+	conn1 := dtest.ReceiveSoon(t, nw.NewConnections[1])
+
+	// It's fine for us to open the stream and write to it
+	// before the other connection is attempting to accept the stream.
+	s01, err := conn0.QUIC.OpenStreamSync(ctx)
+	require.NoError(t, err)
+
+	require.NoError(t, s01.SetWriteDeadline(time.Now().Add(100*time.Millisecond)))
+
+	// We require that the first byte written is >= 128,
+	// to distinguish application streams from protocol streams.
+	const msg = "\xf0hello"
+
+	_, err = s01.Write([]byte(msg))
+	require.NoError(t, err)
+
+	s10, err := conn1.QUIC.AcceptStream(ctx)
+	require.NoError(t, err)
+
+	require.NoError(t, s10.SetReadDeadline(time.Now().Add(50*time.Millisecond)))
+
+	buf := make([]byte, len(msg))
+	_, err = io.ReadFull(s10, buf[:])
+	require.NoError(t, err)
+
+	require.Equal(t, msg, string(buf))
+
+	// Short delay
+	time.Sleep(50 * time.Millisecond)
 }

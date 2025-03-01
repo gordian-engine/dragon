@@ -12,6 +12,7 @@ import (
 	"github.com/gordian-engine/dragon/internal/dproto"
 	"github.com/gordian-engine/dragon/internal/dproto/dpadmission"
 	"github.com/gordian-engine/dragon/internal/dproto/dpdynamic"
+	"github.com/gordian-engine/dragon/internal/dqw"
 	"github.com/quic-go/quic-go"
 )
 
@@ -29,6 +30,10 @@ type peerInboundProcessor struct {
 	forwardJoinsFromNetwork chan<- dmsg.ForwardJoinFromNetwork
 	// Same for shuffles.
 	shufflesFromPeers chan<- dmsg.ShuffleFromPeer
+
+	// Upon accepting a dynamic stream and identifying it as an application stream,
+	// send it out to this channel, which the application should be consuming.
+	appStreams chan<- *dqw.Stream
 
 	// Wait group for the processor's main loop.
 	// Used by the owning active peer set
@@ -57,6 +62,9 @@ type pipConfig struct {
 	// How many dynamic handlers to run.
 	// Dynamic handlers are goroutines that do initial handling of new QUIC streams.
 	DynamicHandlers int
+
+	// When an application stream is detected, send it on this channel.
+	ApplicationStreams chan<- *dqw.Stream
 }
 
 func newPeerInboundProcessor(
@@ -80,6 +88,8 @@ func newPeerInboundProcessor(
 
 		forwardJoinsFromNetwork: cfg.ActiveView.forwardJoinsFromNetwork,
 		shufflesFromPeers:       cfg.ActiveView.shufflesFromPeers,
+
+		appStreams: cfg.ApplicationStreams,
 
 		mainLoopWG: &cfg.ActiveView.processorWG,
 
@@ -231,7 +241,18 @@ func (p *peerInboundProcessor) handleDynamicStreams(
 			continue
 		}
 
-		// TODO: update dynamic protocol result to allow application streams.
+		if res.ApplicationProtocolID >= 128 { // TODO: this should be a constant somewhere.
+			select {
+			case <-ctx.Done():
+				p.fail(fmt.Errorf(
+					"context canceled while sending stream to application: %w",
+					context.Cause(ctx),
+				))
+				return
+			case p.appStreams <- dqw.NewStream(s, res.ApplicationProtocolID):
+				continue
+			}
+		}
 
 		panic(fmt.Errorf(
 			"BUG: dynamic protocol accepted but unhandled with result: %v",
