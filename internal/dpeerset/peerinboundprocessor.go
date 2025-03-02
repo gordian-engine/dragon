@@ -12,7 +12,7 @@ import (
 	"github.com/gordian-engine/dragon/internal/dproto"
 	"github.com/gordian-engine/dragon/internal/dproto/dpadmission"
 	"github.com/gordian-engine/dragon/internal/dproto/dpdynamic"
-	"github.com/gordian-engine/dragon/internal/dqw"
+	"github.com/gordian-engine/dragon/internal/dquicwrap"
 	"github.com/quic-go/quic-go"
 )
 
@@ -33,7 +33,7 @@ type peerInboundProcessor struct {
 
 	// Upon accepting a dynamic stream and identifying it as an application stream,
 	// send it out to this channel, which the application should be consuming.
-	appStreams chan<- *dqw.Stream
+	appStreams chan<- *dquicwrap.Stream
 
 	// Wait group for the processor's main loop.
 	// Used by the owning active peer set
@@ -64,7 +64,7 @@ type pipConfig struct {
 	DynamicHandlers int
 
 	// When an application stream is detected, send it on this channel.
-	ApplicationStreams chan<- *dqw.Stream
+	ApplicationStreams chan<- *dquicwrap.Stream
 }
 
 func newPeerInboundProcessor(
@@ -249,7 +249,7 @@ func (p *peerInboundProcessor) handleDynamicStreams(
 					context.Cause(ctx),
 				))
 				return
-			case p.appStreams <- dqw.NewStream(s, res.ApplicationProtocolID):
+			case p.appStreams <- dquicwrap.NewStream(s, res.ApplicationProtocolID):
 				continue
 			}
 		}

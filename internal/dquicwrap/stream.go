@@ -1,4 +1,4 @@
-package dqw
+package dquicwrap
 
 import (
 	"time"
