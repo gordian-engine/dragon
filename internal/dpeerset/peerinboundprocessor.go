@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/internal/dmsg"
 	"github.com/gordian-engine/dragon/internal/dproto"
 	"github.com/gordian-engine/dragon/internal/dproto/dpadmission"
@@ -241,7 +242,7 @@ func (p *peerInboundProcessor) handleDynamicStreams(
 			continue
 		}
 
-		if res.ApplicationProtocolID >= 128 { // TODO: this should be a constant somewhere.
+		if res.ApplicationProtocolID >= dconn.MinAppProtocolID {
 			select {
 			case <-ctx.Done():
 				p.fail(fmt.Errorf(

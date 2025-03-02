@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/gordian-engine/dragon/dconn"
 	"github.com/quic-go/quic-go"
 )
 
@@ -20,7 +21,7 @@ type sendStream struct {
 	q quic.SendStream
 
 	// Track whether this is the first write.
-	// We require that the very first byte is >= 128,
+	// We require that the very first byte is >= [dconn.MinAppProtocolID],
 	// so that the application layer streams
 	// can be handled separately from the protocol layer streams.
 	writtenBefore bool
@@ -37,10 +38,10 @@ func (s *sendStream) StreamID() quic.StreamID {
 // Write implements [quic.SendStream].
 func (s *sendStream) Write(p []byte) (int, error) {
 	if !s.writtenBefore && len(p) > 0 {
-		if p[0] < 128 {
+		if p[0] < dconn.MinAppProtocolID {
 			panic(fmt.Errorf(
-				"BUG: first byte written to application stream must be >= 128 (got %d)",
-				p[0],
+				"BUG: first byte written to application stream must be >= %d (got %d)",
+				dconn.MinAppProtocolID, p[0],
 			))
 		}
 

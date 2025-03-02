@@ -14,7 +14,7 @@ type Conn struct {
 	// As a result, some methods require special treatment.
 	//
 	// In particular, when opening a new bidirectional stream,
-	// the first byte written must be >= 128.
+	// the first byte written must be >= [MinAppProtocolID].
 	// This is so that dragon internals can route accepted streams
 	// to the application layer correctly.
 	//
@@ -38,3 +38,9 @@ type Conn struct {
 	// giving the view manager an opportunity to
 	// set application-specific metadata on the connection.
 }
+
+// The first byte sent on a new stream is the "protocol ID".
+// This value is the lowest allowed byte
+// to ensure that the stream is routed to the application layer
+// through the Conn type.
+const MinAppProtocolID byte = 128

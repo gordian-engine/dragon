@@ -3,6 +3,7 @@ package dquicwrap
 import (
 	"time"
 
+	"github.com/gordian-engine/dragon/dconn"
 	"github.com/quic-go/quic-go"
 )
 
@@ -30,7 +31,7 @@ type Stream struct {
 }
 
 // NewStream returns a new Stream based on the given quic.Stream.
-// If protocolID is >= 128, that byte value
+// If protocolID is >= [dconn.MinAppProtocolID], that byte value
 // will be prepended to the first read;
 // this is an implementation detail in the way dynamic streams are handled.
 func NewStream(q quic.Stream, protocolID byte) *Stream {
@@ -41,6 +42,10 @@ func NewStream(q quic.Stream, protocolID byte) *Stream {
 		},
 
 		prependProtocolID: protocolID,
+
+		// Setting this true to avoid a branch in Read,
+		// if this wrapped stream is somehow not an application stream.
+		hasRead: protocolID < dconn.MinAppProtocolID,
 	}
 }
 
@@ -63,9 +68,7 @@ func (s *Stream) StreamID() quic.StreamID {
 // and move this declaration to that type.
 func (s *Stream) Read(p []byte) (int, error) {
 	didPrepend := false
-	if !s.hasRead && len(p) > 0 && s.prependProtocolID >= 128 {
-		// TODO: 128 should be a constant somewhere.
-
+	if !s.hasRead && len(p) > 0 && s.prependProtocolID >= dconn.MinAppProtocolID {
 		p[0] = s.prependProtocolID
 		s.hasRead = true
 		p = p[1:]

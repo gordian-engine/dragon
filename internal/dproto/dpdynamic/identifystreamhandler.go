@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 
+	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/internal/dproto"
 	"github.com/quic-go/quic-go"
 )
@@ -33,7 +34,10 @@ func (h identifyStreamHandler) Handle(
 		return nil, fmt.Errorf("failed to read protocol type: %w", err)
 	}
 
-	if single[0] >= 128 { // TODO: this should be a constant somewhere.
+	if single[0] >= dconn.MinAppProtocolID {
+		// We are done handling.
+		// Setting res.ApplicationProtocolID indicates that this stream
+		// will be routed to the application instead of handled internally.
 		res.ApplicationProtocolID = single[0]
 		return nil, nil
 	}
