@@ -8,6 +8,7 @@ import (
 	"github.com/gordian-engine/dragon/internal/dpeerset"
 	"github.com/gordian-engine/dragon/internal/dpeerset/dpeersettest"
 	"github.com/gordian-engine/dragon/internal/dquictest"
+	"github.com/gordian-engine/dragon/internal/dqw"
 	"github.com/gordian-engine/dragon/internal/dtest"
 	"github.com/stretchr/testify/require"
 )
@@ -48,7 +49,13 @@ func TestActiveView_NewConnections(t *testing.T) {
 	require.NoError(t, av.Add(ctx, peer))
 
 	nc := dtest.ReceiveSoon(t, fx.NewConnections)
-	require.Equal(t, conn, nc.QUIC)
+
+	// We can't use simple equality since the connection we received
+	// is wrapped -- the connections exposed to the application layer
+	// have some restrictions not present on plain quic.Connections.
+	wrappedConn := nc.QUIC.(*dqw.Conn)
+	require.True(t, wrappedConn.WrapsConnection(conn))
+
 	require.Equal(t, leaf.Chain, nc.Chain)
 
 	// The channel isn't closed yet, of course.

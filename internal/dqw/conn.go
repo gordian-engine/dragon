@@ -26,6 +26,12 @@ func NewConn(q quic.Connection, incomingStreams <-chan *Stream) *Conn {
 	}
 }
 
+// WrapsConnection reports whether c is wrapping conn.
+// This is only intended for tests.
+func (c *Conn) WrapsConnection(conn quic.Connection) bool {
+	return c.q == conn
+}
+
 var _ quic.Connection = (*Conn)(nil)
 
 // AcceptStream implements [quic.Connection].
