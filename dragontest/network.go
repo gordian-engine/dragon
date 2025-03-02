@@ -112,7 +112,6 @@ func NewDefaultNetwork(t *testing.T, ctx context.Context, cfgs ...dcerttest.CACo
 	return NewNetwork(t, ctx, cfgs, func(_ int, nc NodeConfig) dragon.NodeConfig {
 		out := nc.ToDragonNodeConfig()
 
-		// TODO: this should switch to accepting by default.
 		out.ViewManager = dviewrand.New(log.With("node_sys", "view_manager"), dviewrand.Config{
 			ActiveViewSize:  len(cfgs),
 			PassiveViewSize: 2 * len(cfgs),

@@ -155,26 +155,9 @@ func TestNode_DialAndJoin_accept(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	nw := dragontest.NewNetwork(
+	nw := dragontest.NewDefaultNetwork(
 		t, ctx,
-		[]dcerttest.CAConfig{dcerttest.FastConfig(), dcerttest.FastConfig()},
-		func(_ int, c dragontest.NodeConfig) dragon.NodeConfig {
-			// TODO: extract this function.
-			out := c.ToDragonNodeConfig()
-
-			// Explicitly accept join requests.
-			out.ViewManager = dviewrand.New(
-				dtest.NewLogger(t).With("node_sys", "view_manager"),
-				dviewrand.Config{
-					ActiveViewSize:  4,
-					PassiveViewSize: 8,
-
-					RNG: rand.New(rand.NewPCG(10, 20)), // Arbitrary fixed seed for this test.
-				},
-			)
-
-			return out
-		},
+		dcerttest.FastConfig(), dcerttest.FastConfig(),
 	)
 	defer nw.Wait()
 	defer cancel()
@@ -262,26 +245,9 @@ func TestNode_forwardJoin(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	nw := dragontest.NewNetwork(
+	nw := dragontest.NewDefaultNetwork(
 		t, ctx,
-		[]dcerttest.CAConfig{dcerttest.FastConfig(), dcerttest.FastConfig(), dcerttest.FastConfig()},
-		func(_ int, c dragontest.NodeConfig) dragon.NodeConfig {
-			// TODO: extract this function.
-			out := c.ToDragonNodeConfig()
-
-			// Explicitly accept join requests.
-			out.ViewManager = dviewrand.New(
-				dtest.NewLogger(t).With("node_sys", "view_manager"),
-				dviewrand.Config{
-					ActiveViewSize:  4,
-					PassiveViewSize: 8,
-
-					RNG: rand.New(rand.NewPCG(10, 20)), // Arbitrary fixed seed for this test.
-				},
-			)
-
-			return out
-		},
+		dcerttest.FastConfig(), dcerttest.FastConfig(), dcerttest.FastConfig(),
 	)
 	defer nw.Wait()
 	defer cancel()
@@ -466,26 +432,9 @@ func TestNode_applicationStreams(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	nw := dragontest.NewNetwork(
+	nw := dragontest.NewDefaultNetwork(
 		t, ctx,
-		[]dcerttest.CAConfig{dcerttest.FastConfig(), dcerttest.FastConfig()},
-		func(_ int, c dragontest.NodeConfig) dragon.NodeConfig {
-			// TODO: extract this function.
-			out := c.ToDragonNodeConfig()
-
-			// Explicitly accept join requests.
-			out.ViewManager = dviewrand.New(
-				dtest.NewLogger(t).With("node_sys", "view_manager"),
-				dviewrand.Config{
-					ActiveViewSize:  4,
-					PassiveViewSize: 8,
-
-					RNG: rand.New(rand.NewPCG(10, 20)), // Arbitrary fixed seed for this test.
-				},
-			)
-
-			return out
-		},
+		dcerttest.FastConfig(), dcerttest.FastConfig(),
 	)
 	defer nw.Wait()
 	defer cancel()
