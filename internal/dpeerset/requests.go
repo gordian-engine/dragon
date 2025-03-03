@@ -1,7 +1,7 @@
 package dpeerset
 
 import (
-	"github.com/gordian-engine/dragon/internal/dproto"
+	"github.com/gordian-engine/dragon/internal/dprotoi"
 )
 
 // addRequest is a request to add a peer to the active peer set.
@@ -20,7 +20,7 @@ type removeRequest struct {
 }
 
 type forwardJoinToNetwork struct {
-	Msg dproto.ForwardJoinMessage
+	Msg dprotoi.ForwardJoinMessage
 
 	// Exclude peers by their CA certificate's SPKI.
 	Exclude map[string]struct{}
@@ -28,5 +28,5 @@ type forwardJoinToNetwork struct {
 
 type initiatedShuffle struct {
 	DstCASPKI string
-	Entries   []dproto.ShuffleEntry
+	Entries   []dprotoi.ShuffleEntry
 }

@@ -4,7 +4,7 @@ import (
 	"crypto/x509"
 
 	"github.com/gordian-engine/dragon/dcert"
-	"github.com/gordian-engine/dragon/internal/dproto"
+	"github.com/gordian-engine/dragon/internal/dprotoi"
 	"github.com/quic-go/quic-go"
 )
 
@@ -14,7 +14,7 @@ import (
 // The dk package already depends on this package,
 // so we declare this request type here.
 type ForwardJoinFromNetwork struct {
-	Msg dproto.ForwardJoinMessage
+	Msg dprotoi.ForwardJoinMessage
 
 	// We received this request from an active peer,
 	// so we track who sent it to us,
@@ -32,7 +32,7 @@ type ShuffleFromPeer struct {
 
 	Stream quic.Stream
 
-	Msg dproto.ShuffleMessage
+	Msg dprotoi.ShuffleMessage
 }
 
 // ShuffleReplyFromPeer is a shuffle message that a peer sent
@@ -40,5 +40,5 @@ type ShuffleFromPeer struct {
 type ShuffleReplyFromPeer struct {
 	Src dcert.Chain
 
-	Msg dproto.ShuffleReplyMessage
+	Msg dprotoi.ShuffleReplyMessage
 }

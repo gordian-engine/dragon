@@ -12,7 +12,7 @@ import (
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/internal/dmsg"
 	"github.com/gordian-engine/dragon/internal/dpeerset/dfanout"
-	"github.com/gordian-engine/dragon/internal/dproto"
+	"github.com/gordian-engine/dragon/internal/dprotoi"
 	"github.com/gordian-engine/dragon/internal/dquicwrap"
 	"github.com/quic-go/quic-go"
 )
@@ -379,7 +379,7 @@ func (a *ActiveView) handleRemoveRequest(req removeRequest) {
 
 func (a *ActiveView) ForwardJoinToNetwork(
 	ctx context.Context,
-	m dproto.ForwardJoinMessage,
+	m dprotoi.ForwardJoinMessage,
 	excludeByCA map[string]struct{},
 ) error {
 	select {
@@ -434,7 +434,7 @@ func (a *ActiveView) handleForwardJoinToNetwork(ctx context.Context, fj forwardJ
 func (a *ActiveView) InitiateShuffle(
 	ctx context.Context,
 	dstChain dcert.Chain,
-	entries []dproto.ShuffleEntry,
+	entries []dprotoi.ShuffleEntry,
 ) error {
 	// The input here is effectively the final message,
 	// so we can just enqueue it as a work item.
@@ -465,7 +465,7 @@ func (a *ActiveView) handleInitiatedShuffle(ctx context.Context, is initiatedShu
 
 	os := dfanout.WorkOutboundShuffle{
 		Chain: p.Chain,
-		Msg: dproto.ShuffleMessage{
+		Msg: dprotoi.ShuffleMessage{
 			Entries: is.Entries,
 		},
 
@@ -486,10 +486,10 @@ func (a *ActiveView) handleInitiatedShuffle(ctx context.Context, is initiatedShu
 func (a *ActiveView) SendShuffleReply(
 	ctx context.Context,
 	s quic.Stream,
-	entries []dproto.ShuffleEntry,
+	entries []dprotoi.ShuffleEntry,
 ) {
 	reply := dfanout.WorkOutboundShuffleReply{
-		Msg: dproto.ShuffleReplyMessage{
+		Msg: dprotoi.ShuffleReplyMessage{
 			Entries: entries,
 		},
 		Stream: s,

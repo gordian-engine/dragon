@@ -3,7 +3,7 @@ package dfanout
 import (
 	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/internal/dmsg"
-	"github.com/gordian-engine/dragon/internal/dproto"
+	"github.com/gordian-engine/dragon/internal/dprotoi"
 	"github.com/quic-go/quic-go"
 )
 
@@ -44,7 +44,7 @@ func NewWorkChannels(chanSz int) WorkChannels {
 // Then one fanout worker encodes the message into a byte slice,
 // and fans it out to all fanout workers through the work channels.
 type SeedForwardJoin struct {
-	Msg dproto.ForwardJoinMessage
+	Msg dprotoi.ForwardJoinMessage
 
 	Streams []quic.Stream
 }
@@ -63,7 +63,7 @@ type WorkForwardJoin struct {
 // The worker is responsible for creating the ephemeral stream
 // for the shuffle.
 type WorkOutboundShuffle struct {
-	Msg dproto.ShuffleMessage
+	Msg dprotoi.ShuffleMessage
 
 	Conn quic.Connection
 
@@ -79,7 +79,7 @@ type WorkOutboundShuffle struct {
 // After sending the reply, the worker is responsible
 // for closing the ephemeral stream.
 type WorkOutboundShuffleReply struct {
-	Msg dproto.ShuffleReplyMessage
+	Msg dprotoi.ShuffleReplyMessage
 
 	Stream quic.Stream
 }

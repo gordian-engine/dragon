@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/gordian-engine/dragon/internal/dmsg"
-	"github.com/gordian-engine/dragon/internal/dproto/dpshuffle"
+	"github.com/gordian-engine/dragon/internal/dprotoi/dpshuffle"
 )
 
 func RunWorker(

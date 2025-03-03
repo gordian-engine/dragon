@@ -4,7 +4,7 @@ import (
 	"github.com/gordian-engine/dragon/daddr"
 	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dview"
-	"github.com/gordian-engine/dragon/internal/dproto"
+	"github.com/gordian-engine/dragon/internal/dprotoi"
 	"github.com/quic-go/quic-go"
 )
 
@@ -28,7 +28,7 @@ type Requests struct {
 // ignore, reject, or accept the join request.
 type JoinRequest struct {
 	Peer dview.ActivePeer
-	Msg  dproto.JoinMessage
+	Msg  dprotoi.JoinMessage
 	Resp chan JoinResponse
 }
 

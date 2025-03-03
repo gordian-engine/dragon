@@ -16,11 +16,11 @@ import (
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/dview"
 	"github.com/gordian-engine/dragon/internal/dk"
-	"github.com/gordian-engine/dragon/internal/dproto"
-	"github.com/gordian-engine/dragon/internal/dproto/dbootstrap/dbsacceptjoin"
-	"github.com/gordian-engine/dragon/internal/dproto/dbootstrap/dbsacceptneighbor"
-	"github.com/gordian-engine/dragon/internal/dproto/dbootstrap/dbsinbound"
-	"github.com/gordian-engine/dragon/internal/dproto/dbootstrap/dbssendjoin"
+	"github.com/gordian-engine/dragon/internal/dprotoi"
+	"github.com/gordian-engine/dragon/internal/dprotoi/dbootstrap/dbsacceptjoin"
+	"github.com/gordian-engine/dragon/internal/dprotoi/dbootstrap/dbsacceptneighbor"
+	"github.com/gordian-engine/dragon/internal/dprotoi/dbootstrap/dbsinbound"
+	"github.com/gordian-engine/dragon/internal/dprotoi/dbootstrap/dbssendjoin"
 	"github.com/quic-go/quic-go"
 )
 
@@ -631,7 +631,7 @@ func (n *Node) acceptConnections(ctx context.Context) {
 
 func (n *Node) handleIncomingJoin(
 	ctx context.Context, qc quic.Connection, qs quic.Stream,
-	chain dcert.Chain, jm dproto.JoinMessage,
+	chain dcert.Chain, jm dprotoi.JoinMessage,
 ) error {
 	// Now we have the advertise address and an admission stream.
 	peer := dview.ActivePeer{
@@ -757,7 +757,7 @@ func (n *Node) handleIncomingJoin(
 func (n *Node) handleIncomingNeighbor(
 	ctx context.Context,
 	qc quic.Connection, qs quic.Stream,
-	chain dcert.Chain, nm dproto.NeighborMessage,
+	chain dcert.Chain, nm dprotoi.NeighborMessage,
 ) error {
 	// We received a neighbor message from the remote.
 	// Next, we have to consult the kernel to decide whether we will accept this neighbor request.

@@ -11,7 +11,7 @@ import (
 
 	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/internal/dk"
-	"github.com/gordian-engine/dragon/internal/dproto/dbootstrap/dbssendneighbor"
+	"github.com/gordian-engine/dragon/internal/dprotoi/dbootstrap/dbssendneighbor"
 	"github.com/quic-go/quic-go"
 )
 

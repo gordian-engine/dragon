@@ -10,7 +10,7 @@ import (
 	"github.com/gordian-engine/dragon/dview"
 	"github.com/gordian-engine/dragon/internal/dmsg"
 	"github.com/gordian-engine/dragon/internal/dpeerset"
-	"github.com/gordian-engine/dragon/internal/dproto"
+	"github.com/gordian-engine/dragon/internal/dprotoi"
 )
 
 type Kernel struct {
@@ -216,7 +216,7 @@ func (k *Kernel) handleJoinRequest(ctx context.Context, req JoinRequest) {
 	// (whether we accepted or disconnected at this point),
 	// so we delegate this to the active peer set.
 
-	msg := dproto.ForwardJoinMessage{
+	msg := dprotoi.ForwardJoinMessage{
 		AA:    req.Msg.AA,
 		Chain: req.Peer.Chain,
 
@@ -363,13 +363,13 @@ func (k *Kernel) initiateShuffle(ctx context.Context) {
 		return
 	}
 
-	// Convert the dview entries to dproto entries.
+	// Convert the dview entries to dprotoi entries.
 	// They are functionally equivalent,
 	// but we will not cross-contaminate the public API
 	// with the internal representation.
-	pses := make([]dproto.ShuffleEntry, len(os.Entries))
+	pses := make([]dprotoi.ShuffleEntry, len(os.Entries))
 	for i, e := range os.Entries {
-		pses[i] = dproto.ShuffleEntry{
+		pses[i] = dprotoi.ShuffleEntry{
 			AA:    e.AA,
 			Chain: e.Chain,
 		}
@@ -386,7 +386,7 @@ func (k *Kernel) initiateShuffle(ctx context.Context) {
 func (k *Kernel) handleShuffleFromPeer(
 	ctx context.Context, sfp dmsg.ShuffleFromPeer,
 ) {
-	// Need to translate the dproto shuffle entries to dview shuffle entries.
+	// Need to translate the dprotoi shuffle entries to dview shuffle entries.
 	entries := make([]dview.ShuffleEntry, 0, len(sfp.Msg.Entries))
 	for _, e := range sfp.Msg.Entries {
 		entries = append(entries, dview.ShuffleEntry{
@@ -402,10 +402,10 @@ func (k *Kernel) handleShuffleFromPeer(
 		))
 	}
 
-	// Now translate the dview entries back to dproto entries again.
-	outbound := make([]dproto.ShuffleEntry, len(got))
+	// Now translate the dview entries back to dprotoi entries again.
+	outbound := make([]dprotoi.ShuffleEntry, len(got))
 	for i, e := range got {
-		outbound[i] = dproto.ShuffleEntry{
+		outbound[i] = dprotoi.ShuffleEntry{
 			AA:    e.AA,
 			Chain: e.Chain,
 		}
@@ -417,7 +417,7 @@ func (k *Kernel) handleShuffleFromPeer(
 func (k *Kernel) handleShuffleReplyFromPeer(
 	ctx context.Context, srfp dmsg.ShuffleReplyFromPeer,
 ) {
-	// Need to translate the dproto shuffle entries to dview shuffle entries.
+	// Need to translate the dprotoi shuffle entries to dview shuffle entries.
 	entries := make([]dview.ShuffleEntry, 0, len(srfp.Msg.Entries))
 	for _, e := range srfp.Msg.Entries {
 		entries = append(entries, dview.ShuffleEntry{

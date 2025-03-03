@@ -10,9 +10,9 @@ import (
 
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/internal/dmsg"
-	"github.com/gordian-engine/dragon/internal/dproto"
-	"github.com/gordian-engine/dragon/internal/dproto/dpadmission"
-	"github.com/gordian-engine/dragon/internal/dproto/dpdynamic"
+	"github.com/gordian-engine/dragon/internal/dprotoi"
+	"github.com/gordian-engine/dragon/internal/dprotoi/dpadmission"
+	"github.com/gordian-engine/dragon/internal/dprotoi/dpdynamic"
 	"github.com/gordian-engine/dragon/internal/dquicwrap"
 	"github.com/quic-go/quic-go"
 )
@@ -265,7 +265,7 @@ func (p *peerInboundProcessor) handleDynamicStreams(
 func (p *peerInboundProcessor) handleShuffleFromPeer(
 	ctx context.Context,
 	s quic.Stream,
-	sm dproto.ShuffleMessage,
+	sm dprotoi.ShuffleMessage,
 ) {
 	// The shuffle message we've parsed needs to go back to the view manager.
 	// So we send it on a channel back to the kernel first,
