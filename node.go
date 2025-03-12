@@ -76,8 +76,8 @@ type NodeConfig struct {
 	ShuffleSignal <-chan struct{}
 
 	// Dragon internals write to this channel
-	// to notify the application of new connections in the active view.
-	NewConnections chan<- dconn.Conn
+	// to notify the application of connection changes in the active view.
+	ConnectionChanges chan<- dconn.Change
 }
 
 // validate panics if there are any illegal settings in the configuration.
@@ -341,7 +341,7 @@ func NewNode(ctx context.Context, log *slog.Logger, cfg NodeConfig) (*Node, erro
 
 		ShuffleSignal: cfg.ShuffleSignal,
 
-		NewConnections: cfg.NewConnections,
+		ConnectionChanges: cfg.ConnectionChanges,
 	})
 
 	baseTLSConf := cfg.customizedTLSConfig(log)

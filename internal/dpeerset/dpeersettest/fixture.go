@@ -24,7 +24,7 @@ type Fixture struct {
 	ForwardJoinsFromNetwork <-chan dmsg.ForwardJoinFromNetwork
 	ShufflesFromPeers       <-chan dmsg.ShuffleFromPeer
 	ShuffleRepliesFromPeers <-chan dmsg.ShuffleReplyFromPeer
-	NewConnections          <-chan dconn.Conn
+	ConnectionChanges       <-chan dconn.Change
 }
 
 func NewFixture(t *testing.T) *Fixture {
@@ -35,7 +35,7 @@ func NewFixture(t *testing.T) *Fixture {
 	forwardJoinsFromNetworkCh := make(chan dmsg.ForwardJoinFromNetwork, 1)
 	shufflesFromPeersCh := make(chan dmsg.ShuffleFromPeer, 1)
 	shuffleRepliesFromPeersCh := make(chan dmsg.ShuffleReplyFromPeer, 1)
-	newConnectionsCh := make(chan dconn.Conn, 1)
+	connectionChangesCh := make(chan dconn.Change, 1)
 
 	cfg := dpeerset.ActiveViewConfig{
 		// Skip Seeders and Workers, they can just use the default value.
@@ -45,7 +45,7 @@ func NewFixture(t *testing.T) *Fixture {
 		ShufflesFromPeers:       shufflesFromPeersCh,
 		ShuffleRepliesFromPeers: shuffleRepliesFromPeersCh,
 
-		NewConnections: newConnectionsCh,
+		ConnectionChanges: connectionChangesCh,
 	}
 
 	return &Fixture{
@@ -55,7 +55,7 @@ func NewFixture(t *testing.T) *Fixture {
 		ForwardJoinsFromNetwork: forwardJoinsFromNetworkCh,
 		ShufflesFromPeers:       shufflesFromPeersCh,
 		ShuffleRepliesFromPeers: shuffleRepliesFromPeersCh,
-		NewConnections:          newConnectionsCh,
+		ConnectionChanges:       connectionChangesCh,
 	}
 }
 

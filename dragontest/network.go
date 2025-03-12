@@ -30,14 +30,14 @@ type Network struct {
 	Chains []dcert.Chain
 
 	// Slice of receive-only channels broadcasting
-	// new connections for the node at the same index.
+	// connection changes for the node at the same index.
 	//
 	// The corresponding element in this slice is only populated
-	// if [NewNetwork] had to provide a default NewConnections value
+	// if [NewNetwork] had to provide a default ConnectionChanges value
 	// on the injected [dragon.NodeConfig].
 	// In other words, the element will be nil if the configCreator
-	// passed to NewNetwork provided its own NewConnections value.
-	NewConnections []<-chan dconn.Conn
+	// passed to NewNetwork provided its own ConnectionChanges value.
+	ConnectionChanges []<-chan dconn.Change
 }
 
 // NetworkNode contains the details for a node in this test network.
@@ -157,7 +157,7 @@ func NewNetwork(
 
 	nodes := make([]NetworkNode, len(cfgs))
 	chains := make([]dcert.Chain, len(cfgs))
-	nwNewConns := make([]<-chan dconn.Conn, len(cfgs))
+	nwConnChanges := make([]<-chan dconn.Change, len(cfgs))
 	for i, ca := range cas {
 		// Create listener first.
 		uc, err := net.ListenUDP("udp", &net.UDPAddr{
@@ -208,11 +208,11 @@ func NewNetwork(
 			TrustedCAs: initialCACerts,
 		})
 
-		if nc.NewConnections == nil {
+		if nc.ConnectionChanges == nil {
 			// Decently sized buffered channel by default.
-			newConns := make(chan dconn.Conn, 16)
-			nc.NewConnections = newConns
-			nwNewConns[i] = newConns
+			changes := make(chan dconn.Change, 16)
+			nc.ConnectionChanges = changes
+			nwConnChanges[i] = changes
 		}
 
 		n, err := dragon.NewNode(ctx, log.With("node", i), nc)
@@ -232,7 +232,7 @@ func NewNetwork(
 		Nodes:  nodes,
 		Chains: chains,
 
-		NewConnections: nwNewConns,
+		ConnectionChanges: nwConnChanges,
 	}
 }
 

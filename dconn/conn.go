@@ -25,18 +25,20 @@ type Conn struct {
 	// Chain is the certificate chain of the peer.
 	Chain dcert.Chain
 
-	// This channel is closed when the connection is
-	// removed from the active view.
-	//
-	// This does not necessarily give the application
-	// a chance to do a clean shutdown on the connection,
-	// although at the protocol layer a proper disconnect message
-	// will be sent automatically.
-	LeavingActiveView <-chan struct{}
-
 	// TODO: we probably need at least one additional field,
 	// giving the view manager an opportunity to
 	// set application-specific metadata on the connection.
+}
+
+// Change is the value meant to be sent on a channel
+// indicating newly added or removed connections.
+type Change struct {
+	// The connection involved in the change.
+	Conn Conn
+
+	// If true, the connection has been added to the view set.
+	// Otherwise, the connection is being removed.
+	Adding bool
 }
 
 // The first byte sent on a new stream is the "protocol ID".

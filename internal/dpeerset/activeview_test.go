@@ -48,22 +48,22 @@ func TestActiveView_NewConnections(t *testing.T) {
 
 	require.NoError(t, av.Add(ctx, peer))
 
-	nc := dtest.ReceiveSoon(t, fx.NewConnections)
+	cc := dtest.ReceiveSoon(t, fx.ConnectionChanges)
 
 	// We can't use simple equality since the connection we received
 	// is wrapped -- the connections exposed to the application layer
 	// have some restrictions not present on plain quic.Connections.
-	wrappedConn := nc.QUIC.(*dquicwrap.Conn)
+	wrappedConn := cc.Conn.QUIC.(*dquicwrap.Conn)
 	require.True(t, wrappedConn.WrapsConnection(conn))
+	require.True(t, cc.Adding)
 
-	require.Equal(t, leaf.Chain, nc.Chain)
-
-	// The channel isn't closed yet, of course.
-	dtest.NotSending(t, nc.LeavingActiveView)
+	require.Equal(t, leaf.Chain, cc.Conn.Chain)
 
 	require.NoError(t, av.Remove(ctx, dpeerset.PeerCertIDFromChain(peer.Chain)))
 
-	// Following the synchronous call to remove,
-	// the channel should immediately be closed.
-	_ = dtest.IsSending(t, nc.LeavingActiveView)
+	cc = dtest.ReceiveSoon(t, fx.ConnectionChanges)
+
+	wrappedConn = cc.Conn.QUIC.(*dquicwrap.Conn)
+	require.True(t, wrappedConn.WrapsConnection(conn))
+	require.False(t, cc.Adding)
 }

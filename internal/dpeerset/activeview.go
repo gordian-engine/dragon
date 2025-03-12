@@ -36,10 +36,9 @@ type ActiveView struct {
 	byCASPKI   map[caSPKI]iPeer
 	byLeafSPKI map[leafSPKI]iPeer
 
-	// The connections we emit through the newConnections channel
-	// have a channel we need to close,
-	// when the connection leaves the active set.
-	onRemove map[leafSPKI]chan<- struct{}
+	// Track the dconn.Conn values we send through the connectionChanges channel,
+	// so that we can send proper remove messages.
+	dconnByLeafSPKI map[leafSPKI]dconn.Conn
 
 	processors map[caSPKI]*peerInboundProcessor
 
@@ -53,7 +52,7 @@ type ActiveView struct {
 	shufflesFromPeers       chan<- dmsg.ShuffleFromPeer
 	shuffleRepliesFromPeers chan<- dmsg.ShuffleReplyFromPeer
 
-	newConnections chan<- dconn.Conn
+	connectionChanges chan<- dconn.Change
 
 	// Depending on the particular message
 	// and whether it needs to be broadcast to all peers
@@ -94,8 +93,8 @@ type ActiveViewConfig struct {
 	// We need to pass it through the kernel to the view manager.
 	ShuffleRepliesFromPeers chan<- dmsg.ShuffleReplyFromPeer
 
-	// When a peer is added to the active view,
-	// a connection is sent on this channel.
+	// When a peer is added to or removed from the active view,
+	// a change value is sent on this channel.
 	//
 	// The active peer set will block on writes to this channel,
 	// so it is recommended that the channel is buffered
@@ -103,12 +102,12 @@ type ActiveViewConfig struct {
 	//
 	// In tests, it may suffice to use a large buffered channel,
 	// to avoid setting up a separate reader goroutine.
-	NewConnections chan<- dconn.Conn
+	ConnectionChanges chan<- dconn.Change
 }
 
 func NewActiveView(ctx context.Context, log *slog.Logger, cfg ActiveViewConfig) *ActiveView {
-	if cfg.NewConnections == nil {
-		panic(errors.New("BUG: cfg.NewConnections must not be nil"))
+	if cfg.ConnectionChanges == nil {
+		panic(errors.New("BUG: cfg.ConnectionChanges must not be nil"))
 	}
 
 	seeders := max(2, cfg.Seeders)
@@ -120,7 +119,8 @@ func NewActiveView(ctx context.Context, log *slog.Logger, cfg ActiveViewConfig) 
 		// Not trying to pre-size these, for now at least.
 		byCASPKI:   map[caSPKI]iPeer{},
 		byLeafSPKI: map[leafSPKI]iPeer{},
-		onRemove:   map[leafSPKI]chan<- struct{}{},
+
+		dconnByLeafSPKI: map[leafSPKI]dconn.Conn{},
 
 		processors: map[caSPKI]*peerInboundProcessor{},
 
@@ -139,7 +139,7 @@ func NewActiveView(ctx context.Context, log *slog.Logger, cfg ActiveViewConfig) 
 		shuffleRepliesFromPeers: cfg.ShuffleRepliesFromPeers,
 
 		// Channels that flow out to the application.
-		newConnections: cfg.NewConnections,
+		connectionChanges: cfg.ConnectionChanges,
 
 		seedChannels: dfanout.NewSeedChannels(2 * seeders),
 		workChannels: dfanout.NewWorkChannels(2 * workers),
@@ -205,7 +205,7 @@ func (a *ActiveView) mainLoop(ctx context.Context) {
 			a.handleAddRequest(ctx, req)
 
 		case req := <-a.removeRequests:
-			a.handleRemoveRequest(req)
+			a.handleRemoveRequest(ctx, req)
 
 		case fj := <-a.forwardJoinsToNetwork:
 			a.handleForwardJoinToNetwork(ctx, fj)
@@ -278,26 +278,23 @@ func (a *ActiveView) handleAddRequest(ctx context.Context, req addRequest) {
 		},
 	)
 
-	leavingCh := make(chan struct{})
-	a.onRemove[req.IPeer.LeafSPKI] = leavingCh
-
 	// Closing the response allows the kernel to unblock.
 	close(req.Resp)
 
 	// Now we need to notify of the new connection.
 	// We expect the other end of the channel to be actively reading,
 	// or at least to have buffered the channel.
+
+	// For this application-layer connection,
+	// we must make sure their AcceptStream calls
+	// do not interfere with our protocol layer AcceptStream;
+	// hence the dquicwrap wrapper.
 	newConn := dconn.Conn{
-		// For this application-layer connection,
-		// we must make sure their AcceptStream calls
-		// do not interfere with our protocol layer AcceptStream;
-		// hence the dquicwrap wrapper.
 		QUIC: dquicwrap.NewConn(req.IPeer.Conn, appStreams),
 
 		Chain: req.IPeer.Chain,
-
-		LeavingActiveView: leavingCh,
 	}
+	a.dconnByLeafSPKI[req.IPeer.LeafSPKI] = newConn
 	select {
 	case <-ctx.Done():
 		a.log.Warn(
@@ -306,7 +303,10 @@ func (a *ActiveView) handleAddRequest(ctx context.Context, req addRequest) {
 		)
 		return
 
-	case a.newConnections <- newConn:
+	case a.connectionChanges <- dconn.Change{
+		Conn:   newConn,
+		Adding: true,
+	}:
 		// Okay.
 	}
 }
@@ -343,7 +343,7 @@ func (a *ActiveView) Remove(ctx context.Context, pid PeerCertID) error {
 	}
 }
 
-func (a *ActiveView) handleRemoveRequest(req removeRequest) {
+func (a *ActiveView) handleRemoveRequest(ctx context.Context, req removeRequest) {
 	if _, ok := a.byCASPKI[req.PCI.caSPKI]; !ok {
 		panic(fmt.Errorf(
 			"BUG: attempted to remove peer with CA SPKI %q when none existed",
@@ -362,17 +362,18 @@ func (a *ActiveView) handleRemoveRequest(req removeRequest) {
 	a.processors[req.PCI.caSPKI].Cancel()
 	delete(a.processors, req.PCI.caSPKI)
 
-	// The connection we emitted on add,
-	// includes a channel that needs to be closed to signify that the connection
-	// is no longer in the active set.
-	//
-	// We have documented the timing of closing this channel
-	// to not follow particular coordination with the connection being closed.
-	// We are currently closing the channel after the connection is closed,
-	// but if there is a compelling reason to close the channel before the connection,
-	// we could swap these.
-	close(a.onRemove[req.PCI.leafSPKI])
-	delete(a.onRemove, req.PCI.leafSPKI)
+	dc := a.dconnByLeafSPKI[req.PCI.leafSPKI]
+	delete(a.dconnByLeafSPKI, req.PCI.leafSPKI)
+
+	select {
+	case <-ctx.Done():
+	// We are closing, so it's fine that we don't send the change.
+	case a.connectionChanges <- dconn.Change{
+		Conn:   dc,
+		Adding: false,
+	}:
+		// Okay.
+	}
 
 	close(req.Resp)
 }

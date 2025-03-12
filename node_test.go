@@ -64,7 +64,7 @@ func TestNewNode(t *testing.T) {
 		ViewManager:   dviewtest.DenyingManager{},
 		ShuffleSignal: make(chan struct{}),
 
-		NewConnections: make(chan dconn.Conn, 8),
+		ConnectionChanges: make(chan dconn.Change, 8),
 	})
 
 	require.NoError(t, err)
@@ -441,8 +441,8 @@ func TestNode_applicationStreams(t *testing.T) {
 
 	require.NoError(t, nw.Nodes[0].Node.DialAndJoin(ctx, nw.Nodes[1].UDP.LocalAddr()))
 
-	conn0 := dtest.ReceiveSoon(t, nw.NewConnections[0])
-	conn1 := dtest.ReceiveSoon(t, nw.NewConnections[1])
+	conn0 := dtest.ReceiveSoon(t, nw.ConnectionChanges[0]).Conn
+	conn1 := dtest.ReceiveSoon(t, nw.ConnectionChanges[1]).Conn
 
 	// It's fine for us to open the stream and write to it
 	// before the other connection is attempting to accept the stream.

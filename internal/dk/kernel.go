@@ -61,10 +61,10 @@ type KernelConfig struct {
 	// A value sent on this channel indicates that a shuffle is due.
 	ShuffleSignal <-chan struct{}
 
-	// Outgoing channel announcing new connections in the active view.
+	// Outgoing channel announcing connection changes in the active view.
 	// Passed through directly to the active peer set,
 	// otherwise unused in the Kernel.
-	NewConnections chan<- dconn.Conn
+	ConnectionChanges chan<- dconn.Change
 }
 
 func NewKernel(ctx context.Context, log *slog.Logger, cfg KernelConfig) *Kernel {
@@ -108,7 +108,7 @@ func NewKernel(ctx context.Context, log *slog.Logger, cfg KernelConfig) *Kernel 
 				ShufflesFromPeers:       sfps,
 				ShuffleRepliesFromPeers: srfps,
 
-				NewConnections: cfg.NewConnections,
+				ConnectionChanges: cfg.ConnectionChanges,
 			},
 		),
 
