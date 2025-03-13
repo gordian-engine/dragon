@@ -347,26 +347,25 @@ func TestTree_Populate_context_3_leaves(t *testing.T) {
 	}
 
 	tree.Populate(leaves, cbmt.PopulateConfig{
-		Hasher:    sha256Hasher{},
-		Nonce:     []byte("N."),
-		BlockHash: []byte("BH."),
+		Hasher: sha256Hasher{},
+		Nonce:  []byte("N."),
 	})
 
-	expLeaf0 := sha256Hash("N.BH.\x00\x00L.zero")
+	expLeaf0 := sha256Hash("N.\x00\x00L.zero")
 	require.Equal(t, expLeaf0, string(tree.Leaf(0)))
 
-	expLeaf1 := sha256Hash("N.BH.\x00\x01L.one")
+	expLeaf1 := sha256Hash("N.\x00\x01L.one")
 	require.Equal(t, expLeaf1, string(tree.Leaf(1)))
 
-	expLeaf2 := sha256Hash("N.BH.\x00\x02L.two")
+	expLeaf2 := sha256Hash("N.\x00\x02L.two")
 	require.Equal(t, expLeaf2, string(tree.Leaf(2)))
 
 	expNode12 := sha256Hash(
-		"N.BH.\x00\x01Hl." + expLeaf1 + "\x00\x02Hr." + expLeaf2,
+		"N.\x00\x01Hl." + expLeaf1 + "\x00\x02Hr." + expLeaf2,
 	)
 
 	expRoot := sha256Hash(
-		"N.BH.\x00\x00Hl." + expLeaf0 + "\x00\x02Hr." + expNode12,
+		"N.\x00\x00Hl." + expLeaf0 + "\x00\x02Hr." + expNode12,
 	)
 	require.Equal(t, expRoot, string(tree.Root()))
 }
@@ -384,32 +383,31 @@ func TestTree_Populate_context_4_leaves(t *testing.T) {
 	}
 
 	tree.Populate(leaves, cbmt.PopulateConfig{
-		Hasher:    sha256Hasher{},
-		Nonce:     []byte("N."),
-		BlockHash: []byte("BH."),
+		Hasher: sha256Hasher{},
+		Nonce:  []byte("N."),
 	})
 
-	expLeaf0 := sha256Hash("N.BH.\x00\x00L.zero")
+	expLeaf0 := sha256Hash("N.\x00\x00L.zero")
 	require.Equal(t, expLeaf0, string(tree.Leaf(0)))
 
-	expLeaf1 := sha256Hash("N.BH.\x00\x01L.one")
+	expLeaf1 := sha256Hash("N.\x00\x01L.one")
 	require.Equal(t, expLeaf1, string(tree.Leaf(1)))
 
-	expLeaf2 := sha256Hash("N.BH.\x00\x02L.two")
+	expLeaf2 := sha256Hash("N.\x00\x02L.two")
 	require.Equal(t, expLeaf2, string(tree.Leaf(2)))
 
-	expLeaf3 := sha256Hash("N.BH.\x00\x03L.three")
+	expLeaf3 := sha256Hash("N.\x00\x03L.three")
 	require.Equal(t, expLeaf3, string(tree.Leaf(3)))
 
 	expNode01 := sha256Hash(
-		"N.BH.\x00\x00Hl." + expLeaf0 + "\x00\x01Hr." + expLeaf1,
+		"N.\x00\x00Hl." + expLeaf0 + "\x00\x01Hr." + expLeaf1,
 	)
 	expNode23 := sha256Hash(
-		"N.BH.\x00\x02Hl." + expLeaf2 + "\x00\x03Hr." + expLeaf3,
+		"N.\x00\x02Hl." + expLeaf2 + "\x00\x03Hr." + expLeaf3,
 	)
 
 	expRoot := sha256Hash(
-		"N.BH.\x00\x00Hl." + expNode01 + "\x00\x03Hr." + expNode23,
+		"N.\x00\x00Hl." + expNode01 + "\x00\x03Hr." + expNode23,
 	)
 	require.Equal(t, expRoot, string(tree.Root()))
 }
@@ -429,44 +427,43 @@ func TestTree_Populate_context_6_leaves(t *testing.T) {
 	}
 
 	tree.Populate(leaves, cbmt.PopulateConfig{
-		Hasher:    sha256Hasher{},
-		Nonce:     []byte("N."),
-		BlockHash: []byte("BH."),
+		Hasher: sha256Hasher{},
+		Nonce:  []byte("N."),
 	})
 
-	expLeaf0 := sha256Hash("N.BH.\x00\x00L.zero")
+	expLeaf0 := sha256Hash("N.\x00\x00L.zero")
 	require.Equal(t, expLeaf0, string(tree.Leaf(0)))
 
-	expLeaf1 := sha256Hash("N.BH.\x00\x01L.one")
+	expLeaf1 := sha256Hash("N.\x00\x01L.one")
 	require.Equal(t, expLeaf1, string(tree.Leaf(1)))
 
-	expLeaf2 := sha256Hash("N.BH.\x00\x02L.two")
+	expLeaf2 := sha256Hash("N.\x00\x02L.two")
 	require.Equal(t, expLeaf2, string(tree.Leaf(2)))
 
-	expLeaf3 := sha256Hash("N.BH.\x00\x03L.three")
+	expLeaf3 := sha256Hash("N.\x00\x03L.three")
 	require.Equal(t, expLeaf3, string(tree.Leaf(3)))
 
-	expLeaf4 := sha256Hash("N.BH.\x00\x04L.four")
+	expLeaf4 := sha256Hash("N.\x00\x04L.four")
 	require.Equal(t, expLeaf4, string(tree.Leaf(4)))
 
-	expLeaf5 := sha256Hash("N.BH.\x00\x05L.five")
+	expLeaf5 := sha256Hash("N.\x00\x05L.five")
 	require.Equal(t, expLeaf5, string(tree.Leaf(5)))
 
 	expNode01 := sha256Hash(
-		"N.BH.\x00\x00Hl." + expLeaf0 + "\x00\x01Hr." + expLeaf1,
+		"N.\x00\x00Hl." + expLeaf0 + "\x00\x01Hr." + expLeaf1,
 	)
 	expNode23 := sha256Hash(
-		"N.BH.\x00\x02Hl." + expLeaf2 + "\x00\x03Hr." + expLeaf3,
+		"N.\x00\x02Hl." + expLeaf2 + "\x00\x03Hr." + expLeaf3,
 	)
 	expNode45 := sha256Hash(
-		"N.BH.\x00\x04Hl." + expLeaf4 + "\x00\x05Hr." + expLeaf5,
+		"N.\x00\x04Hl." + expLeaf4 + "\x00\x05Hr." + expLeaf5,
 	)
 	expNode2345 := sha256Hash(
-		"N.BH.\x00\x02Hl." + expNode23 + "\x00\x05Hr." + expNode45,
+		"N.\x00\x02Hl." + expNode23 + "\x00\x05Hr." + expNode45,
 	)
 
 	expRoot := sha256Hash(
-		"N.BH.\x00\x00Hl." + expNode01 + "\x00\x05Hr." + expNode2345,
+		"N.\x00\x00Hl." + expNode01 + "\x00\x05Hr." + expNode2345,
 	)
 	require.Equal(t, expRoot, string(tree.Root()))
 }
@@ -488,57 +485,56 @@ func TestTree_Populate_context_8_leaves(t *testing.T) {
 	}
 
 	tree.Populate(leaves, cbmt.PopulateConfig{
-		Hasher:    sha256Hasher{},
-		Nonce:     []byte("N."),
-		BlockHash: []byte("BH."),
+		Hasher: sha256Hasher{},
+		Nonce:  []byte("N."),
 	})
 
-	expLeaf0 := sha256Hash("N.BH.\x00\x00L.zero")
+	expLeaf0 := sha256Hash("N.\x00\x00L.zero")
 	require.Equal(t, expLeaf0, string(tree.Leaf(0)))
 
-	expLeaf1 := sha256Hash("N.BH.\x00\x01L.one")
+	expLeaf1 := sha256Hash("N.\x00\x01L.one")
 	require.Equal(t, expLeaf1, string(tree.Leaf(1)))
 
-	expLeaf2 := sha256Hash("N.BH.\x00\x02L.two")
+	expLeaf2 := sha256Hash("N.\x00\x02L.two")
 	require.Equal(t, expLeaf2, string(tree.Leaf(2)))
 
-	expLeaf3 := sha256Hash("N.BH.\x00\x03L.three")
+	expLeaf3 := sha256Hash("N.\x00\x03L.three")
 	require.Equal(t, expLeaf3, string(tree.Leaf(3)))
 
-	expLeaf4 := sha256Hash("N.BH.\x00\x04L.four")
+	expLeaf4 := sha256Hash("N.\x00\x04L.four")
 	require.Equal(t, expLeaf4, string(tree.Leaf(4)))
 
-	expLeaf5 := sha256Hash("N.BH.\x00\x05L.five")
+	expLeaf5 := sha256Hash("N.\x00\x05L.five")
 	require.Equal(t, expLeaf5, string(tree.Leaf(5)))
 
-	expLeaf6 := sha256Hash("N.BH.\x00\x06L.six")
+	expLeaf6 := sha256Hash("N.\x00\x06L.six")
 	require.Equal(t, expLeaf6, string(tree.Leaf(6)))
 
-	expLeaf7 := sha256Hash("N.BH.\x00\x07L.seven")
+	expLeaf7 := sha256Hash("N.\x00\x07L.seven")
 	require.Equal(t, expLeaf7, string(tree.Leaf(7)))
 
 	expNode01 := sha256Hash(
-		"N.BH.\x00\x00Hl." + expLeaf0 + "\x00\x01Hr." + expLeaf1,
+		"N.\x00\x00Hl." + expLeaf0 + "\x00\x01Hr." + expLeaf1,
 	)
 	expNode23 := sha256Hash(
-		"N.BH.\x00\x02Hl." + expLeaf2 + "\x00\x03Hr." + expLeaf3,
+		"N.\x00\x02Hl." + expLeaf2 + "\x00\x03Hr." + expLeaf3,
 	)
 	expNode0123 := sha256Hash(
-		"N.BH.\x00\x00Hl." + expNode01 + "\x00\x03Hr." + expNode23,
+		"N.\x00\x00Hl." + expNode01 + "\x00\x03Hr." + expNode23,
 	)
 
 	expNode45 := sha256Hash(
-		"N.BH.\x00\x04Hl." + expLeaf4 + "\x00\x05Hr." + expLeaf5,
+		"N.\x00\x04Hl." + expLeaf4 + "\x00\x05Hr." + expLeaf5,
 	)
 	expNode67 := sha256Hash(
-		"N.BH.\x00\x06Hl." + expLeaf6 + "\x00\x07Hr." + expLeaf7,
+		"N.\x00\x06Hl." + expLeaf6 + "\x00\x07Hr." + expLeaf7,
 	)
 	expNode4567 := sha256Hash(
-		"N.BH.\x00\x04Hl." + expNode45 + "\x00\x07Hr." + expNode67,
+		"N.\x00\x04Hl." + expNode45 + "\x00\x07Hr." + expNode67,
 	)
 
 	expRoot := sha256Hash(
-		"N.BH.\x00\x00Hl." + expNode0123 + "\x00\x07Hr." + expNode4567,
+		"N.\x00\x00Hl." + expNode0123 + "\x00\x07Hr." + expNode4567,
 	)
 	require.Equal(t, expRoot, string(tree.Root()))
 }
@@ -554,15 +550,14 @@ func TestTree_GenerateProof_2(t *testing.T) {
 	}
 
 	tree.Populate(leaves, cbmt.PopulateConfig{
-		Hasher:    sha256Hasher{},
-		Nonce:     []byte("N."),
-		BlockHash: []byte("BH."),
+		Hasher: sha256Hasher{},
+		Nonce:  []byte("N."),
 	})
 
-	expLeaf0 := sha256Hash("N.BH.\x00\x00L.zero")
+	expLeaf0 := sha256Hash("N.\x00\x00L.zero")
 	require.Equal(t, expLeaf0, string(tree.Leaf(0)))
 
-	expLeaf1 := sha256Hash("N.BH.\x00\x01L.one")
+	expLeaf1 := sha256Hash("N.\x00\x01L.one")
 	require.Equal(t, expLeaf1, string(tree.Leaf(1)))
 
 	proof0 := tree.GenerateProof(0, nil)
@@ -592,26 +587,25 @@ func TestTree_GenerateProof_3(t *testing.T) {
 	*/
 
 	tree.Populate(leaves, cbmt.PopulateConfig{
-		Hasher:    sha256Hasher{},
-		Nonce:     []byte("N."),
-		BlockHash: []byte("BH."),
+		Hasher: sha256Hasher{},
+		Nonce:  []byte("N."),
 	})
 
-	expLeaf0 := sha256Hash("N.BH.\x00\x00L.zero")
+	expLeaf0 := sha256Hash("N.\x00\x00L.zero")
 	require.Equal(t, expLeaf0, string(tree.Leaf(0)))
 
-	expLeaf1 := sha256Hash("N.BH.\x00\x01L.one")
+	expLeaf1 := sha256Hash("N.\x00\x01L.one")
 	require.Equal(t, expLeaf1, string(tree.Leaf(1)))
 
-	expLeaf2 := sha256Hash("N.BH.\x00\x02L.two")
+	expLeaf2 := sha256Hash("N.\x00\x02L.two")
 	require.Equal(t, expLeaf2, string(tree.Leaf(2)))
 
 	expNode12 := sha256Hash(
-		"N.BH.\x00\x01Hl." + expLeaf1 + "\x00\x02Hr." + expLeaf2,
+		"N.\x00\x01Hl." + expLeaf1 + "\x00\x02Hr." + expLeaf2,
 	)
 
 	expRoot := sha256Hash(
-		"N.BH.\x00\x00Hl." + expLeaf0 + "\x00\x02Hr." + expNode12,
+		"N.\x00\x00Hl." + expLeaf0 + "\x00\x02Hr." + expNode12,
 	)
 	require.Equal(t, expRoot, string(tree.Root()))
 
@@ -638,28 +632,27 @@ func TestTree_GenerateProof_4(t *testing.T) {
 	}
 
 	tree.Populate(leaves, cbmt.PopulateConfig{
-		Hasher:    sha256Hasher{},
-		Nonce:     []byte("N."),
-		BlockHash: []byte("BH."),
+		Hasher: sha256Hasher{},
+		Nonce:  []byte("N."),
 	})
 
-	expLeaf0 := sha256Hash("N.BH.\x00\x00L.zero")
+	expLeaf0 := sha256Hash("N.\x00\x00L.zero")
 	require.Equal(t, expLeaf0, string(tree.Leaf(0)))
 
-	expLeaf1 := sha256Hash("N.BH.\x00\x01L.one")
+	expLeaf1 := sha256Hash("N.\x00\x01L.one")
 	require.Equal(t, expLeaf1, string(tree.Leaf(1)))
 
-	expLeaf2 := sha256Hash("N.BH.\x00\x02L.two")
+	expLeaf2 := sha256Hash("N.\x00\x02L.two")
 	require.Equal(t, expLeaf2, string(tree.Leaf(2)))
 
-	expLeaf3 := sha256Hash("N.BH.\x00\x03L.three")
+	expLeaf3 := sha256Hash("N.\x00\x03L.three")
 	require.Equal(t, expLeaf3, string(tree.Leaf(3)))
 
 	expNode01 := sha256Hash(
-		"N.BH.\x00\x00Hl." + expLeaf0 + "\x00\x01Hr." + expLeaf1,
+		"N.\x00\x00Hl." + expLeaf0 + "\x00\x01Hr." + expLeaf1,
 	)
 	expNode23 := sha256Hash(
-		"N.BH.\x00\x02Hl." + expLeaf2 + "\x00\x03Hr." + expLeaf3,
+		"N.\x00\x02Hl." + expLeaf2 + "\x00\x03Hr." + expLeaf3,
 	)
 
 	proof0 := tree.GenerateProof(0, nil)
@@ -707,40 +700,39 @@ func TestTree_GenerateProof_6_leaves(t *testing.T) {
 	*/
 
 	tree.Populate(leaves, cbmt.PopulateConfig{
-		Hasher:    sha256Hasher{},
-		Nonce:     []byte("N."),
-		BlockHash: []byte("BH."),
+		Hasher: sha256Hasher{},
+		Nonce:  []byte("N."),
 	})
 
-	expLeaf0 := sha256Hash("N.BH.\x00\x00L.zero")
+	expLeaf0 := sha256Hash("N.\x00\x00L.zero")
 	require.Equal(t, expLeaf0, string(tree.Leaf(0)))
 
-	expLeaf1 := sha256Hash("N.BH.\x00\x01L.one")
+	expLeaf1 := sha256Hash("N.\x00\x01L.one")
 	require.Equal(t, expLeaf1, string(tree.Leaf(1)))
 
-	expLeaf2 := sha256Hash("N.BH.\x00\x02L.two")
+	expLeaf2 := sha256Hash("N.\x00\x02L.two")
 	require.Equal(t, expLeaf2, string(tree.Leaf(2)))
 
-	expLeaf3 := sha256Hash("N.BH.\x00\x03L.three")
+	expLeaf3 := sha256Hash("N.\x00\x03L.three")
 	require.Equal(t, expLeaf3, string(tree.Leaf(3)))
 
-	expLeaf4 := sha256Hash("N.BH.\x00\x04L.four")
+	expLeaf4 := sha256Hash("N.\x00\x04L.four")
 	require.Equal(t, expLeaf4, string(tree.Leaf(4)))
 
-	expLeaf5 := sha256Hash("N.BH.\x00\x05L.five")
+	expLeaf5 := sha256Hash("N.\x00\x05L.five")
 	require.Equal(t, expLeaf5, string(tree.Leaf(5)))
 
 	expNode01 := sha256Hash(
-		"N.BH.\x00\x00Hl." + expLeaf0 + "\x00\x01Hr." + expLeaf1,
+		"N.\x00\x00Hl." + expLeaf0 + "\x00\x01Hr." + expLeaf1,
 	)
 	expNode23 := sha256Hash(
-		"N.BH.\x00\x02Hl." + expLeaf2 + "\x00\x03Hr." + expLeaf3,
+		"N.\x00\x02Hl." + expLeaf2 + "\x00\x03Hr." + expLeaf3,
 	)
 	expNode45 := sha256Hash(
-		"N.BH.\x00\x04Hl." + expLeaf4 + "\x00\x05Hr." + expLeaf5,
+		"N.\x00\x04Hl." + expLeaf4 + "\x00\x05Hr." + expLeaf5,
 	)
 	expNode2345 := sha256Hash(
-		"N.BH.\x00\x02Hl." + expNode23 + "\x00\x05Hr." + expNode45,
+		"N.\x00\x02Hl." + expNode23 + "\x00\x05Hr." + expNode45,
 	)
 
 	proof0 := tree.GenerateProof(0, nil)
@@ -786,16 +778,13 @@ func fnv32Hash(in string) []byte {
 // and it does not include prefixes necessary for preimage attack avoidance.
 // But, this simplicity does keep test assertions easier to follow.
 type fnv32Hasher struct {
-	IncludeNonce, IncludeBlockHash bool
+	IncludeNonce bool
 }
 
 func (f fnv32Hasher) Leaf(in []byte, c cbmt.LeafContext, dst []byte) {
 	h := fnv.New32()
 	if f.IncludeNonce {
 		_, _ = h.Write(c.Nonce)
-	}
-	if f.IncludeBlockHash {
-		_, _ = h.Write(c.BlockHash)
 	}
 	_, _ = h.Write(in)
 	h.Sum(dst)
@@ -805,9 +794,6 @@ func (f fnv32Hasher) Node(left, right []byte, n cbmt.NodeContext, dst []byte) {
 	h := fnv.New32()
 	if f.IncludeNonce {
 		_, _ = h.Write(n.Nonce)
-	}
-	if f.IncludeBlockHash {
-		_, _ = h.Write(n.BlockHash)
 	}
 	_, _ = h.Write(left)
 	_, _ = h.Write(right)
@@ -819,7 +805,6 @@ type sha256Hasher struct{}
 func (s sha256Hasher) Leaf(in []byte, c cbmt.LeafContext, dst []byte) {
 	h := sha256.New()
 	_, _ = h.Write(c.Nonce)
-	_, _ = h.Write(c.BlockHash)
 	_, _ = h.Write(c.LeafIndex[:])
 	_, _ = io.WriteString(h, "L.")
 	_, _ = h.Write(in)
@@ -832,7 +817,6 @@ func (s sha256Hasher) Node(left, right []byte, c cbmt.NodeContext, dst []byte) {
 	}
 	h := sha256.New()
 	_, _ = h.Write(c.Nonce)
-	_, _ = h.Write(c.BlockHash)
 	_, _ = h.Write(c.FirstLeafIndex[:])
 	_, _ = io.WriteString(h, "Hl.")
 	_, _ = h.Write(left)

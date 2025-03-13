@@ -65,8 +65,6 @@ type PopulateConfig struct {
 	Hasher Hasher
 
 	Nonce []byte
-
-	BlockHash []byte
 }
 
 // Populate uses the leaf data and the Hasher in the given config
@@ -81,8 +79,7 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) {
 
 	h := cfg.Hasher
 	lc := LeafContext{
-		Nonce:     cfg.Nonce,
-		BlockHash: cfg.BlockHash,
+		Nonce: cfg.Nonce,
 	}
 
 	if t.nLeaves&(t.nLeaves-1) == 0 {
@@ -127,8 +124,7 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) {
 	}
 
 	nc := NodeContext{
-		Nonce:     cfg.Nonce,
-		BlockHash: cfg.BlockHash,
+		Nonce: cfg.Nonce,
 	}
 	for i := uint16(0); i < overflow/2; i++ {
 		leftIdx := uint16(len(leafData)) - overflow + i + i // Two adds might be faster than a multiply.
@@ -156,8 +152,7 @@ func (t *Tree) complete(readStartIdx uint, layerWidth uint16, cfg PopulateConfig
 
 	h := cfg.Hasher
 	nc := NodeContext{
-		Nonce:     cfg.Nonce,
-		BlockHash: cfg.BlockHash,
+		Nonce: cfg.Nonce,
 	}
 
 	// Track when we reach a node that included an overflow,

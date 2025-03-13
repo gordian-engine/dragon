@@ -18,9 +18,6 @@ type LeafContext struct {
 	// The nonce may be nil if the driver chooses to omit it.
 	Nonce []byte
 
-	// The hash of the block, used as further entropy for collision resistance.
-	BlockHash []byte
-
 	// The index of the leaf within the entire tree.
 	// Encoded as a big-endian uint16.
 	LeafIndex [2]byte
@@ -31,9 +28,6 @@ type NodeContext struct {
 	// Optional fixed nonce for every leaf or node.
 	// The nonce may be nil if the driver chooses to omit it.
 	Nonce []byte
-
-	// The hash of the block, used as further entropy for collision resistance.
-	BlockHash []byte
 
 	// The range of leaf indices this node covers, inclusive.
 	// Each is encoded as a big-endian uint16.
