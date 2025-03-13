@@ -1,15 +1,15 @@
-package cbmt
+package bcmerkle
 
 // Hasher is the user-defined interface for hashing leaves and nodes.
 // The [Tree] passes the raw leaf data to the Leaf method to create a leaf node,
 // and it passes raw data from Leaf calls to the Node method.
 //
-// Instead of returning a new byte slice, the Hasher implementation
-// must append its hash output to dst.
+// To be allocation-efficient, the Hasher implementation
+// must append its hash output to dst, instead of creating a new byte slice.
 // Hasher must not retain references to the dst slice.
 type Hasher interface {
 	Leaf(in []byte, c LeafContext, dst []byte)
-	Node(left, right []byte, n NodeContext, dst []byte)
+	Node(left, right []byte, c NodeContext, dst []byte)
 }
 
 // LeafContext is additional context for [Hasher.Leaf].

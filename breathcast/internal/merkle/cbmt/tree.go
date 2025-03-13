@@ -4,6 +4,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math/bits"
+
+	"github.com/gordian-engine/dragon/breathcast/bcmerkle"
 )
 
 // Tree is a right-leaning unbalanced Merkle tree.
@@ -62,7 +64,7 @@ func NewEmptyTree(nLeaves uint16, hashSize int) *Tree {
 
 // PopulateConfig is the configuration used for [*Tree.Populate].
 type PopulateConfig struct {
-	Hasher Hasher
+	Hasher bcmerkle.Hasher
 
 	Nonce []byte
 }
@@ -78,7 +80,7 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) {
 	}
 
 	h := cfg.Hasher
-	lc := LeafContext{
+	lc := bcmerkle.LeafContext{
 		Nonce: cfg.Nonce,
 	}
 
@@ -123,7 +125,7 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) {
 		h.Leaf(leaf, lc, t.nodes[int(overflow)+i][:0])
 	}
 
-	nc := NodeContext{
+	nc := bcmerkle.NodeContext{
 		Nonce: cfg.Nonce,
 	}
 	for i := uint16(0); i < overflow/2; i++ {
@@ -151,7 +153,7 @@ func (t *Tree) complete(readStartIdx uint, layerWidth uint16, cfg PopulateConfig
 	}
 
 	h := cfg.Hasher
-	nc := NodeContext{
+	nc := bcmerkle.NodeContext{
 		Nonce: cfg.Nonce,
 	}
 

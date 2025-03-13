@@ -3,9 +3,10 @@ package cbmt_test
 import (
 	"crypto/sha256"
 	"hash/fnv"
-	"io"
 	"testing"
 
+	"github.com/gordian-engine/dragon/breathcast/bcmerkle"
+	"github.com/gordian-engine/dragon/breathcast/bcmerkle/bcsha256"
 	"github.com/gordian-engine/dragon/breathcast/internal/merkle/cbmt"
 	"github.com/stretchr/testify/require"
 )
@@ -347,7 +348,7 @@ func TestTree_Populate_context_3_leaves(t *testing.T) {
 	}
 
 	tree.Populate(leaves, cbmt.PopulateConfig{
-		Hasher: sha256Hasher{},
+		Hasher: bcsha256.Hasher{},
 		Nonce:  []byte("N."),
 	})
 
@@ -383,7 +384,7 @@ func TestTree_Populate_context_4_leaves(t *testing.T) {
 	}
 
 	tree.Populate(leaves, cbmt.PopulateConfig{
-		Hasher: sha256Hasher{},
+		Hasher: bcsha256.Hasher{},
 		Nonce:  []byte("N."),
 	})
 
@@ -427,7 +428,7 @@ func TestTree_Populate_context_6_leaves(t *testing.T) {
 	}
 
 	tree.Populate(leaves, cbmt.PopulateConfig{
-		Hasher: sha256Hasher{},
+		Hasher: bcsha256.Hasher{},
 		Nonce:  []byte("N."),
 	})
 
@@ -485,7 +486,7 @@ func TestTree_Populate_context_8_leaves(t *testing.T) {
 	}
 
 	tree.Populate(leaves, cbmt.PopulateConfig{
-		Hasher: sha256Hasher{},
+		Hasher: bcsha256.Hasher{},
 		Nonce:  []byte("N."),
 	})
 
@@ -550,7 +551,7 @@ func TestTree_GenerateProof_2(t *testing.T) {
 	}
 
 	tree.Populate(leaves, cbmt.PopulateConfig{
-		Hasher: sha256Hasher{},
+		Hasher: bcsha256.Hasher{},
 		Nonce:  []byte("N."),
 	})
 
@@ -587,7 +588,7 @@ func TestTree_GenerateProof_3(t *testing.T) {
 	*/
 
 	tree.Populate(leaves, cbmt.PopulateConfig{
-		Hasher: sha256Hasher{},
+		Hasher: bcsha256.Hasher{},
 		Nonce:  []byte("N."),
 	})
 
@@ -632,7 +633,7 @@ func TestTree_GenerateProof_4(t *testing.T) {
 	}
 
 	tree.Populate(leaves, cbmt.PopulateConfig{
-		Hasher: sha256Hasher{},
+		Hasher: bcsha256.Hasher{},
 		Nonce:  []byte("N."),
 	})
 
@@ -700,7 +701,7 @@ func TestTree_GenerateProof_6_leaves(t *testing.T) {
 	*/
 
 	tree.Populate(leaves, cbmt.PopulateConfig{
-		Hasher: sha256Hasher{},
+		Hasher: bcsha256.Hasher{},
 		Nonce:  []byte("N."),
 	})
 
@@ -781,7 +782,7 @@ type fnv32Hasher struct {
 	IncludeNonce bool
 }
 
-func (f fnv32Hasher) Leaf(in []byte, c cbmt.LeafContext, dst []byte) {
+func (f fnv32Hasher) Leaf(in []byte, c bcmerkle.LeafContext, dst []byte) {
 	h := fnv.New32()
 	if f.IncludeNonce {
 		_, _ = h.Write(c.Nonce)
@@ -790,38 +791,12 @@ func (f fnv32Hasher) Leaf(in []byte, c cbmt.LeafContext, dst []byte) {
 	h.Sum(dst)
 }
 
-func (f fnv32Hasher) Node(left, right []byte, n cbmt.NodeContext, dst []byte) {
+func (f fnv32Hasher) Node(left, right []byte, c bcmerkle.NodeContext, dst []byte) {
 	h := fnv.New32()
 	if f.IncludeNonce {
-		_, _ = h.Write(n.Nonce)
+		_, _ = h.Write(c.Nonce)
 	}
 	_, _ = h.Write(left)
-	_, _ = h.Write(right)
-	h.Sum(dst)
-}
-
-type sha256Hasher struct{}
-
-func (s sha256Hasher) Leaf(in []byte, c cbmt.LeafContext, dst []byte) {
-	h := sha256.New()
-	_, _ = h.Write(c.Nonce)
-	_, _ = h.Write(c.LeafIndex[:])
-	_, _ = io.WriteString(h, "L.")
-	_, _ = h.Write(in)
-	h.Sum(dst)
-}
-
-func (s sha256Hasher) Node(left, right []byte, c cbmt.NodeContext, dst []byte) {
-	if c.FirstLeafIndex == [2]byte{0, 0} && c.LastLeafIndex == [2]byte{0, 0} {
-		panic("missed node context")
-	}
-	h := sha256.New()
-	_, _ = h.Write(c.Nonce)
-	_, _ = h.Write(c.FirstLeafIndex[:])
-	_, _ = io.WriteString(h, "Hl.")
-	_, _ = h.Write(left)
-	_, _ = h.Write(c.LastLeafIndex[:])
-	_, _ = io.WriteString(h, "Hr.")
 	_, _ = h.Write(right)
 	h.Sum(dst)
 }
