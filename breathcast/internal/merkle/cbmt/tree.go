@@ -66,17 +66,66 @@ func NewEmptyTree(nLeaves uint16, hashSize int) *Tree {
 type PopulateConfig struct {
 	Hasher bcmerkle.Hasher
 
+	// Nonce should be set to an unpredictable value
+	// to reduce the possibility of any collision attacks.
+	// In addition to the unpredictable value,
+	// the caller is free to also add domain-specific data,
+	// such as the block hash in a blockchain setting.
+	//
+	// Consumers of the tree need the same Nonce value
+	// in order to successfully verify Merkle proofs.
+	// Normally, the Nonce value is included in the origination header.
 	Nonce []byte
+
+	// ProofCutoffTier controls both the depth of the returned root proof,
+	// and also the depth of each leaf's proof.
+	//
+	// At tier 0, the root proof only contains one element, the root hash.
+	// At tier 1, the root proof contains the root hash and its immediate children's hashes.
+	//
+	// The leaf proofs never contain the Merkle root hash.
+	// At tier 1, the leaf proofs end at the Merkle root's grandchildren hashes.
+	ProofCutoffTier uint16
+}
+
+// PopulateResult is the result type returned by [*Tree.Populate].
+//
+// The byte slices in the result reference the backing memory for the Tree,
+// so retaining a reference to any of those slices
+// will prevent the tree's backing memory from being garbage collected.
+// Likewise, none of the slices should be modified.
+type PopulateResult struct {
+	// RootProof is the tiered root proof as controlled by [PopulateConfig.ProofCutoffTier].
+	// If the cutoff tier was 0, the root proof will only contain the Merkle tree root hash.
+	// If the cutoff tier was 1, the slice will contain the root hash,
+	// then the root's left child, then the root's right child.
+	// At tier 2, the slice contains the root hash, the root's left child,
+	// the root's right child, the root's leftmost grandchild,
+	// the root's second-leftmost grandchild, and so on until the rightmost grandchild.
+	//
+	// The root proof is intended to be sent in the origination header.
+	RootProof [][]byte
+
+	// The proofs slice is aligned one-to-one with the leafData slice
+	// passed to *Tree.Populate.
+	// The depth of the values in this slice
+	// complement the RootProof slice in order to reconstitute the Tree.
+	Proofs [][][]byte
 }
 
 // Populate uses the leaf data and the Hasher in the given config
 // to populate the entire Merkle tree.
-func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) {
+func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 	if len(leafData) != int(t.nLeaves) {
 		panic(fmt.Errorf(
 			"BUG: initialized with %d leaves, attempted to populate with %d",
 			t.nLeaves, len(leafData),
 		))
+	}
+
+	res := PopulateResult{
+		RootProof: make([][]byte, (1<<(cfg.ProofCutoffTier+1))-1),
+		Proofs:    make([][][]byte, len(leafData)),
 	}
 
 	h := cfg.Hasher
@@ -85,10 +134,29 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) {
 	}
 
 	if t.nLeaves&(t.nLeaves-1) == 0 {
+		treeHeight := uint16(bits.Len16(t.nLeaves))
+		var proofLen uint16
+		if cfg.ProofCutoffTier < treeHeight {
+			proofLen = treeHeight - cfg.ProofCutoffTier - 1 // -1 because we never include root.
+		}
+
 		// Leaves are a power of two, so we don't need special treatment.
 		// Write all the leaves into the first row.
 		for i, leaf := range leafData {
 			h.Leaf(leaf, lc, t.nodes[i][:0])
+
+			// Since we've made the hash for the current leaf,
+			// right-size the proof for its sibling and initialize it.
+			if proofLen > 0 {
+				var siblingIdx int
+				if (i & 1) == 1 {
+					siblingIdx = i - 1
+				} else {
+					siblingIdx = i + 1
+				}
+				res.Proofs[siblingIdx] = make([][]byte, proofLen)
+				res.Proofs[siblingIdx][0] = t.nodes[i]
+			}
 
 			// Manually track the encoded leaf index, which started at zero properly.
 			lc.LeafIndex[1]++
@@ -98,8 +166,8 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) {
 		}
 
 		// Now we can complete the tree with the full leaf row in place.
-		t.complete(0, uint16(len(leafData)), cfg)
-		return
+		t.complete(0, uint16(len(leafData)), cfg, res)
+		return res
 	}
 
 	// Otherwise, there will be some overflow.
@@ -111,18 +179,97 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) {
 	// Whatever number of leaves that won't fit,
 	// we have to double that number
 	// so that we can use pairs of nodes.
-	overflow := 2 * (t.nLeaves - fullLayerWidth)
+	overflow := uint16(t.nLeaves - fullLayerWidth + t.nLeaves - fullLayerWidth) // Avoiding overflow and multiplication here.
+
+	// Memory layout details:
+	//
+	// Counts 5, 6, and 7 cover three interesting cases.
+	// All of those want ot fit in 4 slots,
+	// so they respectively have 2, 4, and 6 leaves in the overflow area,
+	// resulting in a respective 1, 2, or 3 overflow nodes at the tail end
+	// of the 4-node-wide layer.
+	//
+	// Five node layout:
+	//   [3 4] 0 1 2 34 , 01 234, ...
+	//
+	// Six node layout:
+	//   [2 3 4 5] 0 1 23 45 , 01 2345, ...
+	//
+	// Seven node layout:
+	//   [1 2 3 4 5 6] 0 12 34 56 , 012 3456, ...
+	//
+	// This complicates the sibling proofs at this layer.
+	// Since we are working with the memory layout from index zero,
+	// which will necessarily refer to pairs of overflow nodes,
+	// we can actually just treat them pairwise as their own extra proofs.
+	// "Extra" as in they are the extra depth beyond the "fullLayerWidth".
+	//
+	// Then when we are iterating over the "normal leaves" that fit in the normal slots,
+	// an odd normal leaf always has a normal sibling to the left.
+	// But, if the last normal leaf has an even index,
+	// then its sibling to the right is actually the overflow node.
+
+	treeHeightBeforeOverflow := uint16(bits.Len16(t.nLeaves))
+	var proofLen uint16
+	if cfg.ProofCutoffTier < treeHeightBeforeOverflow {
+		proofLen = treeHeightBeforeOverflow - cfg.ProofCutoffTier - 1 // -1 because we never include root.
+	}
 
 	// Overflow leaves get written first.
 	for i, leaf := range leafData[len(leafData)-int(overflow):] {
 		binary.BigEndian.PutUint16(lc.LeafIndex[:], uint16(len(leafData)-int(overflow)+i))
 		h.Leaf(leaf, lc, t.nodes[i][:0])
+
+		// Initialize the proofs for the sibling.
+		proofs := make([][]byte, proofLen+1)
+		proofs[0] = t.nodes[i]
+		curIdx := len(leafData) - int(overflow) + i
+		if (i & 1) == 1 {
+			// Odd sibling so initialize proof for left sibling.
+			res.Proofs[curIdx-1] = proofs
+		} else {
+			// Even sibling so initialize proof for right sibling.
+			res.Proofs[curIdx+1] = proofs
+		}
 	}
 
 	// Then write the earlier leaves.
 	for i, leaf := range leafData[:len(leafData)-int(overflow)] {
 		binary.BigEndian.PutUint16(lc.LeafIndex[:], uint16(i))
-		h.Leaf(leaf, lc, t.nodes[int(overflow)+i][:0])
+
+		nodeIdx := int(overflow) + i
+		h.Leaf(leaf, lc, t.nodes[nodeIdx][:0])
+
+		// i is counting from zero here,
+		// so there no confusing arithmetic on basic even and odd checks.
+		if (i & 1) == 1 {
+			// Odd leaf; we definitely have a sibling to the left.
+			proofs := make([][]byte, proofLen)
+			proofs[0] = t.nodes[nodeIdx]
+			res.Proofs[i-1] = proofs
+		} else {
+			// Even leaf; it is possible our sibling was overflow.
+			if i+1 == len(leafData)-int(overflow) {
+				// This is the final normal leaf and it's even.
+				// That means the right sibling is an overflow leaf.
+				// The overflow leaf already had another overflow sibling,
+				// so we always write this normal hash into its 1-index.
+				// Not only that, we know that both of those overflow nodes need this leaf.
+				res.Proofs[i+2][1] = t.nodes[nodeIdx] // Larger first to reduce BCE.
+				res.Proofs[i+1][1] = t.nodes[nodeIdx]
+
+				// But also, when we handled that overflow node,
+				// we did not initialize the normal proof.
+				// We are going to allocate for the proof now,
+				// but we don't know the hash of the first proof yet.
+				res.Proofs[i] = make([][]byte, proofLen)
+			} else {
+				// Not overflow, just initialize it.
+				proofs := make([][]byte, proofLen)
+				proofs[0] = t.nodes[nodeIdx]
+				res.Proofs[i+1] = proofs
+			}
+		}
 	}
 
 	nc := bcmerkle.NodeContext{
@@ -134,18 +281,29 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) {
 		binary.BigEndian.PutUint16(nc.FirstLeafIndex[:], leftIdx)
 		binary.BigEndian.PutUint16(nc.LastLeafIndex[:], rightIdx)
 		h.Node(t.nodes[2*i], t.nodes[(2*i)+1], nc, t.nodes[len(leafData)+int(i)][:0])
+
+		if i == 0 && (len(leafData)&1) == 1 {
+			// First overflow node on an odd leaf count.
+			// That means we have to fill in the final normal leaf's first proof.
+			res.Proofs[len(leafData)-int(overflow)-1][0] = t.nodes[len(leafData)+int(i)]
+		}
 	}
 
-	t.complete(uint(overflow), fullLayerWidth, cfg)
+	t.complete(uint(overflow), fullLayerWidth, cfg, res)
+	return res
 }
 
 // complete reads the row of nodes starting at readStartIdx and of width layerWidth,
 // merging them pairwise, left to right,
 // and storing the results starting at writeIdx.
-func (t *Tree) complete(readStartIdx uint, layerWidth uint16, cfg PopulateConfig) {
+//
+// The res argument is passed by value, not reference,
+// because its outermost slices are already sized correctly,
+// and complete is indexing into them directly.
+func (t *Tree) complete(readStartIdx uint, layerWidth uint16, cfg PopulateConfig, res PopulateResult) {
 	writeIdx := readStartIdx + uint(layerWidth)
 
-	if layerWidth&(layerWidth-1) != 0 {
+	if layerWidth&(layerWidth-1) != 0 || layerWidth == 0 {
 		panic(fmt.Errorf(
 			"BUG: cannot complete binary tree with bottom width %d (must be a power of 2)",
 			layerWidth,
@@ -170,11 +328,29 @@ func (t *Tree) complete(readStartIdx uint, layerWidth uint16, cfg PopulateConfig
 	// How many leaves that one node is worth.
 	spanWidth := uint16(2)
 
+	// Track the tier that we are writing currently.
+	// The root tier is 0,
+	// the root's children are tier 1,
+	// the root's grandchildren are tier 2, and so on.
+	currentTargetTier := uint16(bits.Len16(layerWidth)) - 2
+
+	// Track the index where leaf proofs are written.
+	leafProofIdx := 1
+
 	for layerWidth > 1 {
 		// Tracking for leaf spans.
 		// Required for proper node hashes.
 		spanStart := uint16(0)
 
+		// We need to figure out if the proof row we are writing
+		// will go into the root proofs slice,
+		// or if it goes into each leaf proof.
+		rootProofWriteIdx := -1
+		if currentTargetTier == 0 {
+			rootProofWriteIdx = 0
+		} else if currentTargetTier <= cfg.ProofCutoffTier {
+			rootProofWriteIdx = 2*int(currentTargetTier) - 1
+		}
 		for i := uint16(0); i < layerWidth; i += 2 {
 			// Set up the leaf indices for the hash.
 			firstLeafIdx := spanStart
@@ -195,6 +371,53 @@ func (t *Tree) complete(readStartIdx uint, layerWidth uint16, cfg PopulateConfig
 			rightNodeIdx := leftNodeIdx + 1
 
 			h.Node(t.nodes[leftNodeIdx], t.nodes[rightNodeIdx], nc, t.nodes[writeIdx][:0])
+
+			// Now, is the hash we just calculated part of the root proofs,
+			// or is it part of the leaf proofs?
+			if rootProofWriteIdx >= 0 {
+				res.RootProof[rootProofWriteIdx] = t.nodes[writeIdx]
+
+				rootProofWriteIdx++
+			} else {
+				// Calculate sibling range based on current span.
+				pairSize := spanWidth * 2
+				pairStart := (firstLeafIdx / pairSize) * pairSize
+
+				var siblingStart, siblingEnd uint16
+
+				if firstLeafIdx == pairStart {
+					// Left side of the pair, so sibling is on the right.
+					siblingStart = firstLeafIdx + spanWidth
+					siblingEnd = siblingStart + spanWidth - 1
+					if siblingEnd >= overflowNodeStart {
+						// Expand the end by one more span,
+						// so that we copy in the proofs correctly.
+						siblingEnd += spanWidth
+					}
+					siblingEnd = min(siblingEnd, t.nLeaves-1)
+				} else {
+					// Right side of the pair, so sibling is on the left.
+					siblingStart = pairStart
+					siblingEnd = siblingStart + spanWidth - 1
+				}
+
+				// The leaf proof goes into the same index for all sibling leaves.
+				// (Except for nodes covering overflow leaves.)
+				for leafIdx := siblingStart; leafIdx <= siblingEnd; leafIdx++ {
+					adjustedLeafProofIdx := leafProofIdx
+					// There is probably a more obvious way to check this,
+					// but we know that the proof for leaf zero is always the minimal value.
+					// Then if the list of proofs for the target leaf has a higher length,
+					// that target leaf must be an overflow node.
+					// TODO: improve this check.
+					if len(res.Proofs[leafIdx]) > len(res.Proofs[0]) {
+						adjustedLeafProofIdx++
+					}
+
+					res.Proofs[leafIdx][adjustedLeafProofIdx] = t.nodes[writeIdx]
+				}
+			}
+
 			writeIdx++
 
 			spanStart = lastLeafIdx + 1
@@ -206,6 +429,9 @@ func (t *Tree) complete(readStartIdx uint, layerWidth uint16, cfg PopulateConfig
 
 		overflowNodeStart >>= 1
 		spanWidth <<= 1
+
+		currentTargetTier--
+		leafProofIdx++
 	}
 }
 

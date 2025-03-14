@@ -95,7 +95,7 @@ func TestTree_Populate_simplified_3_leaves(t *testing.T) {
 
 	*/
 
-	tree.Populate(leaves, cbmt.PopulateConfig{
+	res := tree.Populate(leaves, cbmt.PopulateConfig{
 		Hasher: fnv32Hasher{},
 	})
 
@@ -112,6 +112,24 @@ func TestTree_Populate_simplified_3_leaves(t *testing.T) {
 
 	expRoot := fnv32Hash(string(expLeaf0) + string(expNode12))
 	require.Equal(t, expRoot, tree.Root())
+
+	require.Equal(t, [][]byte{
+		expRoot,
+	}, res.RootProof)
+
+	require.Equal(t, [][]byte{
+		expNode12,
+	}, res.Proofs[0])
+
+	require.Equal(t, [][]byte{
+		expLeaf2,
+		expLeaf0,
+	}, res.Proofs[1])
+
+	require.Equal(t, [][]byte{
+		expLeaf1,
+		expLeaf0,
+	}, res.Proofs[2])
 }
 
 func TestTree_Populate_simplified_5_leaves(t *testing.T) {
@@ -136,7 +154,7 @@ func TestTree_Populate_simplified_5_leaves(t *testing.T) {
 
 	*/
 
-	tree.Populate(leaves, cbmt.PopulateConfig{
+	res := tree.Populate(leaves, cbmt.PopulateConfig{
 		Hasher: fnv32Hasher{},
 	})
 
@@ -161,8 +179,38 @@ func TestTree_Populate_simplified_5_leaves(t *testing.T) {
 	expNode234 := fnv32Hash(string(expLeaf2) + string(expNode34))
 
 	expRoot := fnv32Hash(string(expNode01) + string(expNode234))
-
 	require.Equal(t, expRoot, tree.Root())
+
+	require.Equal(t, [][]byte{
+		expRoot,
+	}, res.RootProof)
+
+	require.Equal(t, [][]byte{
+		expLeaf1,
+		expNode234,
+	}, res.Proofs[0])
+
+	require.Equal(t, [][]byte{
+		expLeaf0,
+		expNode234,
+	}, res.Proofs[1])
+
+	require.Equal(t, [][]byte{
+		expNode34,
+		expNode01,
+	}, res.Proofs[2])
+
+	require.Equal(t, [][]byte{
+		expLeaf4,
+		expLeaf2,
+		expNode01,
+	}, res.Proofs[3])
+
+	require.Equal(t, [][]byte{
+		expLeaf3,
+		expLeaf2,
+		expNode01,
+	}, res.Proofs[4])
 }
 
 func TestTree_Populate_simplified_6_leaves(t *testing.T) {
@@ -296,9 +344,12 @@ func TestTree_Populate_simplified_8_leaves(t *testing.T) {
 		[]byte("seven"),
 	}
 
-	tree.Populate(leaves, cbmt.PopulateConfig{
+	pc := cbmt.PopulateConfig{
 		Hasher: fnv32Hasher{},
-	})
+
+		ProofCutoffTier: 0,
+	}
+	res := tree.Populate(leaves, pc)
 
 	expLeaf0 := fnv32Hash("zero")
 	require.Equal(t, expLeaf0, tree.Leaf(0))
@@ -334,6 +385,153 @@ func TestTree_Populate_simplified_8_leaves(t *testing.T) {
 
 	expRoot := fnv32Hash(string(expNode0123) + string(expNode4567))
 	require.Equal(t, expRoot, tree.Root())
+
+	t.Run("proof cutoff = 0", func(t *testing.T) {
+		require.Equal(t, [][]byte{
+			expRoot,
+		}, res.RootProof)
+
+		require.Equal(t, [][]byte{
+			expLeaf1,
+			expNode23,
+			expNode4567,
+		}, res.Proofs[0])
+
+		require.Equal(t, [][]byte{
+			expLeaf0,
+			expNode23,
+			expNode4567,
+		}, res.Proofs[1])
+
+		require.Equal(t, [][]byte{
+			expLeaf3,
+			expNode01,
+			expNode4567,
+		}, res.Proofs[2])
+
+		require.Equal(t, [][]byte{
+			expLeaf2,
+			expNode01,
+			expNode4567,
+		}, res.Proofs[3])
+
+		require.Equal(t, [][]byte{
+			expLeaf5,
+			expNode67,
+			expNode0123,
+		}, res.Proofs[4])
+
+		require.Equal(t, [][]byte{
+			expLeaf4,
+			expNode67,
+			expNode0123,
+		}, res.Proofs[5])
+
+		require.Equal(t, [][]byte{
+			expLeaf7,
+			expNode45,
+			expNode0123,
+		}, res.Proofs[6])
+
+		require.Equal(t, [][]byte{
+			expLeaf6,
+			expNode45,
+			expNode0123,
+		}, res.Proofs[7])
+	})
+
+	t.Run("proof cutoff = 1", func(t *testing.T) {
+		pc.ProofCutoffTier = 1
+		res = tree.Populate(leaves, pc)
+
+		require.Equal(t, [][]byte{
+			expRoot,
+			expNode0123, expNode4567,
+		}, res.RootProof)
+
+		require.Equal(t, [][]byte{
+			expLeaf1,
+			expNode23,
+		}, res.Proofs[0])
+
+		require.Equal(t, [][]byte{
+			expLeaf0,
+			expNode23,
+		}, res.Proofs[1])
+
+		require.Equal(t, [][]byte{
+			expLeaf3,
+			expNode01,
+		}, res.Proofs[2])
+
+		require.Equal(t, [][]byte{
+			expLeaf2,
+			expNode01,
+		}, res.Proofs[3])
+
+		require.Equal(t, [][]byte{
+			expLeaf5,
+			expNode67,
+		}, res.Proofs[4])
+
+		require.Equal(t, [][]byte{
+			expLeaf4,
+			expNode67,
+		}, res.Proofs[5])
+
+		require.Equal(t, [][]byte{
+			expLeaf7,
+			expNode45,
+		}, res.Proofs[6])
+
+		require.Equal(t, [][]byte{
+			expLeaf6,
+			expNode45,
+		}, res.Proofs[7])
+	})
+
+	t.Run("proof cutoff = 2", func(t *testing.T) {
+		pc.ProofCutoffTier = 2
+		res = tree.Populate(leaves, pc)
+
+		require.Equal(t, [][]byte{
+			expRoot,
+			expNode0123, expNode4567,
+			expNode01, expNode23, expNode45, expNode67,
+		}, res.RootProof)
+
+		require.Equal(t, [][]byte{
+			expLeaf1,
+		}, res.Proofs[0])
+
+		require.Equal(t, [][]byte{
+			expLeaf0,
+		}, res.Proofs[1])
+
+		require.Equal(t, [][]byte{
+			expLeaf3,
+		}, res.Proofs[2])
+
+		require.Equal(t, [][]byte{
+			expLeaf2,
+		}, res.Proofs[3])
+
+		require.Equal(t, [][]byte{
+			expLeaf5,
+		}, res.Proofs[4])
+
+		require.Equal(t, [][]byte{
+			expLeaf4,
+		}, res.Proofs[5])
+
+		require.Equal(t, [][]byte{
+			expLeaf7,
+		}, res.Proofs[6])
+
+		require.Equal(t, [][]byte{
+			expLeaf6,
+		}, res.Proofs[7])
+	})
 }
 
 func TestTree_Populate_context_3_leaves(t *testing.T) {
