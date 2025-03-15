@@ -236,7 +236,7 @@ func TestTree_Populate_simplified_6_leaves(t *testing.T) {
 
 	*/
 
-	tree.Populate(leaves, cbmt.PopulateConfig{
+	res := tree.Populate(leaves, cbmt.PopulateConfig{
 		Hasher: fnv32Hasher{},
 	})
 
@@ -266,6 +266,44 @@ func TestTree_Populate_simplified_6_leaves(t *testing.T) {
 
 	expRoot := fnv32Hash(string(expNode01) + string(expNode2345))
 	require.Equal(t, expRoot, tree.Root())
+
+	require.Equal(t, [][]byte{
+		expRoot,
+	}, res.RootProof)
+
+	require.Equal(t, [][]byte{
+		expLeaf1,
+		expNode2345,
+	}, res.Proofs[0])
+
+	require.Equal(t, [][]byte{
+		expLeaf0,
+		expNode2345,
+	}, res.Proofs[1])
+
+	require.Equal(t, [][]byte{
+		expLeaf3,
+		expNode45,
+		expNode01,
+	}, res.Proofs[2])
+
+	require.Equal(t, [][]byte{
+		expLeaf2,
+		expNode45,
+		expNode01,
+	}, res.Proofs[3])
+
+	require.Equal(t, [][]byte{
+		expLeaf5,
+		expNode23,
+		expNode01,
+	}, res.Proofs[4])
+
+	require.Equal(t, [][]byte{
+		expLeaf4,
+		expNode23,
+		expNode01,
+	}, res.Proofs[5])
 }
 
 func TestTree_Populate_simplified_7_leaves(t *testing.T) {

@@ -272,6 +272,7 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 		}
 	}
 
+	// Now write the remaining overflow nodes in the full bottom layer.
 	nc := bcmerkle.NodeContext{
 		Nonce: cfg.Nonce,
 	}
@@ -280,12 +281,38 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 		rightIdx := leftIdx + 1
 		binary.BigEndian.PutUint16(nc.FirstLeafIndex[:], leftIdx)
 		binary.BigEndian.PutUint16(nc.LastLeafIndex[:], rightIdx)
-		h.Node(t.nodes[2*i], t.nodes[(2*i)+1], nc, t.nodes[len(leafData)+int(i)][:0])
+
+		nodeIdx := len(leafData) + int(i)
+
+		h.Node(t.nodes[2*i], t.nodes[(2*i)+1], nc, t.nodes[nodeIdx][:0])
 
 		if i == 0 && (len(leafData)&1) == 1 {
 			// First overflow node on an odd leaf count.
 			// That means we have to fill in the final normal leaf's first proof.
-			res.Proofs[len(leafData)-int(overflow)-1][0] = t.nodes[len(leafData)+int(i)]
+			res.Proofs[len(leafData)-int(overflow)-1][0] = t.nodes[nodeIdx]
+		}
+
+		// Now within the overflow area, we can map our "pairs" here
+		// against the constituent leaves.
+		// The zeroth overflow node here needs to be proof 1 of not raw nodes 2 and 3.
+		// The first overflow node needs to be proof 1 of raw nodes 0 and 1.
+
+		if (i & 1) == 1 {
+			// Odd overflow node, so we need to update the proofs
+			// on the two leaves left of our covered overflow leaves,
+			// if they exist.
+			if int(leftIdx-2) >= 0 {
+				res.Proofs[leftIdx-1][1] = t.nodes[nodeIdx]
+				res.Proofs[leftIdx-2][1] = t.nodes[nodeIdx]
+			}
+		} else {
+			// Even overflow node, so we need to update the proofs
+			// on the two leaves right of our covered overflow leaves,
+			// if they exist.
+			if int(rightIdx+2) < len(res.Proofs) {
+				res.Proofs[rightIdx+2][1] = t.nodes[nodeIdx]
+				res.Proofs[rightIdx+1][1] = t.nodes[nodeIdx]
+			}
 		}
 	}
 
