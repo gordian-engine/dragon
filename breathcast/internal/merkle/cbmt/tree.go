@@ -8,16 +8,16 @@ import (
 	"github.com/gordian-engine/dragon/breathcast/bcmerkle"
 )
 
-// Tree is a right-leaning unbalanced Merkle tree.
+// Tree is a binary Merkle tree.
+// If its leaves are a power of 2, then all leaves have the same depth.
+// Otherwise, some leaves in excess of the next smallest power of 2
+// will have one more depth than the others.
+//
 // Create an empty tree with [NewEmptyTree],
 // and then call [*Tree.Populate] to populate it with leaf data
 // and all the hashes through the root.
+// Populate returns a value containing all the Merkle proofs.
 type Tree struct {
-	// When constructing the tree, we know the exact number of leaves
-	// and the size of the hash filling each node,
-	// so we back the entire tree with a single memory slice.
-	mem []byte
-
 	// View into the backing mem slice.
 	nodes [][]byte
 
@@ -44,6 +44,10 @@ func NewEmptyTree(nLeaves uint16, hashSize int) *Tree {
 	// has this many nodes.
 	nNodes := 2*nLeaves - 1
 
+	// When constructing the tree, we know the exact number of leaves
+	// and the size of the hash filling each node,
+	// so we back the entire tree with a single slice slice.
+	// We don't need a direct reference to the backing slice within the Tree.
 	mem := make([]byte, int(nNodes)*hashSize)
 
 	nodes := make([][]byte, nNodes)
@@ -55,7 +59,6 @@ func NewEmptyTree(nLeaves uint16, hashSize int) *Tree {
 	}
 
 	return &Tree{
-		mem:   mem,
 		nodes: nodes,
 
 		nLeaves: nLeaves,
@@ -125,7 +128,9 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 
 	res := PopulateResult{
 		RootProof: make([][]byte, (1<<(cfg.ProofCutoffTier+1))-1),
-		Proofs:    make([][][]byte, len(leafData)),
+
+		// We will initialize these values as we populate the initial leaf data.
+		Proofs: make([][][]byte, len(leafData)),
 	}
 
 	h := cfg.Hasher
@@ -133,14 +138,21 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 		Nonce: cfg.Nonce,
 	}
 
+	var proofLen uint16
+	if treeHeight := uint16(bits.Len16(t.nLeaves)); cfg.ProofCutoffTier < treeHeight {
+		proofLen = treeHeight - cfg.ProofCutoffTier - 1 // -1 because we never include root.
+	}
+
 	if t.nLeaves&(t.nLeaves-1) == 0 {
-		treeHeight := uint16(bits.Len16(t.nLeaves))
-		var proofLen uint16
-		if cfg.ProofCutoffTier < treeHeight {
-			proofLen = treeHeight - cfg.ProofCutoffTier - 1 // -1 because we never include root.
+		// Leaves are a power of two, so we don't need special treatment for overflow.
+
+		// All the leaves have the same proof length,
+		// so back all the leaf proofs with a single allocation first.
+		var proofMem [][]byte
+		if proofLen > 0 {
+			proofMem = make([][]byte, proofLen*t.nLeaves)
 		}
 
-		// Leaves are a power of two, so we don't need special treatment.
 		// Write all the leaves into the first row.
 		for i, leaf := range leafData {
 			h.Leaf(leaf, lc, t.nodes[i][:0])
@@ -154,8 +166,14 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 				} else {
 					siblingIdx = i + 1
 				}
-				res.Proofs[siblingIdx] = make([][]byte, proofLen)
-				res.Proofs[siblingIdx][0] = t.nodes[i]
+
+				// We are slicing proofMem by siblingIdx, not i,
+				// so that the layout within proofMem is sequential by leaf index.
+				// It may not make an actual difference,
+				// but this should be significantly easier to debug if we ever need to.
+				proofs := proofMem[siblingIdx*int(proofLen) : (siblingIdx+1)*int(proofLen)]
+				proofs[0] = t.nodes[i]
+				res.Proofs[siblingIdx] = proofs
 			}
 
 			// Manually track the encoded leaf index, which started at zero properly.
@@ -184,7 +202,7 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 	// Memory layout details:
 	//
 	// Counts 5, 6, and 7 cover three interesting cases.
-	// All of those want ot fit in 4 slots,
+	// All of those want to fit in 4 slots,
 	// so they respectively have 2, 4, and 6 leaves in the overflow area,
 	// resulting in a respective 1, 2, or 3 overflow nodes at the tail end
 	// of the 4-node-wide layer.
@@ -209,32 +227,44 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 	// But, if the last normal leaf has an even index,
 	// then its sibling to the right is actually the overflow node.
 
-	treeHeightBeforeOverflow := uint16(bits.Len16(t.nLeaves))
-	var proofLen uint16
-	if cfg.ProofCutoffTier < treeHeightBeforeOverflow {
-		proofLen = treeHeightBeforeOverflow - cfg.ProofCutoffTier - 1 // -1 because we never include root.
-	}
+	nNormalLeaves := len(leafData) - int(overflow)
+
+	// Allocate all the leaf proofs in a single backing slice.
+	normalProofsSize := nNormalLeaves * int(proofLen)
+	overflowProofsSize := int(overflow) * (int(proofLen) + 1)
+	allProofsMem := make([][]byte, normalProofsSize+overflowProofsSize)
+
+	// The overflow proofs are subslices of the latter part of allProofsMem.
+	overflowProofsMem := allProofsMem[normalProofsSize:]
 
 	// Overflow leaves get written first.
-	for i, leaf := range leafData[len(leafData)-int(overflow):] {
-		binary.BigEndian.PutUint16(lc.LeafIndex[:], uint16(len(leafData)-int(overflow)+i))
+	for i, leaf := range leafData[nNormalLeaves:] {
+		binary.BigEndian.PutUint16(lc.LeafIndex[:], uint16(nNormalLeaves+i))
 		h.Leaf(leaf, lc, t.nodes[i][:0])
 
-		// Initialize the proofs for the sibling.
-		proofs := make([][]byte, proofLen+1)
-		proofs[0] = t.nodes[i]
-		curIdx := len(leafData) - int(overflow) + i
+		curIdx := nNormalLeaves + i
+		var siblingIdx int
 		if (i & 1) == 1 {
 			// Odd sibling so initialize proof for left sibling.
-			res.Proofs[curIdx-1] = proofs
+			siblingIdx = curIdx - 1
 		} else {
 			// Even sibling so initialize proof for right sibling.
-			res.Proofs[curIdx+1] = proofs
+			siblingIdx = curIdx + 1
 		}
+
+		// Adjust offset within overflowProofsMem slice.
+		pmOffset := siblingIdx - nNormalLeaves
+
+		proofs := overflowProofsMem[pmOffset*(int(proofLen)+1) : (pmOffset+1)*(int(proofLen)+1)]
+		proofs[0] = t.nodes[i]
+		res.Proofs[siblingIdx] = proofs
 	}
 
-	// Then write the earlier leaves.
-	for i, leaf := range leafData[:len(leafData)-int(overflow)] {
+	// The normal proofs are subslices of the first part of allProofsMem.
+	proofMem := allProofsMem[:normalProofsSize]
+
+	// Finally write the "normal" leaves.
+	for i, leaf := range leafData[:nNormalLeaves] {
 		binary.BigEndian.PutUint16(lc.LeafIndex[:], uint16(i))
 
 		nodeIdx := int(overflow) + i
@@ -244,7 +274,7 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 		// so there no confusing arithmetic on basic even and odd checks.
 		if (i & 1) == 1 {
 			// Odd leaf; we definitely have a sibling to the left.
-			proofs := make([][]byte, proofLen)
+			proofs := proofMem[(i-1)*int(proofLen) : i*int(proofLen)]
 			proofs[0] = t.nodes[nodeIdx]
 			res.Proofs[i-1] = proofs
 		} else {
@@ -262,10 +292,11 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 				// we did not initialize the normal proof.
 				// We are going to allocate for the proof now,
 				// but we don't know the hash of the first proof yet.
-				res.Proofs[i] = make([][]byte, proofLen)
+				// res.Proofs[i] = make([][]byte, proofLen)
+				res.Proofs[i] = proofMem[i*int(proofLen) : (i+1)*int(proofLen)]
 			} else {
 				// Not overflow, just initialize it.
-				proofs := make([][]byte, proofLen)
+				proofs := proofMem[(i+1)*int(proofLen) : (i+2)*int(proofLen)]
 				proofs[0] = t.nodes[nodeIdx]
 				res.Proofs[i+1] = proofs
 			}
