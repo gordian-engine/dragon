@@ -27,7 +27,7 @@ func TestTree_Populate_simplified_2_leaves(t *testing.T) {
 		[]byte("world"),
 	}
 
-	tree.Populate(leaves, cbmt.PopulateConfig{
+	res := tree.Populate(leaves, cbmt.PopulateConfig{
 		Hasher: fnv32Hasher{},
 	})
 
@@ -38,7 +38,7 @@ func TestTree_Populate_simplified_2_leaves(t *testing.T) {
 	require.Equal(t, expLeaf1, tree.Leaf(1))
 
 	expRoot := fnv32Hash(string(expLeaf0) + string(expLeaf1))
-	require.Equal(t, expRoot, tree.Root())
+	require.Equal(t, expRoot, res.RootProof[0])
 }
 
 func TestTree_Populate_simplified_4_leaves(t *testing.T) {
@@ -53,7 +53,7 @@ func TestTree_Populate_simplified_4_leaves(t *testing.T) {
 		[]byte("three"),
 	}
 
-	tree.Populate(leaves, cbmt.PopulateConfig{
+	res := tree.Populate(leaves, cbmt.PopulateConfig{
 		Hasher: fnv32Hasher{},
 	})
 
@@ -73,7 +73,7 @@ func TestTree_Populate_simplified_4_leaves(t *testing.T) {
 	expNode23 := fnv32Hash(string(expLeaf2) + string(expLeaf3))
 
 	expRoot := fnv32Hash(string(expNode01) + string(expNode23))
-	require.Equal(t, expRoot, tree.Root())
+	require.Equal(t, expRoot, res.RootProof[0])
 }
 
 func TestTree_Populate_simplified_3_leaves(t *testing.T) {
@@ -111,7 +111,6 @@ func TestTree_Populate_simplified_3_leaves(t *testing.T) {
 	expNode12 := fnv32Hash(string(expLeaf1) + string(expLeaf2))
 
 	expRoot := fnv32Hash(string(expLeaf0) + string(expNode12))
-	require.Equal(t, expRoot, tree.Root())
 
 	require.Equal(t, [][]byte{
 		expRoot,
@@ -179,7 +178,6 @@ func TestTree_Populate_simplified_5_leaves(t *testing.T) {
 	expNode234 := fnv32Hash(string(expLeaf2) + string(expNode34))
 
 	expRoot := fnv32Hash(string(expNode01) + string(expNode234))
-	require.Equal(t, expRoot, tree.Root())
 
 	require.Equal(t, [][]byte{
 		expRoot,
@@ -265,7 +263,6 @@ func TestTree_Populate_simplified_6_leaves(t *testing.T) {
 	expNode01 := fnv32Hash(string(expLeaf0) + string(expLeaf1))
 
 	expRoot := fnv32Hash(string(expNode01) + string(expNode2345))
-	require.Equal(t, expRoot, tree.Root())
 
 	require.Equal(t, [][]byte{
 		expRoot,
@@ -363,7 +360,6 @@ func TestTree_Populate_simplified_7_leaves(t *testing.T) {
 	expNode012 := fnv32Hash(string(expLeaf0) + string(expNode12))
 
 	expRoot := fnv32Hash(string(expNode012) + string(expNode3456))
-	require.Equal(t, expRoot, tree.Root())
 
 	require.Equal(t, [][]byte{
 		expRoot,
@@ -467,7 +463,6 @@ func TestTree_Populate_simplified_8_leaves(t *testing.T) {
 	expNode4567 := fnv32Hash(string(expNode45) + string(expNode67))
 
 	expRoot := fnv32Hash(string(expNode0123) + string(expNode4567))
-	require.Equal(t, expRoot, tree.Root())
 
 	t.Run("proof cutoff = 0", func(t *testing.T) {
 		require.Equal(t, [][]byte{
@@ -628,7 +623,7 @@ func TestTree_Populate_context_3_leaves(t *testing.T) {
 		[]byte("two"),
 	}
 
-	tree.Populate(leaves, cbmt.PopulateConfig{
+	res := tree.Populate(leaves, cbmt.PopulateConfig{
 		Hasher: bcsha256.Hasher{},
 		Nonce:  []byte("N."),
 	})
@@ -649,7 +644,7 @@ func TestTree_Populate_context_3_leaves(t *testing.T) {
 	expRoot := sha256Hash(
 		"N.\x00\x00Hl." + expLeaf0 + "\x00\x02Hr." + expNode12,
 	)
-	require.Equal(t, expRoot, string(tree.Root()))
+	require.Equal(t, expRoot, string(res.RootProof[0]))
 }
 
 func TestTree_Populate_context_4_leaves(t *testing.T) {
@@ -664,7 +659,7 @@ func TestTree_Populate_context_4_leaves(t *testing.T) {
 		[]byte("three"),
 	}
 
-	tree.Populate(leaves, cbmt.PopulateConfig{
+	res := tree.Populate(leaves, cbmt.PopulateConfig{
 		Hasher: bcsha256.Hasher{},
 		Nonce:  []byte("N."),
 	})
@@ -691,7 +686,7 @@ func TestTree_Populate_context_4_leaves(t *testing.T) {
 	expRoot := sha256Hash(
 		"N.\x00\x00Hl." + expNode01 + "\x00\x03Hr." + expNode23,
 	)
-	require.Equal(t, expRoot, string(tree.Root()))
+	require.Equal(t, expRoot, string(res.RootProof[0]))
 }
 
 func TestTree_Populate_context_6_leaves(t *testing.T) {
@@ -708,7 +703,7 @@ func TestTree_Populate_context_6_leaves(t *testing.T) {
 		[]byte("five"),
 	}
 
-	tree.Populate(leaves, cbmt.PopulateConfig{
+	res := tree.Populate(leaves, cbmt.PopulateConfig{
 		Hasher: bcsha256.Hasher{},
 		Nonce:  []byte("N."),
 	})
@@ -747,7 +742,7 @@ func TestTree_Populate_context_6_leaves(t *testing.T) {
 	expRoot := sha256Hash(
 		"N.\x00\x00Hl." + expNode01 + "\x00\x05Hr." + expNode2345,
 	)
-	require.Equal(t, expRoot, string(tree.Root()))
+	require.Equal(t, expRoot, string(res.RootProof[0]))
 }
 
 func TestTree_Populate_context_8_leaves(t *testing.T) {
@@ -766,7 +761,7 @@ func TestTree_Populate_context_8_leaves(t *testing.T) {
 		[]byte("seven"),
 	}
 
-	tree.Populate(leaves, cbmt.PopulateConfig{
+	res := tree.Populate(leaves, cbmt.PopulateConfig{
 		Hasher: bcsha256.Hasher{},
 		Nonce:  []byte("N."),
 	})
@@ -818,10 +813,10 @@ func TestTree_Populate_context_8_leaves(t *testing.T) {
 	expRoot := sha256Hash(
 		"N.\x00\x00Hl." + expNode0123 + "\x00\x07Hr." + expNode4567,
 	)
-	require.Equal(t, expRoot, string(tree.Root()))
+	require.Equal(t, expRoot, string(res.RootProof[0]))
 }
 
-func TestTree_GenerateProof_2(t *testing.T) {
+func TestTree_proofDetail_2(t *testing.T) {
 	t.Parallel()
 
 	tree := cbmt.NewEmptyTree(2, 32)
@@ -831,7 +826,7 @@ func TestTree_GenerateProof_2(t *testing.T) {
 		[]byte("one"),
 	}
 
-	tree.Populate(leaves, cbmt.PopulateConfig{
+	res := tree.Populate(leaves, cbmt.PopulateConfig{
 		Hasher: bcsha256.Hasher{},
 		Nonce:  []byte("N."),
 	})
@@ -842,14 +837,24 @@ func TestTree_GenerateProof_2(t *testing.T) {
 	expLeaf1 := sha256Hash("N.\x00\x01L.one")
 	require.Equal(t, expLeaf1, string(tree.Leaf(1)))
 
-	proof0 := tree.GenerateProof(0, nil)
-	require.Equal(t, [][]byte{[]byte(expLeaf1)}, proof0)
+	expRoot := sha256Hash(
+		"N.\x00\x00Hl." + expLeaf0 + "\x00\x01Hr." + expLeaf1,
+	)
 
-	proof1 := tree.GenerateProof(1, nil)
-	require.Equal(t, [][]byte{[]byte(expLeaf0)}, proof1)
+	require.Equal(t, [][]byte{
+		[]byte(expRoot),
+	}, res.RootProof)
+
+	require.Equal(t, [][]byte{
+		[]byte(expLeaf1),
+	}, res.Proofs[0])
+
+	require.Equal(t, [][]byte{
+		[]byte(expLeaf0),
+	}, res.Proofs[1])
 }
 
-func TestTree_GenerateProof_3(t *testing.T) {
+func TestTree_proofDetail_3(t *testing.T) {
 	t.Parallel()
 
 	tree := cbmt.NewEmptyTree(3, 32)
@@ -868,7 +873,7 @@ func TestTree_GenerateProof_3(t *testing.T) {
 
 	*/
 
-	tree.Populate(leaves, cbmt.PopulateConfig{
+	res := tree.Populate(leaves, cbmt.PopulateConfig{
 		Hasher: bcsha256.Hasher{},
 		Nonce:  []byte("N."),
 	})
@@ -889,19 +894,28 @@ func TestTree_GenerateProof_3(t *testing.T) {
 	expRoot := sha256Hash(
 		"N.\x00\x00Hl." + expLeaf0 + "\x00\x02Hr." + expNode12,
 	)
-	require.Equal(t, expRoot, string(tree.Root()))
+	require.Equal(t, expRoot, string(res.RootProof[0]))
 
-	proof0 := tree.GenerateProof(0, nil)
-	require.Equal(t, [][]byte{[]byte(expNode12)}, proof0)
+	require.Equal(t, [][]byte{
+		[]byte(expRoot),
+	}, res.RootProof)
 
-	proof1 := tree.GenerateProof(1, nil)
-	require.Equal(t, [][]byte{[]byte(expLeaf2), []byte(expLeaf0)}, proof1)
+	require.Equal(t, [][]byte{
+		[]byte(expNode12),
+	}, res.Proofs[0])
 
-	proof2 := tree.GenerateProof(2, nil)
-	require.Equal(t, [][]byte{[]byte(expLeaf1), []byte(expLeaf0)}, proof2)
+	require.Equal(t, [][]byte{
+		[]byte(expLeaf2),
+		[]byte(expLeaf0),
+	}, res.Proofs[1])
+
+	require.Equal(t, [][]byte{
+		[]byte(expLeaf1),
+		[]byte(expLeaf0),
+	}, res.Proofs[2])
 }
 
-func TestTree_GenerateProof_4(t *testing.T) {
+func TestTree_proofDetail_4(t *testing.T) {
 	t.Parallel()
 
 	tree := cbmt.NewEmptyTree(4, 32)
@@ -913,7 +927,7 @@ func TestTree_GenerateProof_4(t *testing.T) {
 		[]byte("three"),
 	}
 
-	tree.Populate(leaves, cbmt.PopulateConfig{
+	res := tree.Populate(leaves, cbmt.PopulateConfig{
 		Hasher: bcsha256.Hasher{},
 		Nonce:  []byte("N."),
 	})
@@ -937,28 +951,36 @@ func TestTree_GenerateProof_4(t *testing.T) {
 		"N.\x00\x02Hl." + expLeaf2 + "\x00\x03Hr." + expLeaf3,
 	)
 
-	proof0 := tree.GenerateProof(0, nil)
-	require.Equal(t, [][]byte{
-		[]byte(expLeaf1), []byte(expNode23),
-	}, proof0)
+	expRoot := sha256Hash(
+		"N.\x00\x00Hl." + expNode01 + "\x00\x03Hr." + expNode23,
+	)
 
-	proof1 := tree.GenerateProof(1, nil)
 	require.Equal(t, [][]byte{
-		[]byte(expLeaf0), []byte(expNode23),
-	}, proof1)
+		[]byte(expRoot),
+	}, res.RootProof)
 
-	proof2 := tree.GenerateProof(2, nil)
 	require.Equal(t, [][]byte{
-		[]byte(expLeaf3), []byte(expNode01),
-	}, proof2)
+		[]byte(expLeaf1),
+		[]byte(expNode23),
+	}, res.Proofs[0])
 
-	proof3 := tree.GenerateProof(3, nil)
 	require.Equal(t, [][]byte{
-		[]byte(expLeaf2), []byte(expNode01),
-	}, proof3)
+		[]byte(expLeaf0),
+		[]byte(expNode23),
+	}, res.Proofs[1])
+
+	require.Equal(t, [][]byte{
+		[]byte(expLeaf3),
+		[]byte(expNode01),
+	}, res.Proofs[2])
+
+	require.Equal(t, [][]byte{
+		[]byte(expLeaf2),
+		[]byte(expNode01),
+	}, res.Proofs[3])
 }
 
-func TestTree_GenerateProof_6_leaves(t *testing.T) {
+func TestTree_proofDetail_6(t *testing.T) {
 	t.Parallel()
 
 	tree := cbmt.NewEmptyTree(6, 32)
@@ -981,7 +1003,7 @@ func TestTree_GenerateProof_6_leaves(t *testing.T) {
 
 	*/
 
-	tree.Populate(leaves, cbmt.PopulateConfig{
+	res := tree.Populate(leaves, cbmt.PopulateConfig{
 		Hasher: bcsha256.Hasher{},
 		Nonce:  []byte("N."),
 	})
@@ -1017,35 +1039,47 @@ func TestTree_GenerateProof_6_leaves(t *testing.T) {
 		"N.\x00\x02Hl." + expNode23 + "\x00\x05Hr." + expNode45,
 	)
 
-	proof0 := tree.GenerateProof(0, nil)
-	require.Equal(t, [][]byte{
-		[]byte(expLeaf1), []byte(expNode2345),
-	}, proof0)
+	expRoot := sha256Hash(
+		"N.\x00\x00Hl." + expNode01 + "\x00\x05Hr." + expNode2345,
+	)
 
-	proof1 := tree.GenerateProof(1, nil)
 	require.Equal(t, [][]byte{
-		[]byte(expLeaf0), []byte(expNode2345),
-	}, proof1)
+		[]byte(expRoot),
+	}, res.RootProof)
 
-	proof2 := tree.GenerateProof(2, nil)
 	require.Equal(t, [][]byte{
-		[]byte(expLeaf3), []byte(expNode45), []byte(expNode01),
-	}, proof2)
+		[]byte(expLeaf1),
+		[]byte(expNode2345),
+	}, res.Proofs[0])
 
-	proof3 := tree.GenerateProof(3, nil)
 	require.Equal(t, [][]byte{
-		[]byte(expLeaf2), []byte(expNode45), []byte(expNode01),
-	}, proof3)
+		[]byte(expLeaf0),
+		[]byte(expNode2345),
+	}, res.Proofs[1])
 
-	proof4 := tree.GenerateProof(4, nil)
 	require.Equal(t, [][]byte{
-		[]byte(expLeaf5), []byte(expNode23), []byte(expNode01),
-	}, proof4)
+		[]byte(expLeaf3),
+		[]byte(expNode45),
+		[]byte(expNode01),
+	}, res.Proofs[2])
 
-	proof5 := tree.GenerateProof(5, nil)
 	require.Equal(t, [][]byte{
-		[]byte(expLeaf4), []byte(expNode23), []byte(expNode01),
-	}, proof5)
+		[]byte(expLeaf2),
+		[]byte(expNode45),
+		[]byte(expNode01),
+	}, res.Proofs[3])
+
+	require.Equal(t, [][]byte{
+		[]byte(expLeaf5),
+		[]byte(expNode23),
+		[]byte(expNode01),
+	}, res.Proofs[4])
+
+	require.Equal(t, [][]byte{
+		[]byte(expLeaf4),
+		[]byte(expNode23),
+		[]byte(expNode01),
+	}, res.Proofs[5])
 }
 
 // fnv32Hash is a convenience function to hash a string.
