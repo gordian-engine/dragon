@@ -292,23 +292,18 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 			res.Proofs[len(leafData)-int(overflow)-1][0] = t.nodes[nodeIdx]
 		}
 
-		// Now within the overflow area, we can map our "pairs" here
-		// against the constituent leaves.
-		// The zeroth overflow node here needs to be proof 1 of not raw nodes 2 and 3.
-		// The first overflow node needs to be proof 1 of raw nodes 0 and 1.
-
-		if (i & 1) == 1 {
-			// Odd overflow node, so we need to update the proofs
-			// on the two leaves left of our covered overflow leaves,
-			// if they exist.
-			if int(leftIdx-2) >= 0 {
+		// Whether the proof is going to the left or right node,
+		// is dependent not on the i index here but on the evenness or oddness
+		// of the destination within the full layer.
+		mergeTargetPosition := nodeIdx - int(overflow)
+		if (mergeTargetPosition & 1) == 1 {
+			// Odd logical position in the full row.
+			if int(leftIdx-1) > 0 {
 				res.Proofs[leftIdx-1][1] = t.nodes[nodeIdx]
 				res.Proofs[leftIdx-2][1] = t.nodes[nodeIdx]
 			}
 		} else {
-			// Even overflow node, so we need to update the proofs
-			// on the two leaves right of our covered overflow leaves,
-			// if they exist.
+			// Even logical position in the full row.
 			if int(rightIdx+2) < len(res.Proofs) {
 				res.Proofs[rightIdx+2][1] = t.nodes[nodeIdx]
 				res.Proofs[rightIdx+1][1] = t.nodes[nodeIdx]
@@ -349,13 +344,15 @@ func (t *Tree) complete(readStartIdx uint, layerWidth uint16, cfg PopulateConfig
 	if readStartIdx > 0 {
 		// Only have overflow nodes when we start reading past zero.
 		fullLayerWidth := uint16(1 << (bits.Len16(t.nLeaves) - 1))
-		overflowNodeStart = t.nLeaves - fullLayerWidth
+		overflowNodeStart = fullLayerWidth - t.nLeaves + fullLayerWidth // Avoid multiplication and possible overflow.
 	}
 
 	// How many leaves that one node is worth.
 	spanWidth := uint16(2)
 
 	// Track the tier that we are writing currently.
+	// This determines whether the proof goes in the root proof collection
+	// or directly in the sibling leaves' proofs.
 	// The root tier is 0,
 	// the root's children are tier 1,
 	// the root's grandchildren are tier 2, and so on.
@@ -382,13 +379,24 @@ func (t *Tree) complete(readStartIdx uint, layerWidth uint16, cfg PopulateConfig
 			// Set up the leaf indices for the hash.
 			firstLeafIdx := spanStart
 			lastLeafIdx := firstLeafIdx - 1 + spanWidth
+
 			if layerWidth == 2 {
 				// Don't try to calculate the end.
 				// We are merging the root, so it must span all leaves.
 				lastLeafIdx = t.nLeaves - 1
-			} else if i >= overflowNodeStart {
+			} else if i+1 >= overflowNodeStart {
 				// The nodes we are merging, are worth one more span.
 				lastLeafIdx += spanWidth
+
+				// If the right side of our leaf is past the overflow,
+				// that usually means the left side is too.
+				// But for the leftmost node, that may not be the case.
+				// The leftmost node is the only node where it is is possible
+				// that the right side past overflow but the left side didn't;
+				// overflow cannot be 0, so checking i==0 satisfies the condition.
+				if i == 0 {
+					lastLeafIdx -= (spanWidth >> 1)
+				}
 			}
 
 			binary.BigEndian.PutUint16(nc.FirstLeafIndex[:], firstLeafIdx)
@@ -415,7 +423,13 @@ func (t *Tree) complete(readStartIdx uint, layerWidth uint16, cfg PopulateConfig
 				if firstLeafIdx == pairStart {
 					// Left side of the pair, so sibling is on the right.
 					siblingStart = firstLeafIdx + spanWidth
+					if i == 0 && i+1 >= overflowNodeStart {
+						// If the first node ran past overflow,
+						// move the sibling to the right by a half span.
+						siblingStart += (spanWidth >> 1)
+					}
 					siblingEnd = siblingStart + spanWidth - 1
+
 					if siblingEnd >= overflowNodeStart {
 						// Expand the end by one more span,
 						// so that we copy in the proofs correctly.
@@ -426,6 +440,16 @@ func (t *Tree) complete(readStartIdx uint, layerWidth uint16, cfg PopulateConfig
 					// Right side of the pair, so sibling is on the left.
 					siblingStart = pairStart
 					siblingEnd = siblingStart + spanWidth - 1
+
+					// This is a very particular but potentially common case.
+					//
+					// We are the second node in the layer (i == 2)
+					// and overflow started in the first node of the layer.
+					// The leftmost node cannot be a full overflow,
+					// so it needs a half span extra width.
+					if i == 2 && overflowNodeStart == 1 {
+						siblingEnd += (spanWidth >> 1)
+					}
 				}
 
 				// The leaf proof goes into the same index for all sibling leaves.
