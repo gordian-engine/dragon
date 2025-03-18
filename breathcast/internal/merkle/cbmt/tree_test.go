@@ -209,6 +209,23 @@ func TestTree_Populate_simplified_5_leaves(t *testing.T) {
 		expLeaf2,
 		expNode01,
 	}, res.Proofs[4])
+
+	// This outer test, with a non-power-of-2, was chosen arbitrarily for a high cutoff subtest.
+	t.Run("high proof cutoff tier", func(t *testing.T) {
+		res = tree.Populate(leaves, cbmt.PopulateConfig{
+			Hasher: fnv32Hasher{},
+
+			// Tier too high, so no leaves will have proofs.
+			ProofCutoffTier: 8,
+		})
+
+		require.Equal(t, [][]byte{
+			expRoot,
+			expNode01, expNode234,
+			expLeaf0, expLeaf1, expLeaf2, expNode34,
+			expLeaf3, expLeaf4,
+		}, res.RootProof)
+	})
 }
 
 func TestTree_Populate_simplified_6_leaves(t *testing.T) {
@@ -609,6 +626,19 @@ func TestTree_Populate_simplified_8_leaves(t *testing.T) {
 		require.Equal(t, [][]byte{
 			expLeaf6,
 		}, res.Proofs[7])
+	})
+
+	// Another arbitrary size choice to exercise an excessive proof cutoff tier.
+	t.Run("proof cutoff = 8", func(t *testing.T) {
+		pc.ProofCutoffTier = 8
+		res = tree.Populate(leaves, pc)
+
+		require.Equal(t, [][]byte{
+			expRoot,
+			expNode0123, expNode4567,
+			expNode01, expNode23, expNode45, expNode67,
+			expLeaf0, expLeaf1, expLeaf2, expLeaf3, expLeaf4, expLeaf5, expLeaf6, expLeaf7,
+		}, res.RootProof)
 	})
 }
 
