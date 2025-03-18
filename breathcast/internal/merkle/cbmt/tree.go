@@ -497,11 +497,8 @@ func (t *Tree) complete(readStartIdx uint, layerWidth uint16, cfg PopulateConfig
 
 				// If the right side of our leaf is past the overflow,
 				// that usually means the left side is too.
-				// But for the leftmost node, that may not be the case.
-				// The leftmost node is the only node where it is is possible
-				// that the right side past overflow but the left side didn't;
-				// overflow cannot be 0, so checking i==0 satisfies the condition.
-				if i == 0 {
+				// If not, then adjust the span a half width to account for that.
+				if i < overflowNodeStart {
 					lastLeafIdx -= (spanWidth >> 1)
 				}
 			}
@@ -532,8 +529,8 @@ func (t *Tree) complete(readStartIdx uint, layerWidth uint16, cfg PopulateConfig
 				if firstLeafIdx == pairStart {
 					// Left side of the pair, so sibling is on the right.
 					siblingStart = firstLeafIdx + spanWidth
-					if i == 0 && i+1 >= overflowNodeStart {
-						// If the first node ran past overflow,
+					if i < overflowNodeStart && i+1 >= overflowNodeStart {
+						// If the node crossed overflow,
 						// move the sibling to the right by a half span.
 						siblingStart += (spanWidth >> 1)
 					}
@@ -551,12 +548,9 @@ func (t *Tree) complete(readStartIdx uint, layerWidth uint16, cfg PopulateConfig
 					siblingEnd = siblingStart + spanWidth - 1
 
 					// This is a very particular but potentially common case.
-					//
-					// We are the second node in the layer (i == 2)
-					// and overflow started in the first node of the layer.
-					// The leftmost node cannot be a full overflow,
-					// so it needs a half span extra width.
-					if i == 2 && overflowNodeStart == 1 {
+					// The overflow started in the middle of the node,
+					// so the sibling ends a half span later than otherwise.
+					if overflowNodeStart == i-1 {
 						siblingEnd += (spanWidth >> 1)
 					}
 				}
