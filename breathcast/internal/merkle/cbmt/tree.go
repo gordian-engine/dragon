@@ -382,26 +382,28 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 			res.Proofs[len(leafData)-int(overflow)-1][0] = t.nodes[nodeIdx]
 		}
 
-		// The remaining work in this loop would be setting index 1 in the leaf proofs,
-		// so if we ended up with only 1 entry in leaf proofs,
-		// skip the rest of the loop.
-		if proofLen == 1 {
-			continue
-		}
-
 		// Whether the proof is going to the left or right node,
 		// is dependent not on the i index here but on the evenness or oddness
 		// of the destination within the full layer.
 		mergeTargetPosition := nodeIdx - int(overflow)
 		if (mergeTargetPosition & 1) == 1 {
 			// Odd logical position in the full row.
-			if int(leftIdx-1) > 0 {
-				res.Proofs[leftIdx-1][1] = t.nodes[nodeIdx]
-				res.Proofs[leftIdx-2][1] = t.nodes[nodeIdx]
+			if int(leftIdx-1) > 0 { // Is there a proof to our left?
+				if len(res.Proofs[leftIdx-2]) > 1 {
+					// Does that proof have room for us?
+					// We only need to check the -2 case because
+					// this proof pair is either both or neither overflow.
+					res.Proofs[leftIdx-1][1] = t.nodes[nodeIdx]
+					res.Proofs[leftIdx-2][1] = t.nodes[nodeIdx]
+				}
 			}
 		} else {
 			// Even logical position in the full row.
 			if int(rightIdx+2) < len(res.Proofs) {
+				// We don't need conditional checks for the right node.
+				// We can't be sure if the left node is overflow,
+				// but if we have a right node then it is definitely overflow
+				// and therefore has room for a proof at index 1.
 				res.Proofs[rightIdx+2][1] = t.nodes[nodeIdx]
 				res.Proofs[rightIdx+1][1] = t.nodes[nodeIdx]
 			}
