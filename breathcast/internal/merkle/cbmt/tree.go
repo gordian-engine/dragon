@@ -88,7 +88,7 @@ type PopulateConfig struct {
 	//
 	// The leaf proofs never contain the Merkle root hash.
 	// At tier 1, the leaf proofs end at the Merkle root's grandchildren hashes.
-	ProofCutoffTier uint16
+	ProofCutoffTier uint8
 }
 
 // PopulateResult is the result type returned by [*Tree.Populate].
@@ -128,7 +128,7 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 
 	// cfg.ProofCutoffTier could be something larger than the actual height,
 	// so clamp it to tree height.
-	treeHeight := uint16(bits.Len16(t.nLeaves))
+	treeHeight := uint8(bits.Len16(t.nLeaves))
 	cutoffTier := min(treeHeight, cfg.ProofCutoffTier)
 
 	res := PopulateResult{
@@ -145,7 +145,7 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 
 	var proofLen uint16
 	if cutoffTier < treeHeight {
-		proofLen = treeHeight - cutoffTier - 1 // -1 because we never include root.
+		proofLen = uint16(treeHeight - cutoffTier - 1) // -1 because we never include root.
 	}
 
 	if t.nLeaves&(t.nLeaves-1) == 0 {
@@ -470,7 +470,7 @@ func (t *Tree) complete(readStartIdx uint, layerWidth uint16, cfg PopulateConfig
 		rootProofWriteIdx := -1
 		if currentTargetTier == 0 {
 			rootProofWriteIdx = 0
-		} else if currentTargetTier <= cfg.ProofCutoffTier {
+		} else if currentTargetTier <= uint16(cfg.ProofCutoffTier) {
 			rootProofWriteIdx = 2*int(currentTargetTier) - 1
 		}
 		for i := uint16(0); i < layerWidth; i += 2 {
