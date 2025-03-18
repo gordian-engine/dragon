@@ -226,6 +226,42 @@ func TestTree_Populate_simplified_5_leaves(t *testing.T) {
 			expLeaf3, expLeaf4,
 		}, res.RootProof)
 	})
+
+	// This covers a particular edge case with filling in proofs for overflow nodes.
+	t.Run("partial proof cutoff tier", func(t *testing.T) {
+		res = tree.Populate(leaves, cbmt.PopulateConfig{
+			Hasher: fnv32Hasher{},
+
+			ProofCutoffTier: 1,
+		})
+
+		require.Equal(t, [][]byte{
+			expRoot,
+			expNode01, expNode234,
+		}, res.RootProof)
+
+		require.Equal(t, [][]byte{
+			expLeaf1,
+		}, res.Proofs[0])
+
+		require.Equal(t, [][]byte{
+			expLeaf0,
+		}, res.Proofs[1])
+
+		require.Equal(t, [][]byte{
+			expNode34,
+		}, res.Proofs[2])
+
+		require.Equal(t, [][]byte{
+			expLeaf4,
+			expLeaf2,
+		}, res.Proofs[3])
+
+		require.Equal(t, [][]byte{
+			expLeaf3,
+			expLeaf2,
+		}, res.Proofs[4])
+	})
 }
 
 func TestTree_Populate_simplified_6_leaves(t *testing.T) {

@@ -382,6 +382,13 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 			res.Proofs[len(leafData)-int(overflow)-1][0] = t.nodes[nodeIdx]
 		}
 
+		// The remaining work in this loop would be setting index 1 in the leaf proofs,
+		// so if we ended up with only 1 entry in leaf proofs,
+		// skip the rest of the loop.
+		if proofLen == 1 {
+			continue
+		}
+
 		// Whether the proof is going to the left or right node,
 		// is dependent not on the i index here but on the evenness or oddness
 		// of the destination within the full layer.
