@@ -442,11 +442,14 @@ func (t *Tree) complete(readStartIdx uint, layerWidth uint16, cfg PopulateConfig
 	overflowNodeStart := t.nLeaves
 	if readStartIdx > 0 {
 		// Only have overflow nodes when we start reading past zero.
-		fullLayerWidth := uint16(1 << (bits.Len16(t.nLeaves) - 1))
-		overflowNodeStart = fullLayerWidth - t.nLeaves + fullLayerWidth // Avoid multiplication and possible overflow.
+		overflowNodeStart = layerWidth - t.nLeaves + layerWidth // Avoid multiplication and possible overflow.
 	}
 
+	baseLeafCount := overflowNodeStart
+	overflowNodeCount := layerWidth - baseLeafCount
+
 	// How many leaves that one node is worth.
+	// This is adjusted in correlation with the layer width.
 	spanWidth := uint16(2)
 
 	// Track the tier that we are writing currently.
@@ -469,9 +472,14 @@ func (t *Tree) complete(readStartIdx uint, layerWidth uint16, cfg PopulateConfig
 	leafProofLen := len(res.Proofs[0])
 
 	for layerWidth > 1 {
+		// We need to track how many of the base leaves and overflow nodes
+		// we have "consumed" during this layer iteration.
+		baseLeavesRemaining := baseLeafCount
+		overflowNodesRemaining := overflowNodeCount
+
 		// Tracking for leaf spans.
 		// Required for proper node hashes.
-		spanStart := uint16(0)
+		leafStart := uint16(0)
 
 		// We need to figure out if the proof row we are writing
 		// will go into the root proofs slice,
@@ -482,29 +490,45 @@ func (t *Tree) complete(readStartIdx uint, layerWidth uint16, cfg PopulateConfig
 		} else if currentTargetTier <= uint16(cfg.ProofCutoffTier) {
 			rootProofWriteIdx = 2*int(currentTargetTier) - 1
 		}
+
+		// When we are on an even index within the layer,
+		// we track its leaf start and end values
+		// so that we don't have to recalculate that value
+		// when we are populating the earlier sibling proof.
+		var prevEvenSiblingLeafStart, prevEvenSiblingLeafEnd uint16
+
+		// Begin writing the next layer,
+		// by iterating the current layer in pairs.
 		for i := uint16(0); i < layerWidth; i += 2 {
-			// Set up the leaf indices for the hash.
-			firstLeafIdx := spanStart
-			lastLeafIdx := firstLeafIdx - 1 + spanWidth
+			firstLeafIdx := leafStart
+			lastLeafIdx := leafStart - 1
 
-			if layerWidth == 2 {
-				// Don't try to calculate the end.
-				// We are merging the root, so it must span all leaves.
-				lastLeafIdx = t.nLeaves - 1
-			} else if i+1 >= overflowNodeStart {
-				// The nodes we are merging, are worth one more span.
-				lastLeafIdx += spanWidth
+			leavesToConsume := spanWidth
+			if baseLeavesRemaining > 0 {
+				take := min(baseLeavesRemaining, leavesToConsume)
 
-				// If the right side of our leaf is past the overflow,
-				// that usually means the left side is too.
-				// If not, then adjust the span a half width to account for that.
-				if i < overflowNodeStart {
-					lastLeafIdx -= (spanWidth >> 1)
-				}
+				baseLeavesRemaining -= take
+				lastLeafIdx += take
+				leavesToConsume -= take
+			}
+			if leavesToConsume > 0 {
+				// We didn't consume all the base leaves,
+				// so now we start taking from overflow nodes.
+				lastLeafIdx += 2 * leavesToConsume
+				overflowNodesRemaining -= leavesToConsume
 			}
 
 			binary.BigEndian.PutUint16(nc.FirstLeafIndex[:], firstLeafIdx)
 			binary.BigEndian.PutUint16(nc.LastLeafIndex[:], lastLeafIdx)
+
+			if (i & 2) == 0 {
+				// This was an even node,
+				// so track its leaf start and end
+				// for reference when we are on the odd sibling node
+				// and we need to fill in leaf proofs.
+				prevEvenSiblingLeafStart = firstLeafIdx
+				prevEvenSiblingLeafEnd = lastLeafIdx
+			}
 
 			leftNodeIdx := readStartIdx + uint(i)
 			rightNodeIdx := leftNodeIdx + 1
@@ -518,46 +542,49 @@ func (t *Tree) complete(readStartIdx uint, layerWidth uint16, cfg PopulateConfig
 
 				rootProofWriteIdx++
 			} else if leafProofLen > 0 {
-				// We have to fill in leaf proofs.
+				// We have to fill in leaf proofs,
+				// which means we have to calculate siblings.
 
-				// Calculate sibling range based on current span.
-				pairSize := spanWidth * 2
-				pairStart := (firstLeafIdx / pairSize) * pairSize
+				var siblingLeafStart, siblingLeafEnd uint16
 
-				var siblingStart, siblingEnd uint16
+				if (i & 2) == 2 {
+					// We increment i by 2 each time in this loop,
+					// so this condition means we are on an odd index
+					// in the layer we are writing.
+					// And therefore, our sibling is to the left.
+					// We held on to the previous values during the outer part of the loop.
 
-				if firstLeafIdx == pairStart {
-					// Left side of the pair, so sibling is on the right.
-					siblingStart = firstLeafIdx + spanWidth
-					if i < overflowNodeStart && i+1 >= overflowNodeStart {
-						// If the node crossed overflow,
-						// move the sibling to the right by a half span.
-						siblingStart += (spanWidth >> 1)
-					}
-					siblingEnd = siblingStart + spanWidth - 1
-
-					if siblingEnd >= overflowNodeStart {
-						// Expand the end by one more span,
-						// so that we copy in the proofs correctly.
-						siblingEnd += spanWidth
-					}
-					siblingEnd = min(siblingEnd, t.nLeaves-1)
+					siblingLeafStart = prevEvenSiblingLeafStart
+					siblingLeafEnd = prevEvenSiblingLeafEnd
 				} else {
-					// Right side of the pair, so sibling is on the left.
-					siblingStart = pairStart
-					siblingEnd = siblingStart + spanWidth - 1
+					// Sibling to the right.
+					// Work forward from the current leaf's state.
 
-					// This is a very particular but potentially common case.
-					// The overflow started in the middle of the node,
-					// so the sibling ends a half span later than otherwise.
-					if overflowNodeStart == i-1 {
-						siblingEnd += (spanWidth >> 1)
+					siblingBaseLeavesRemaining := baseLeavesRemaining
+					// Don't need to track the sibling overflow nodes remaining
+					// since this is a one-shot.
+
+					siblingLeavesToConsume := spanWidth
+
+					siblingLeafStart = lastLeafIdx + 1
+					siblingLeafEnd = lastLeafIdx
+
+					if siblingBaseLeavesRemaining > 0 {
+						take := min(siblingBaseLeavesRemaining, siblingLeavesToConsume)
+
+						siblingBaseLeavesRemaining -= take
+						siblingLeafEnd += take
+						siblingLeavesToConsume -= take
+					}
+					if siblingLeavesToConsume > 0 {
+						// Double since we are taking from the overflow leaves at this point.
+						siblingLeafEnd += 2 * siblingLeavesToConsume
 					}
 				}
 
 				// The leaf proof goes into the same index for all sibling leaves.
 				// (Except for nodes covering overflow leaves.)
-				for leafIdx := siblingStart; leafIdx <= siblingEnd; leafIdx++ {
+				for leafIdx := siblingLeafStart; leafIdx <= siblingLeafEnd; leafIdx++ {
 					adjustedLeafProofIdx := leafProofIdx
 					// There is probably a more obvious way to check this,
 					// but we know that the proof for leaf zero is always the minimal value.
@@ -573,7 +600,7 @@ func (t *Tree) complete(readStartIdx uint, layerWidth uint16, cfg PopulateConfig
 
 			writeIdx++
 
-			spanStart = lastLeafIdx + 1
+			leafStart = lastLeafIdx + 1
 		}
 
 		// Updates for next layer.
