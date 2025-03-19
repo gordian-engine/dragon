@@ -267,7 +267,7 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 	leafStartIdx := (1 << (treeHeight - 1)) - 1
 	overflowLeafStartIdx := leafStartIdx + int(fullLayerWidth)
 
-	// Overflow leaves get written first.
+	// Spillover leaves get written first.
 	for i, leaf := range leafData[nNormalLeaves:] {
 		binary.BigEndian.PutUint16(lc.LeafIndex[:], uint16(nNormalLeaves+i))
 		h.Leaf(leaf, lc, t.nodes[i][:0])
@@ -298,14 +298,14 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 	// The normal proofs are subslices of the first part of allProofsMem.
 	proofMem := allProofsMem[:normalProofsSize]
 
-	// Now write the "normal" leaves.
+	// Now write the base leaves.
 	for i, leaf := range leafData[:nNormalLeaves] {
 		binary.BigEndian.PutUint16(lc.LeafIndex[:], uint16(i))
 
 		nodeIdx := int(overflow) + i
 		h.Leaf(leaf, lc, t.nodes[nodeIdx][:0])
 
-		if cutoffTier >= treeHeight {
+		if cutoffTier >= treeHeight-1 {
 			// Normal leaf hashes go in the root proof.
 
 			// We would be completing the layer that is half this size,
@@ -367,7 +367,7 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 
 		h.Node(t.nodes[2*i], t.nodes[(2*i)+1], nc, t.nodes[nodeIdx][:0])
 
-		if cutoffTier >= treeHeight {
+		if cutoffTier >= treeHeight-1 {
 			// Overflow nodes go in the root proof.
 			res.RootProof[rootProofIdxBase+int(i)] = t.nodes[nodeIdx]
 		}
@@ -488,7 +488,7 @@ func (t *Tree) complete(readStartIdx uint, layerWidth uint16, cfg PopulateConfig
 		if currentTargetTier == 0 {
 			rootProofWriteIdx = 0
 		} else if currentTargetTier <= uint16(cfg.ProofCutoffTier) {
-			rootProofWriteIdx = 2*int(currentTargetTier) - 1
+			rootProofWriteIdx = (1 << currentTargetTier) - 1
 		}
 
 		// When we are on an even index within the layer,
