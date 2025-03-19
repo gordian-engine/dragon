@@ -2,6 +2,7 @@ package breathcast
 
 import (
 	"fmt"
+	"math/bits"
 
 	"github.com/gordian-engine/dragon/breathcast/bcmerkle"
 	"github.com/gordian-engine/dragon/breathcast/internal/merkle/cbmt"
@@ -16,6 +17,10 @@ type PrepareOriginationConfig struct {
 	// There may be internal restrictions on the chunk size
 	// that result in a size slightly smaller than the given value.
 	MaxChunkSize int
+
+	// A unique header to identify this operation.
+	// This contributes to the chunk size.
+	OperationHeader []byte
 
 	// ParityRatio indicates the desired ratio of
 	// parity chunks to data chunks.
@@ -43,7 +48,8 @@ type PrepareOriginationConfig struct {
 	Hasher bcmerkle.Hasher
 
 	// The size, in bytes, of hashes used in the Merkle tree.
-	// Necessary for
+	// This is necessary for preparing the Merkle tree,
+	// and it also contributes to the chunk size.
 	HashSize int
 
 	// An unpredictable value to be included in hashes in the Merkle tree.
@@ -58,7 +64,8 @@ type PreparedOrigination struct {
 	// The data chunks are first in the Chunks slice.
 	NumData, NumParity int
 
-	// The raw data and parity chunk data.
+	// The data and parity chunks, with metadata included.
+	// These are ready to be transfered over the network.
 	Chunks [][]byte
 
 	// ChunkProofs is a slice of the proofs for each data and parity leaf.
@@ -93,30 +100,69 @@ func PrepareOrigination(
 		))
 	}
 
-	nData := len(data) / cfg.MaxChunkSize
-	nParity := int(cfg.ParityRatio * float32(nData))
+	estimatedDataChunks := len(data) / cfg.MaxChunkSize
+	if len(data)%cfg.MaxChunkSize > 0 {
+		estimatedDataChunks++
+	}
 
-	shardSize := len(data) / nData // Initial guess.
+	estimatedParityChunks := int(cfg.ParityRatio * float32(estimatedDataChunks))
+	estimatedTotalChunks := estimatedDataChunks + estimatedParityChunks
 
-	for shardSize > cfg.MaxChunkSize {
-		nData++
-		nParity = int(cfg.ParityRatio * float32(nData))
-		if nData+nParity > (1<<16)-1 {
+	treeDepth := bits.Len(uint(estimatedTotalChunks))
+	proofNodesPerChunk := max(0, treeDepth-int(cfg.HeaderProofTier))
+	merkleProofSize := proofNodesPerChunk * cfg.HashSize
+
+	// Each of these have a 1-byte length header.
+	merkleOverhead := 1 + merkleProofSize
+	operationHeaderOverhead := 1 + len(cfg.OperationHeader)
+
+	const protocolOverhead = 15 // TODO: calculate this
+
+	totalOverhead := merkleOverhead + operationHeaderOverhead + protocolOverhead
+
+	effectiveMaxChunkSize := cfg.MaxChunkSize - totalOverhead
+
+	const minChunkSize = 32
+	if effectiveMaxChunkSize < minChunkSize {
+		return PreparedOrigination{}, fmt.Errorf(
+			"chunk size too small: minimum is %d but calculated %d",
+			minChunkSize, effectiveMaxChunkSize,
+		)
+	}
+
+	expShardCount := (len(data) / effectiveMaxChunkSize) +
+		int(cfg.ParityRatio*float32(len(data))/float32(effectiveMaxChunkSize))
+
+	if expShardCount > 255 {
+		// Round down to nearest multiple of 64.
+		effectiveMaxChunkSize -= (effectiveMaxChunkSize % 64)
+
+		if effectiveMaxChunkSize < minChunkSize {
 			return PreparedOrigination{}, fmt.Errorf(
-				"data too large: resulted in %d data and %d parity chunks, but limit is %d",
-				nData, nParity, (1<<16)-1,
+				"chunk size too small after aligning for %d shards: minimum is %d but calculated %d",
+				expShardCount, minChunkSize, effectiveMaxChunkSize,
 			)
 		}
+	}
 
-		shardSize = len(data) / nData
-		// TODO: this needs to account for the ShardSizeMultiple,
-		// which becomes required when exceeding 256 shards
-		// in the default reedsolomon encoding options.
+	nData := len(data) / effectiveMaxChunkSize
+	if len(data)%effectiveMaxChunkSize > 0 {
+		nData++
+	}
+
+	nParity := int(cfg.ParityRatio * float32(nData))
+	totalChunks := nData + nParity
+
+	if totalChunks > (1<<16)-1 {
+		return PreparedOrigination{}, fmt.Errorf(
+			"data too large: resulted in %d data and %d parity chunks, but limit is %d",
+			nData, nParity, (1<<16)-1,
+		)
 	}
 
 	enc, err := reedsolomon.New(
 		nData, nParity,
-		reedsolomon.WithAutoGoroutines(shardSize),
+		reedsolomon.WithAutoGoroutines(effectiveMaxChunkSize),
 	)
 	if err != nil {
 		return PreparedOrigination{}, fmt.Errorf(
@@ -141,6 +187,8 @@ func PrepareOrigination(
 			"failed to erasure-code data: %w", err,
 		)
 	}
+	// TODO: create a new slice for chunks,
+	// adding prefixes for header data, proof size and proof content.
 	po.Chunks = rawChunks
 
 	// Now that the data is erasure-coded,
