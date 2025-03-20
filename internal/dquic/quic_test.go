@@ -5,7 +5,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/gordian-engine/dragon/internal/dquictest"
+	"github.com/gordian-engine/dragon/internal/dquic/dquictest"
 	"github.com/gordian-engine/dragon/internal/dtest"
 	"github.com/quic-go/quic-go"
 	"github.com/stretchr/testify/require"
