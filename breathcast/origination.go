@@ -61,23 +61,25 @@ type PrepareOriginationConfig struct {
 // PreparedOrigination is the value returned by [PrepareOrigination].
 type PreparedOrigination struct {
 	// The number of data and parity chunks.
-	// The data chunks are first in the Chunks slice.
 	NumData, NumParity int
-
-	// The data and parity chunks, with metadata included.
-	// These are ready to be transfered over the network.
-	Chunks [][]byte
-
-	// ChunkProofs is a slice of the proofs for each data and parity leaf.
-	// The proof values are references into the existing Merkle tree,
-	// and therefore they must not be modified.
-	ChunkProofs [][][]byte
 
 	// RootProof is the set of proofs
 	// to be included in the origination header.
 	// A longer root proof in the header
 	// allows the chunk proofs to be shorter.
 	RootProof [][]byte
+
+	// The data and parity chunks, with metadata included.
+	// These are ready to be transfered over the network.
+	// TODO: this should be unexported because it is internal to this package.
+	Chunks [][]byte
+
+	// ChunkProofs is a slice of the proofs for each data and parity leaf.
+	// The proof values are references into the existing Merkle tree,
+	// and therefore they must not be modified.
+	// TODO: this needs to be removed as a field
+	// once it is merged with chunks.
+	ChunkProofs [][][]byte
 }
 
 // PrepareOrigination converts the given data and config
