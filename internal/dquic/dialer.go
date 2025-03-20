@@ -1,4 +1,4 @@
-package dragon
+package dquic
 
 import (
 	"context"
@@ -11,8 +11,8 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-// dialer handles establishing QUIC connections with remote nodes.
-type dialer struct {
+// Dialer handles establishing QUIC connections with remote peers.
+type Dialer struct {
 	BaseTLSConf *tls.Config
 
 	QUICTransport *quic.Transport
@@ -21,7 +21,8 @@ type dialer struct {
 	CAPool *dcert.Pool
 }
 
-type dialResult struct {
+// DialResult is the return type for [Dialer.Dial].
+type DialResult struct {
 	Conn quic.Connection
 
 	// A channel that is closed when the peer's CA certificate
@@ -36,13 +37,13 @@ type dialResult struct {
 // which is closed if the remote's CA is removed from the trusted pool.
 // It is the caller's responsibility to handle closing the returned connection
 // upon detecting that the NotifyCARemoved channel is closed.
-func (d dialer) Dial(ctx context.Context, addr net.Addr) (dialResult, error) {
+func (d Dialer) Dial(ctx context.Context, addr net.Addr) (DialResult, error) {
 	tlsConf := d.BaseTLSConf.Clone()
 	tlsConf.RootCAs = d.CAPool.CertPool()
 
 	qc, err := d.QUICTransport.Dial(ctx, addr, tlsConf, d.QUICConfig)
 	if err != nil {
-		return dialResult{}, fmt.Errorf("failed to dial desired neighbor: %w", err)
+		return DialResult{}, fmt.Errorf("failed to dial desired neighbor: %w", err)
 	}
 
 	// Now that we have a raw connection to that peer,
@@ -71,7 +72,7 @@ func (d dialer) Dial(ctx context.Context, addr net.Addr) (dialResult, error) {
 		))
 	}
 
-	return dialResult{
+	return DialResult{
 		Conn: qc,
 
 		NotifyCARemoved: notify,

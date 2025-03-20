@@ -21,6 +21,7 @@ import (
 	"github.com/gordian-engine/dragon/internal/dprotoi/dbootstrap/dbsacceptneighbor"
 	"github.com/gordian-engine/dragon/internal/dprotoi/dbootstrap/dbsinbound"
 	"github.com/gordian-engine/dragon/internal/dprotoi/dbootstrap/dbssendjoin"
+	"github.com/gordian-engine/dragon/internal/dquic"
 	"github.com/quic-go/quic-go"
 )
 
@@ -43,7 +44,7 @@ type Node struct {
 
 	caPool *dcert.Pool
 
-	dialer dialer
+	dialer dquic.Dialer
 
 	advertiseAddr string
 }
@@ -359,7 +360,7 @@ func NewNode(ctx context.Context, log *slog.Logger, cfg NodeConfig) (*Node, erro
 
 		caPool: caPool,
 
-		dialer: dialer{
+		dialer: dquic.Dialer{
 			BaseTLSConf: baseTLSConf,
 
 			QUICTransport: qt,
