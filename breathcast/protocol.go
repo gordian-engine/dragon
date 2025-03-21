@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/gordian-engine/dragon/dconn"
 )
@@ -13,13 +14,15 @@ import (
 type Protocol struct {
 	log *slog.Logger
 
-	connChanges <-chan dconn.Change
+	connChanges       <-chan dconn.Change
+	originateRequests chan originateRequest
 
 	// Application-decided protocol ID to use for Breathcast.
 	// Maybe we don't need this since the application
 	// is supposed to route requests here?
 	protocolID byte
 
+	// Tracks the mainLoop goroutine and the connection worker goroutines.
 	wg sync.WaitGroup
 }
 
@@ -32,6 +35,9 @@ type ProtocolConfig struct {
 
 	// How to inform the protocol of connection changes.
 	ConnectionChanges <-chan dconn.Change
+
+	// The single header byte to be sent on outgoing streams.
+	ProtocolID byte
 }
 
 // NewProtocol returns a new Protocol value with the given configuration.
@@ -41,10 +47,36 @@ func NewProtocol(ctx context.Context, log *slog.Logger, cfg ProtocolConfig) *Pro
 		log: log,
 
 		connChanges: cfg.ConnectionChanges,
+
+		// Unbuffered since the caller blocks on it.
+		originateRequests: make(chan originateRequest),
+
+		protocolID: cfg.ProtocolID,
+	}
+
+	connWorkers := make(map[string]*connectionWorker, len(cfg.InitialConnections))
+	for _, conn := range cfg.InitialConnections {
+		wCtx, cancel := context.WithCancel(ctx)
+
+		w := &connectionWorker{
+			Ctx:    wCtx,
+			Cancel: cancel,
+
+			Log: p.log.With("conn", conn.QUIC.RemoteAddr().String()),
+
+			QUIC:  conn.QUIC,
+			Chain: conn.Chain,
+
+			Originations: make(chan origination, 4), // Arbitrarily sized at 4.
+		}
+
+		p.wg.Add(1)
+		go w.Work(&p.wg)
+		connWorkers[string(conn.Chain.Leaf.RawSubjectPublicKeyInfo)] = w
 	}
 
 	p.wg.Add(1)
-	go p.mainLoop(ctx, cfg.InitialConnections)
+	go p.mainLoop(ctx, connWorkers)
 
 	return p
 }
@@ -56,8 +88,9 @@ func (p *Protocol) Wait() {
 	p.wg.Wait()
 }
 
-func (p *Protocol) mainLoop(ctx context.Context, conns []dconn.Conn) {
+func (p *Protocol) mainLoop(ctx context.Context, connWorkers map[string]*connectionWorker) {
 	defer p.wg.Done()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -65,37 +98,69 @@ func (p *Protocol) mainLoop(ctx context.Context, conns []dconn.Conn) {
 				"Stopping due to context cancellation",
 				"cause", context.Cause(ctx),
 			)
+
+			// We don't need to cancel any of the workers,
+			// because all of their contexts were derived from this ctx.
 			return
 
 		case change := <-p.connChanges:
+			key := string(change.Conn.Chain.Leaf.RawSubjectPublicKeyInfo)
+			w, have := connWorkers[key]
+
 			if change.Adding {
-				conns = append(conns, change.Conn)
-			} else {
-				removed := false
-				for i, c := range conns {
-					if !change.Conn.Chain.Leaf.Equal(c.Chain.Leaf) {
-						continue
-					}
-
-					// Found our leaf.
-					// Swap the last position of connections with current.
-					conns[i] = conns[len(conns)-1]
-					conns[len(conns)-1] = dconn.Conn{} // Zero out entry for GC.
-					conns = conns[:len(conns)-1]
-
-					removed = true
-					break
+				if have {
+					panic(fmt.Errorf(
+						"BUG: attempted to add identical leaf certificate %q twice", key,
+					))
 				}
 
-				if !removed {
+				wCtx, cancel := context.WithCancel(ctx)
+				w := &connectionWorker{
+					Ctx:    wCtx,
+					Cancel: cancel,
+
+					Log: p.log.With("conn", change.Conn.QUIC.RemoteAddr().String()),
+
+					QUIC:  change.Conn.QUIC,
+					Chain: change.Conn.Chain,
+
+					Originations: make(chan origination, 4), // Arbitrarily sized at 4.
+				}
+
+				p.wg.Add(1)
+				go w.Work(&p.wg)
+				connWorkers[key] = w
+			} else {
+				if !have {
 					panic(fmt.Errorf(
-						"BUG: attempted to remove connection %#v but it was not in list",
-						change.Conn,
+						"BUG: attempted to remove leaf certificate %q that did not exist", key,
+					))
+				}
+
+				w.Cancel()
+				delete(connWorkers, key)
+			}
+
+		case req := <-p.originateRequests:
+			// Fan out this request to every connection worker.
+			// This blocks the main loop,
+			// which seems necessary since we retain the only copy
+			// of the connection worker map.
+			for _, cw := range connWorkers {
+				select {
+				case cw.Originations <- req.O:
+					// Okay.
+				default:
+					// We could possibly just drop the connection here.
+					// Or we could collect the blocked ones in a slice and retry one more time.
+					// Not very clear what the best solution is, yet.
+					panic(fmt.Errorf(
+						"TODO: decide how to handle blocked send on origination work",
 					))
 				}
 			}
 
-			// TODO: this needs to also output to every in-progress operation.
+			close(req.Resp)
 		}
 	}
 }
@@ -129,6 +194,53 @@ func (p *Protocol) Originate(
 	headerData []byte,
 	dataChunks [][]byte,
 	parityChunks [][]byte,
-) OriginateTask {
-	return OriginateTask{}
+) (OriginateTask, error) {
+	t := OriginateTask{}
+
+	resp := make(chan struct{})
+	req := originateRequest{
+		O: origination{
+			Ctx: ctx,
+
+			// TODO: these should be configurable.
+			OpenStreamTimeout: 50 * time.Millisecond,
+			SendHeaderTimeout: 50 * time.Millisecond,
+
+			ProtocolID: p.protocolID,
+
+			Header:       headerData,
+			DataChunks:   dataChunks,
+			ParityChunks: parityChunks,
+		},
+		Resp: resp,
+	}
+
+	select {
+	case <-ctx.Done():
+		return t, fmt.Errorf(
+			"context canceled while sending origination request: %w",
+			context.Cause(ctx),
+		)
+	case p.originateRequests <- req:
+		return t, nil
+	}
+}
+
+type origination struct {
+	Ctx context.Context
+
+	OpenStreamTimeout time.Duration
+	SendHeaderTimeout time.Duration
+
+	ProtocolID byte
+
+	Header       []byte
+	DataChunks   [][]byte
+	ParityChunks [][]byte
+}
+
+type originateRequest struct {
+	O origination
+
+	Resp chan struct{}
 }
