@@ -10,6 +10,7 @@ import (
 	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dcert/dcerttest"
 	"github.com/gordian-engine/dragon/internal/dquic"
+	"github.com/gordian-engine/dragon/internal/dtest"
 	"github.com/quic-go/quic-go"
 	"github.com/stretchr/testify/require"
 )
@@ -109,6 +110,51 @@ func NewListenerSet(t *testing.T, ctx context.Context, count int) *ListenerSet {
 	}
 
 	return ls
+}
+
+// Dial dials from the connection at srcIdx, to the listener at dstIdx.
+// It returns srcConn, which is the outgoing connection from the source,
+// and dstConn, which is the inbound connection for the destination.
+//
+// To do this, the listener set temporarily
+// accepts a connection on the destination listener.
+// If there is already an attempt to accept a connection there,
+// the two attempts will race and the test will be inconsistent.
+func (ls *ListenerSet) Dial(t *testing.T, srcIdx, dstIdx int) (srcConn, dstConn quic.Connection) {
+	t.Helper()
+
+	if srcIdx < 0 || srcIdx >= len(ls.UDPConns) || dstIdx < 0 || dstIdx >= len(ls.UDPConns) {
+		t.Fatalf(
+			"indices must be in range [0, %d]; got srcIdx=%d and dstIdx=%d",
+			len(ls.UDPConns)-1, srcIdx, dstIdx,
+		)
+		return
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	t.Cleanup(cancel)
+
+	connAcceptedCh := make(chan quic.Connection, 1)
+
+	go func() {
+		acceptedConn, err := ls.QLs[dstIdx].Accept(ctx)
+		if err != nil {
+			t.Error(err)
+			connAcceptedCh <- nil
+			return
+		}
+
+		connAcceptedCh <- acceptedConn
+	}()
+
+	res, err := ls.Dialer(srcIdx).Dial(ctx, ls.UDPConns[dstIdx].LocalAddr())
+	require.NoError(t, err)
+
+	acceptedConn := dtest.ReceiveSoon(t, connAcceptedCh)
+	require.NotNil(t, acceptedConn)
+
+	return res.Conn, acceptedConn
 }
 
 func (ls *ListenerSet) Dialer(idx int) dquic.Dialer {

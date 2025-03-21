@@ -19,22 +19,7 @@ func TestDial_stream(t *testing.T) {
 
 	ls := dquictest.NewListenerSet(t, ctx, 2)
 
-	connAcceptedCh := make(chan quic.Connection, 1)
-	go func() {
-		acceptedConn, err := ls.QLs[1].Accept(ctx)
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		connAcceptedCh <- acceptedConn
-	}()
-	res, err := ls.Dialer(0).Dial(ctx, ls.UDPConns[1].LocalAddr())
-	require.NoError(t, err)
-
-	acceptedConn := dtest.ReceiveSoon(t, connAcceptedCh)
-	require.NotNil(t, acceptedConn)
-
-	createdConn := res.Conn
+	acceptedConn, createdConn := ls.Dial(t, 0, 1)
 
 	streamAcceptedCh := make(chan quic.Stream, 1)
 	go func() {
