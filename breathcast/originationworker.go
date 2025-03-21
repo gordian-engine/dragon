@@ -2,6 +2,7 @@ package breathcast
 
 import (
 	"context"
+	"encoding/binary"
 	"log/slog"
 	"time"
 )
@@ -59,6 +60,19 @@ func (w *originationWorker) run(o origination) {
 	if _, err := s.Write([]byte{o.ProtocolID}); err != nil {
 		w.log.Info(
 			"Failed to write protocol header for origination stream",
+			"err", err,
+		)
+		w.handleOriginationError(err)
+		return
+	}
+
+	// Then the 16-bit big-endian header length.
+	// Still using the previous write deadline.
+	var headerSize [2]byte
+	binary.BigEndian.PutUint16(headerSize[:], uint16(len(o.Header)))
+	if _, err := s.Write(headerSize[:]); err != nil {
+		w.log.Info(
+			"Failed to write header length for origination stream",
 			"err", err,
 		)
 		w.handleOriginationError(err)

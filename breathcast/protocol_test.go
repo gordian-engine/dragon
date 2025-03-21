@@ -74,9 +74,13 @@ func TestProtocol_Originate_header(t *testing.T) {
 	acceptedStream := dtest.ReceiveSoon(t, acceptedStreamCh)
 	require.NotNil(t, acceptedStream)
 
-	headerBuf := make([]byte, 1+len(header))
+	headerBuf := make([]byte, 1)
 	_, err = io.ReadFull(acceptedStream, headerBuf)
 	require.NoError(t, err)
+	require.Equal(t, []byte{0x91}, headerBuf)
 
-	require.Equal(t, "\x91"+string(header), string(headerBuf))
+	extractedHeader, err := breathcast.ExtractBroadcastHeader(acceptedStream, nil)
+	require.NoError(t, err)
+
+	require.Equal(t, header, extractedHeader)
 }

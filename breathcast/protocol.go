@@ -2,7 +2,9 @@ package breathcast
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
+	"io"
 	"log/slog"
 	"sync"
 	"time"
@@ -197,6 +199,13 @@ func (p *Protocol) Originate(
 ) (OriginateTask, error) {
 	t := OriginateTask{}
 
+	if len(headerData) > (1<<16)-1 {
+		return t, fmt.Errorf(
+			"headerData too long: %d exceeds limit of %d",
+			len(headerData), (1<<16)-1,
+		)
+	}
+
 	resp := make(chan struct{})
 	req := originateRequest{
 		O: origination{
@@ -243,4 +252,43 @@ type originateRequest struct {
 	O origination
 
 	Resp chan struct{}
+}
+
+// ExtractBroadcastHeader extracts the application-provided header data
+// from the given reader (which should be a QUIC stream).
+// The extracted data is appended to the given dst slice,
+// which is permitted to be nil.
+//
+// The caller is responsible for setting any read deadlines.
+//
+// It is assumed that the caller has already consumed
+// the protocol ID byte matching [ProtocolConfig.ProtocolID].
+func ExtractBroadcastHeader(r io.Reader, dst []byte) ([]byte, error) {
+	// First extract the header length.
+	var szBuf [2]byte
+	if _, err := io.ReadFull(r, szBuf[:]); err != nil {
+		return nil, fmt.Errorf(
+			"failed to read header length from origination protocol stream: %w",
+			err,
+		)
+	}
+
+	sz := binary.BigEndian.Uint16(szBuf[:])
+
+	if cap(dst) >= int(sz) {
+		dst = dst[:sz]
+	} else {
+		dst = make([]byte, sz)
+	}
+
+	if n, err := io.ReadFull(r, dst); err != nil {
+		// Seems unlikely that dst would be useful to the caller on error,
+		// but returning what we've read so far seems more proper anyway.
+		return dst[:n], fmt.Errorf(
+			"failed to read header from origination protocol stream: %w",
+			err,
+		)
+	}
+
+	return dst, nil
 }
