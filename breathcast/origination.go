@@ -20,6 +20,8 @@ type PrepareOriginationConfig struct {
 
 	// A unique header to identify this operation.
 	// This contributes to the chunk size.
+	// This header will be used by all participants in this broadcast,
+	// so the application must take care to ensure its uniqueness.
 	OperationHeader []byte
 
 	// ParityRatio indicates the desired ratio of

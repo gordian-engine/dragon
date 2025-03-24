@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/gordian-engine/dragon/breathcast"
 	"github.com/gordian-engine/dragon/dconn"
@@ -79,6 +80,8 @@ func TestProtocol_Originate_header(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []byte{0x91}, headerBuf)
 
+	// Caller must manually set the read deadline before extracting broadcast header.
+	require.NoError(t, acceptedStream.SetReadDeadline(time.Now().Add(time.Second)))
 	extractedHeader, err := breathcast.ExtractBroadcastHeader(acceptedStream, nil)
 	require.NoError(t, err)
 

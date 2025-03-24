@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gordian-engine/dragon/dconn"
+	"github.com/quic-go/quic-go"
 )
 
 // Protocol controls all the operations of the "breathcast" broadcasting protocol.
@@ -23,6 +24,13 @@ type Protocol struct {
 	// Maybe we don't need this since the application
 	// is supposed to route requests here?
 	protocolID byte
+
+	// All broadcast headers within a protocol instance
+	// must have the same length,
+	// so that they can be uniformly decoded.
+	// If the underlying header data is not uniform,
+	// use a cryptographic hash of the underlying data.
+	broadcastHeaderLength uint8
 
 	// Tracks the mainLoop goroutine and the connection worker goroutines.
 	wg sync.WaitGroup
@@ -197,7 +205,9 @@ func (p *Protocol) Originate(
 	dataChunks [][]byte,
 	parityChunks [][]byte,
 ) (OriginateTask, error) {
-	t := OriginateTask{}
+	t := OriginateTask{
+		// TODO: still unclear what fields belong in this type.
+	}
 
 	if len(headerData) > (1<<16)-1 {
 		return t, fmt.Errorf(
@@ -254,6 +264,32 @@ type originateRequest struct {
 	Resp chan struct{}
 }
 
+func (p *Protocol) AcceptBroadcast(
+	ctx context.Context,
+	s quic.Stream,
+	cfg BroadcastConfig,
+) error {
+	// Make a relay request to main loop with these details.
+	// There has to be some kind of Relay task is a central coordinator
+	// for all relay workers.
+	panic("TODO")
+}
+
+// BroadcastConfig configures [*Protocol.AcceptBrodacast],
+// indicating the properties of the broadcast being accepted.
+type BroadcastConfig struct {
+	// Header associated with each datagram chunk.
+	OperationHeader []byte
+
+	// At least the root of the Merkle tree,
+	// but likely contains some of the root's descendants too.
+	RootProof [][]byte
+
+	// The number of data and parity chunks;
+	// required for proper Merkle tree reconstitution.
+	NData, NParity uint16
+}
+
 // ExtractBroadcastHeader extracts the application-provided header data
 // from the given reader (which should be a QUIC stream).
 // The extracted data is appended to the given dst slice,
@@ -264,16 +300,22 @@ type originateRequest struct {
 // It is assumed that the caller has already consumed
 // the protocol ID byte matching [ProtocolConfig.ProtocolID].
 func ExtractBroadcastHeader(r io.Reader, dst []byte) ([]byte, error) {
-	// First extract the header length.
-	var szBuf [2]byte
-	if _, err := io.ReadFull(r, szBuf[:]); err != nil {
+	// First extract the have ratio and the header length.
+	var buf [3]byte
+	if _, err := io.ReadFull(r, buf[:]); err != nil {
 		return nil, fmt.Errorf(
-			"failed to read header length from origination protocol stream: %w",
+			"failed to read ratio and header length from origination protocol stream: %w",
 			err,
 		)
 	}
 
-	sz := binary.BigEndian.Uint16(szBuf[:])
+	if buf[0] != 0xff {
+		panic(fmt.Errorf(
+			"TODO: handle relayed broadcast (got ratio byte 0x%x)", buf[0],
+		))
+	}
+
+	sz := binary.BigEndian.Uint16(buf[1:])
 
 	if cap(dst) >= int(sz) {
 		dst = dst[:sz]

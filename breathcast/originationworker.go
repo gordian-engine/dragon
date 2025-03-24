@@ -56,23 +56,19 @@ func (w *originationWorker) run(o origination) {
 		return
 	}
 
-	// Protocol header first.
-	if _, err := s.Write([]byte{o.ProtocolID}); err != nil {
+	var protoHeader [4]byte
+	// Application-decided protocol ID.
+	protoHeader[0] = o.ProtocolID
+
+	// As the broadcast originator, our "have ratio" is 100%.
+	protoHeader[1] = 0xFF
+
+	// Then the 16-bit big-endian app header length.
+	binary.BigEndian.PutUint16(protoHeader[2:], uint16(len(o.Header)))
+
+	if _, err := s.Write(protoHeader[:]); err != nil {
 		w.log.Info(
 			"Failed to write protocol header for origination stream",
-			"err", err,
-		)
-		w.handleOriginationError(err)
-		return
-	}
-
-	// Then the 16-bit big-endian header length.
-	// Still using the previous write deadline.
-	var headerSize [2]byte
-	binary.BigEndian.PutUint16(headerSize[:], uint16(len(o.Header)))
-	if _, err := s.Write(headerSize[:]); err != nil {
-		w.log.Info(
-			"Failed to write header length for origination stream",
 			"err", err,
 		)
 		w.handleOriginationError(err)
