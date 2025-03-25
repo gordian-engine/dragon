@@ -86,7 +86,37 @@ func (w *originationWorker) run(o origination) {
 		return
 	}
 
-	// TODO: accept origination acknowledgement.
+	if err := s.SetReadDeadline(time.Now().Add(o.ReceiveAckTimeout)); err != nil {
+		w.log.Info(
+			"Failed to set read deadline for origination stream",
+			"err", err,
+		)
+		w.handleOriginationError(err)
+		return
+	}
+
+	// TODO: would start sending datagrams here.
+	// Not yet clear if that should block this goroutine or happen asynchronously.
+
+	if err := s.SetWriteDeadline(time.Now().Add(o.SendCompletionTimeout)); err != nil {
+		w.log.Info(
+			"Failed to set write deadline for completion",
+			"err", err,
+		)
+		w.handleOriginationError(err)
+		return
+	}
+
+	if _, err := s.Write([]byte{0xFF}); err != nil {
+		w.log.Info(
+			"Failed to write completion indicator",
+			"err", err,
+		)
+		w.handleOriginationError(err)
+		return
+	}
+
+	// TODO: read status from peer, so we know what chunks they still need.
 }
 
 func (w *originationWorker) handleOriginationError(e error) {

@@ -3,6 +3,8 @@ module github.com/gordian-engine/dragon
 go 1.23.6
 
 require (
+	github.com/bits-and-blooms/bitset v1.22.0
+	github.com/klauspost/reedsolomon v1.12.4
 	github.com/neilotoole/slogt v1.1.0
 	github.com/quic-go/quic-go v0.50.0
 	github.com/stretchr/testify v1.10.0
@@ -13,7 +15,6 @@ require (
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
 	github.com/google/pprof v0.0.0-20250208200701-d0013a598941 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.8 // indirect
-	github.com/klauspost/reedsolomon v1.12.4 // indirect
 	github.com/onsi/ginkgo/v2 v2.22.2 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	go.uber.org/mock v0.5.0 // indirect

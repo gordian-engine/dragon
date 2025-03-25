@@ -9,8 +9,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bits-and-blooms/bitset"
 	"github.com/gordian-engine/dragon/dconn"
-	"github.com/quic-go/quic-go"
+	"github.com/klauspost/reedsolomon"
 )
 
 // Protocol controls all the operations of the "breathcast" broadcasting protocol.
@@ -25,12 +26,12 @@ type Protocol struct {
 	// is supposed to route requests here?
 	protocolID byte
 
-	// All broadcast headers within a protocol instance
+	// All broadcast IDs within a protocol instance
 	// must have the same length,
 	// so that they can be uniformly decoded.
 	// If the underlying header data is not uniform,
 	// use a cryptographic hash of the underlying data.
-	broadcastHeaderLength uint8
+	broadcastIDLength uint8
 
 	// Tracks the mainLoop goroutine and the connection worker goroutines.
 	wg sync.WaitGroup
@@ -48,11 +49,25 @@ type ProtocolConfig struct {
 
 	// The single header byte to be sent on outgoing streams.
 	ProtocolID byte
+
+	// The fixed length of broadcast identifiers.
+	// This needs to be extracted from the origination header
+	// and it consumes space in chunk datagrams.
+	BroadcastIDLength uint8
 }
 
 // NewProtocol returns a new Protocol value with the given configuration.
 // The given context controls the lifecycle of the Protocol.
 func NewProtocol(ctx context.Context, log *slog.Logger, cfg ProtocolConfig) *Protocol {
+	if cfg.BroadcastIDLength == 0 {
+		// It's plausible that there would be a use case
+		// for saving the space required for broadcast IDs,
+		// so for now we will allow zero with a warning.
+		log.Warn(
+			"Using broadcast ID length of zero prevents the network from having more than one distinct broadcast at a time",
+		)
+	}
+
 	p := &Protocol{
 		log: log,
 
@@ -62,6 +77,8 @@ func NewProtocol(ctx context.Context, log *slog.Logger, cfg ProtocolConfig) *Pro
 		originateRequests: make(chan originateRequest),
 
 		protocolID: cfg.ProtocolID,
+
+		broadcastIDLength: cfg.BroadcastIDLength,
 	}
 
 	connWorkers := make(map[string]*connectionWorker, len(cfg.InitialConnections))
@@ -222,8 +239,10 @@ func (p *Protocol) Originate(
 			Ctx: ctx,
 
 			// TODO: these should be configurable.
-			OpenStreamTimeout: 50 * time.Millisecond,
-			SendHeaderTimeout: 50 * time.Millisecond,
+			OpenStreamTimeout:     50 * time.Millisecond,
+			SendHeaderTimeout:     50 * time.Millisecond,
+			ReceiveAckTimeout:     50 * time.Millisecond,
+			SendCompletionTimeout: 25 * time.Millisecond,
 
 			ProtocolID: p.protocolID,
 
@@ -248,8 +267,10 @@ func (p *Protocol) Originate(
 type origination struct {
 	Ctx context.Context
 
-	OpenStreamTimeout time.Duration
-	SendHeaderTimeout time.Duration
+	OpenStreamTimeout     time.Duration
+	SendHeaderTimeout     time.Duration
+	ReceiveAckTimeout     time.Duration
+	SendCompletionTimeout time.Duration
 
 	ProtocolID byte
 
@@ -264,30 +285,32 @@ type originateRequest struct {
 	Resp chan struct{}
 }
 
-func (p *Protocol) AcceptBroadcast(
-	ctx context.Context,
-	s quic.Stream,
-	cfg BroadcastConfig,
-) error {
-	// Make a relay request to main loop with these details.
-	// There has to be some kind of Relay task is a central coordinator
-	// for all relay workers.
-	panic("TODO")
-}
+func (p *Protocol) CreateRelayOperation(
+	createCtx, taskCtx context.Context,
+	cfg RelayOperationConfig,
+) (*RelayOperation, error) {
+	enc, err := reedsolomon.New(
+		int(cfg.NData), int(cfg.NParity),
+		reedsolomon.WithAutoGoroutines(int(cfg.ShardSize)),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create reed solomon encoder: %w", err)
+	}
 
-// BroadcastConfig configures [*Protocol.AcceptBrodacast],
-// indicating the properties of the broadcast being accepted.
-type BroadcastConfig struct {
-	// Header associated with each datagram chunk.
-	OperationHeader []byte
+	shards := reedsolomon.AllocAligned(int(cfg.NData+cfg.NParity), int(cfg.ShardSize))
 
-	// At least the root of the Merkle tree,
-	// but likely contains some of the root's descendants too.
-	RootProof [][]byte
+	t := &RelayOperation{
+		p: p,
 
-	// The number of data and parity chunks;
-	// required for proper Merkle tree reconstitution.
-	NData, NParity uint16
+		enc: enc,
+
+		ackTimeout: cfg.AckTimeout,
+
+		shards: shards,
+		have:   bitset.New(uint(cfg.NData + cfg.NParity)),
+	}
+
+	return t, nil
 }
 
 // ExtractBroadcastHeader extracts the application-provided header data
