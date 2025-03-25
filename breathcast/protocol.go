@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bits-and-blooms/bitset"
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/klauspost/reedsolomon"
 )
@@ -300,15 +299,18 @@ func (p *Protocol) CreateRelayOperation(
 	shards := reedsolomon.AllocAligned(int(cfg.NData+cfg.NParity), int(cfg.ShardSize))
 
 	t := &RelayOperation{
+		log: p.log.With("op", "relay"),
+
 		p: p,
 
 		enc: enc,
 
-		ackTimeout: cfg.AckTimeout,
+		acceptBroadcastRequests: make(chan acceptBroadcastRequest, 4), // Arbitrary size.
 
-		shards: shards,
-		have:   bitset.New(uint(cfg.NData + cfg.NParity)),
+		ackTimeout: cfg.AckTimeout,
 	}
+
+	go t.run(taskCtx, shards)
 
 	return t, nil
 }

@@ -7,6 +7,11 @@ import (
 	"time"
 )
 
+// After sending all the datagrams of chunks,
+// this byte is sent over the reliable channel
+// to notify the receiver that they must now request any missing chunks.
+const originationCompletion byte = 0xff
+
 // originationWorker manages the work of originating a broadcast
 // to the peers in the active view.
 type originationWorker struct {
@@ -107,7 +112,7 @@ func (w *originationWorker) run(o origination) {
 		return
 	}
 
-	if _, err := s.Write([]byte{0xFF}); err != nil {
+	if _, err := s.Write([]byte{originationCompletion}); err != nil {
 		w.log.Info(
 			"Failed to write completion indicator",
 			"err", err,
