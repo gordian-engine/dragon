@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/bits-and-blooms/bitset"
+	"github.com/gordian-engine/dragon/internal/dchan"
 	"github.com/klauspost/reedsolomon"
 	"github.com/quic-go/quic-go"
 )
@@ -36,6 +37,8 @@ type RelayOperation struct {
 	// they need to consult the main loop to decide what work needs to be done.
 	checkDatagramRequests chan checkDatagramRequest
 
+	newDatagrams *dchan.Multicast[incomingDatagram]
+
 	ackTimeout time.Duration
 
 	workerWG sync.WaitGroup
@@ -49,6 +52,16 @@ type acceptBroadcastRequest struct {
 type checkDatagramRequest struct {
 	Raw  []byte
 	Resp chan checkDatagramResponse
+}
+
+// incomingDatagram is the raw data of a broadcast chunk datagram,
+// and its chunk index.
+//
+// These are used in the [RelayOperation] so that [relayWorker] instances
+// can follow datagram updates and forward them to the peers.
+type incomingDatagram struct {
+	Raw []byte
+	Idx uint16
 }
 
 // checkDatagramResponse is the information that the protocol main loop

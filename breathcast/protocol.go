@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gordian-engine/dragon/dconn"
+	"github.com/gordian-engine/dragon/internal/dchan"
 	"github.com/klauspost/reedsolomon"
 )
 
@@ -311,6 +312,8 @@ func (p *Protocol) CreateRelayOperation(
 		// Both arbitrarily sized for now.
 		acceptBroadcastRequests: make(chan acceptBroadcastRequest, 4),
 		checkDatagramRequests:   make(chan checkDatagramRequest, 4),
+
+		newDatagrams: dchan.NewMulticast[incomingDatagram](),
 
 		ackTimeout: cfg.AckTimeout,
 	}
