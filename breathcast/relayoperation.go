@@ -28,7 +28,13 @@ type RelayOperation struct {
 
 	enc reedsolomon.Encoder
 
+	rootProof [][]byte
+
 	acceptBroadcastRequests chan acceptBroadcastRequest
+
+	// When datagrams are routed to relay operations,
+	// they need to consult the main loop to decide what work needs to be done.
+	checkDatagramRequests chan checkDatagramRequest
 
 	ackTimeout time.Duration
 
@@ -39,6 +45,33 @@ type acceptBroadcastRequest struct {
 	S    quic.Stream
 	Resp chan struct{}
 }
+
+type checkDatagramRequest struct {
+	Raw  []byte
+	Resp chan checkDatagramResponse
+}
+
+// checkDatagramResponse is the information that the protocol main loop
+// sends to the datagram receiver,
+// indicating what work needs to be offloaded from the main loop
+// to the receiver's goroutine.
+type checkDatagramResponse uint8
+
+const (
+	// Nothing for zero.
+	_ checkDatagramResponse = iota
+
+	// The index was out of bounds.
+	checkDatagramInvalidIndex
+
+	// We already have the chunk ID.
+	// The caller could choose whether to verify the proof anyway,
+	// depending on the level of peer trust.
+	checkDatagramAlreadyHaveChunk
+
+	// The chunk ID is in bounds and we don't have the chunk.
+	checkDatagramNeed
+)
 
 func (o *RelayOperation) run(ctx context.Context, shards [][]byte) {
 	// Assume that when we begin a relay operation, we have populated shards.
@@ -57,10 +90,10 @@ func (o *RelayOperation) run(ctx context.Context, shards [][]byte) {
 			return
 
 		case req := <-o.acceptBroadcastRequests:
-			// TODO: we should invoke the worker differently depending on
+			// TODO: we need to invoke the worker differently depending on
 			// how many shards we already have.
 			//
-			// No shards is a trivial case.
+			// No shards is the default, and a trivial, case.
 			o.workerWG.Add(1)
 			w := &relayWorker{
 				log: o.log.With("broadcast_stream", req.S.StreamID()),
@@ -103,9 +136,71 @@ func (o *RelayOperation) AcceptBroadcast(ctx context.Context, s quic.Stream) err
 	}
 }
 
+// HandleDatagram parses the given datagram
+// (which must have already been confirmed to belong to this operation
+// by checking the broadcast ID via [*Protocol.ExtractDatagramBroadcastID])
+// and updates the internal state of the operation.
+//
+// If the raw datagram is valid and if it is new to this operation,
+// it is forwarded to any peers who may not have it yet.
+func (o *RelayOperation) HandleDatagram(
+	ctx context.Context,
+	raw []byte,
+) error {
+	// This is a two-phase operation with the operation's main loop.
+	// First, we pass the entire raw slice to the main loop.
+	// The main loop inspects the chunk ID to determine if the ID is valid
+	// and whether the chunk is new or preexisting information.
+	// That check is fast, and it minimizes main loop contention.
+	//
+	// Then, depending on the main loop's judgement,
+	// we do any heavy lifting in this separate goroutine.
+
+	checkRespCh := make(chan checkDatagramResponse, 1)
+	checkReq := checkDatagramRequest{
+		Raw:  raw,
+		Resp: checkRespCh,
+	}
+
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf(
+			"context canceled while making check datagram request: %w",
+			context.Cause(ctx),
+		)
+	case o.checkDatagramRequests <- checkReq:
+		// Okay.
+	}
+
+	var checkResp checkDatagramResponse
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf(
+			"context canceled while awaiting check datagram response: %w",
+			context.Cause(ctx),
+		)
+	case checkResp = <-checkRespCh:
+		// Okay.
+	}
+
+	switch checkResp {
+	case checkDatagramInvalidIndex:
+		panic("TODO: handle invalid index")
+	case checkDatagramAlreadyHaveChunk:
+		// TODO: we could decide whether to verify the proof anyway.
+		return nil
+
+	case checkDatagramNeed:
+		panic("TODO: verify proof and send back to main loop")
+
+	default:
+		panic(fmt.Errorf("TODO: handle check datagram response value %d", checkResp))
+	}
+}
+
 type RelayOperationConfig struct {
-	// The header for this specific relay operation.
-	OperationHeader []byte
+	// The ID for this specific broadcast operation being relayed.
+	BroadcastID []byte
 
 	// The Merkle root proof
 	// and possibly some of its descendants.

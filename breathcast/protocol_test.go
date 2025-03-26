@@ -184,7 +184,7 @@ func TestProtocolOriginate_accept(t *testing.T) {
 		// since the root context is canceled at the end.
 		ctx, ctx,
 		breathcast.RelayOperationConfig{
-			OperationHeader: []byte("op1"),
+			BroadcastID: []byte("op1"),
 
 			// We didn't use PrepareOrigination,
 			// so we don't have a real root proof here.

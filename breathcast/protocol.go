@@ -3,6 +3,7 @@ package breathcast
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -305,7 +306,11 @@ func (p *Protocol) CreateRelayOperation(
 
 		enc: enc,
 
-		acceptBroadcastRequests: make(chan acceptBroadcastRequest, 4), // Arbitrary size.
+		rootProof: cfg.RootProof,
+
+		// Both arbitrarily sized for now.
+		acceptBroadcastRequests: make(chan acceptBroadcastRequest, 4),
+		checkDatagramRequests:   make(chan checkDatagramRequest, 4),
 
 		ackTimeout: cfg.AckTimeout,
 	}
@@ -358,4 +363,44 @@ func ExtractBroadcastHeader(r io.Reader, dst []byte) ([]byte, error) {
 	}
 
 	return dst, nil
+}
+
+// ExtractDatagramBroadcastID extracts the broadcast ID
+// from the given raw datagram bytes.
+// Given the broadcast ID, the application can route the datagram
+// to the correct [RelayOperation].
+//
+// The caller must have already read the first byte of the input stream,
+// confirming that the datagram belongs to this protocol instance.
+// The input must include that protocol identifier byte,
+// so that the entire byte slice for the datagram
+// can be forwarded to other peers, if necessary,
+// without rebuilding and reallocating the slice.
+//
+// If the datagram is too short to contain a full broadcast ID,
+// both returned slice will be nil.
+//
+// The returned slice is a subslice of the input,
+// so retaining the return value will retain the input.
+func (p *Protocol) ExtractDatagramBroadcastID(raw []byte) []byte {
+	if len(raw) == 0 {
+		// Caller needs to protect against this.
+		panic(errors.New(
+			"BUG: input to ExtractDatagramBroadcastID must not be empty",
+		))
+	}
+
+	if raw[0] != p.protocolID {
+		// Caller did not route message correctly.
+		panic(fmt.Errorf(
+			"BUG: first byte of datagram was 0x%x, but it should have been the configured protocol ID 0x%x",
+			raw[0], p.protocolID,
+		))
+	}
+
+	if len(raw) < 1+int(p.broadcastIDLength) {
+		return nil
+	}
+
+	return raw[1 : 1+p.broadcastIDLength]
 }
