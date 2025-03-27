@@ -106,6 +106,19 @@ type PopulateResult struct {
 	// the root's right child, the root's leftmost grandchild,
 	// the root's second-leftmost grandchild, and so on until the rightmost grandchild.
 	//
+	// If the number of leaves is not a power of two,
+	// the "spillover" leaves are placed left-to-right at the end of the slice.
+	// So a tree with 3 nodes would graphically look like:
+	//
+	//   R
+	//   A BC
+	//   x x B C
+	//
+	// The root proofs would go in order: R, A, BC, B, C.
+	//
+	// A cutoff tier greater than the tree depth will result in
+	// the entire Merkle tree being placed in RootProof.
+	//
 	// The root proof is intended to be sent in the origination header.
 	RootProof [][]byte
 
@@ -170,7 +183,7 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 		for i, leaf := range leafData {
 			h.Leaf(leaf, lc, t.nodes[i][:0])
 
-			if cutoffTier >= treeHeight {
+			if cutoffTier >= treeHeight-1 {
 				// The full length is 2*nLeaves - 1.
 				// We are iterating over nLeaves, therefore 2*nLeaves - 1 - nLeaves = nLeaves - 1.
 				res.RootProof[int(t.nLeaves)-1+i] = t.nodes[i]

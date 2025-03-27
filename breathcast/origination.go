@@ -46,9 +46,6 @@ type PrepareOriginationConfig struct {
 	// Including more tiers in the header means the header size grows,
 	// but it also means the built fragments
 	// require fewer bytes dedicated to Merkle proofs.
-	//
-	// Furthermore, the [PreparedOrigination.ChunkProofs] field
-	// will end prior to the noted tier.
 	HeaderProofTier uint8
 
 	// How to hash entries in the underlying Merkle tree.
