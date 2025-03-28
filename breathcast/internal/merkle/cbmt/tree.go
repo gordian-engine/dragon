@@ -176,6 +176,7 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 		// so back all the leaf proofs with a single allocation first.
 		var proofMem [][]byte
 		if proofLen > 0 {
+			// Don't allocate a zero-length slice.
 			proofMem = make([][]byte, proofLen*t.nLeaves)
 		}
 
@@ -271,8 +272,12 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 
 	// Allocate all the leaf proofs in a single backing slice.
 	normalProofsSize := nNormalLeaves * int(proofLen)
-	overflowProofsSize := int(overflow) * (int(proofLen) + 1)
-	allProofsMem := make([][]byte, normalProofsSize+overflowProofsSize)
+	overflowProofsSize := 0
+	var allProofsMem [][]byte
+	if proofLen > 0 {
+		overflowProofsSize = int(overflow) * (int(proofLen) + 1)
+		allProofsMem = make([][]byte, normalProofsSize+overflowProofsSize)
+	}
 
 	// The overflow proofs are subslices of the latter part of allProofsMem.
 	overflowProofsMem := allProofsMem[normalProofsSize:]
@@ -303,9 +308,11 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 		// Adjust offset within overflowProofsMem slice.
 		pmOffset := siblingIdx - nNormalLeaves
 
-		proofs := overflowProofsMem[pmOffset*(int(proofLen)+1) : (pmOffset+1)*(int(proofLen)+1)]
-		proofs[0] = t.nodes[i]
-		res.Proofs[siblingIdx] = proofs
+		if proofLen > 0 {
+			proofs := overflowProofsMem[pmOffset*(int(proofLen)+1) : (pmOffset+1)*(int(proofLen)+1)]
+			proofs[0] = t.nodes[i]
+			res.Proofs[siblingIdx] = proofs
+		}
 	}
 
 	// The normal proofs are subslices of the first part of allProofsMem.

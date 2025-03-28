@@ -2,6 +2,8 @@ package bcsha256
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
+	"fmt"
 
 	"github.com/gordian-engine/dragon/breathcast/bcmerkle"
 )
@@ -18,6 +20,7 @@ func (Hasher) Leaf(in []byte, c bcmerkle.LeafContext, dst []byte) {
 	_, _ = h.Write([]byte("L."))
 	_, _ = h.Write(in)
 	h.Sum(dst)
+	fmt.Printf("(sha256: hashed leaf (idx=%d) (content=%q) -> %x\n", binary.BigEndian.Uint16(c.LeafIndex[:]), in, dst[:HashSize])
 }
 
 func (Hasher) Node(left, right []byte, c bcmerkle.NodeContext, dst []byte) {
@@ -30,4 +33,12 @@ func (Hasher) Node(left, right []byte, c bcmerkle.NodeContext, dst []byte) {
 	_, _ = h.Write([]byte("Hr."))
 	_, _ = h.Write(right)
 	h.Sum(dst)
+
+	fmt.Printf(
+		"(sha256: hashed nodes (%x + %x) (cover=[%d,%d]) -> %x\n",
+		left, right,
+		binary.BigEndian.Uint16(c.FirstLeafIndex[:]),
+		binary.BigEndian.Uint16(c.LastLeafIndex[:]),
+		dst[:HashSize],
+	)
 }
