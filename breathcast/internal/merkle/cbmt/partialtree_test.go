@@ -76,6 +76,32 @@ func TestPartialTree_AddLeaf_4_2(t *testing.T) {
 	require.ErrorIs(t, cbmt.ErrIncorrectLeafData, pt.AddLeaf(0, []byte("wrong"), res.Proofs[0]))
 }
 
+func TestPartialTree_AddLeaf_5_2(t *testing.T) {
+	t.Parallel()
+
+	leafData := fixtureLeafData[:5]
+
+	/* Tree layout:
+
+	01234
+	01 234
+	0 1 2 34
+	x x x x x x 3 4
+	*/
+
+	pt, res := NewTestPartialTree(t, leafData, 2)
+
+	// Root proofs cover everything but spillover leaves.
+	require.Len(t, res.Proofs[4], 1)
+
+	// Successful add the first time, then error the next time.
+	require.NoError(t, pt.AddLeaf(4, leafData[4], res.Proofs[4]))
+	require.ErrorIs(t, cbmt.ErrAlreadyHadProof, pt.AddLeaf(4, leafData[4], res.Proofs[4]))
+
+	// And trying to add the wrong leaf data returns the appropriate error.
+	require.ErrorIs(t, cbmt.ErrIncorrectLeafData, pt.AddLeaf(4, []byte("wrong"), res.Proofs[4]))
+}
+
 func TestPartialTree_AddLeaf_5_3(t *testing.T) {
 	t.Parallel()
 
@@ -90,10 +116,6 @@ func TestPartialTree_AddLeaf_5_3(t *testing.T) {
 	*/
 
 	pt, res := NewTestPartialTree(t, leafData, 3)
-
-	for i, p := range res.RootProof {
-		t.Logf("root proof %d: %x", i, p)
-	}
 
 	// Successful add the first time, then error the next time.
 	require.NoError(t, pt.AddLeaf(4, leafData[4], res.Proofs[4]))

@@ -157,8 +157,15 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 	}
 
 	var proofLen uint16
+
+	// There are some special cases in the code to handle
+	// root proofs covering everything but the spillover leaves,
+	// so we need to track that flag on its own.
+	var spilloverProofsOnly bool
+
 	if cutoffTier < treeHeight {
 		proofLen = uint16(treeHeight - cutoffTier - 1) // -1 because we never include root.
+		spilloverProofsOnly = cutoffTier == treeHeight-1 && t.nLeaves&(t.nLeaves-1) != 0
 	}
 
 	if t.nLeaves&(t.nLeaves-1) == 0 {
@@ -230,7 +237,7 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 	// Whatever number of leaves that won't fit,
 	// we have to double that number
 	// so that we can use pairs of nodes.
-	overflow := uint16(t.nLeaves - fullLayerWidth + t.nLeaves - fullLayerWidth) // Avoiding overflow and multiplication here.
+	spilloverLeafCount := uint16(t.nLeaves - fullLayerWidth + t.nLeaves - fullLayerWidth) // Avoiding overflow and multiplication here.
 
 	if cutoffTier >= treeHeight {
 		// The root proof includes everything.
@@ -268,19 +275,21 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 	// But, if the last normal leaf has an even index,
 	// then its sibling to the right is actually the overflow node.
 
-	nNormalLeaves := len(leafData) - int(overflow)
+	nNormalLeaves := len(leafData) - int(spilloverLeafCount)
 
 	// Allocate all the leaf proofs in a single backing slice.
 	normalProofsSize := nNormalLeaves * int(proofLen)
-	overflowProofsSize := 0
 	var allProofsMem [][]byte
 	if proofLen > 0 {
-		overflowProofsSize = int(overflow) * (int(proofLen) + 1)
-		allProofsMem = make([][]byte, normalProofsSize+overflowProofsSize)
+		spilloverProofsSize := int(spilloverLeafCount) * (int(proofLen) + 1)
+		allProofsMem = make([][]byte, normalProofsSize+spilloverProofsSize)
+	} else if spilloverProofsOnly {
+		spilloverProofsSize := int(spilloverLeafCount) * (int(proofLen) + 1)
+		allProofsMem = make([][]byte, spilloverProofsSize)
 	}
 
-	// The overflow proofs are subslices of the latter part of allProofsMem.
-	overflowProofsMem := allProofsMem[normalProofsSize:]
+	// The spillover proofs are subslices of the latter part of allProofsMem.
+	spilloverProofsMem := allProofsMem[normalProofsSize:]
 
 	leafStartIdx := (1 << (treeHeight - 1)) - 1
 	overflowLeafStartIdx := leafStartIdx + int(fullLayerWidth)
@@ -308,8 +317,8 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 		// Adjust offset within overflowProofsMem slice.
 		pmOffset := siblingIdx - nNormalLeaves
 
-		if proofLen > 0 {
-			proofs := overflowProofsMem[pmOffset*(int(proofLen)+1) : (pmOffset+1)*(int(proofLen)+1)]
+		if proofLen > 0 || spilloverProofsOnly {
+			proofs := spilloverProofsMem[pmOffset*(int(proofLen)+1) : (pmOffset+1)*(int(proofLen)+1)]
 			proofs[0] = t.nodes[i]
 			res.Proofs[siblingIdx] = proofs
 		}
@@ -322,7 +331,7 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 	for i, leaf := range leafData[:nNormalLeaves] {
 		binary.BigEndian.PutUint16(lc.LeafIndex[:], uint16(i))
 
-		nodeIdx := int(overflow) + i
+		nodeIdx := int(spilloverLeafCount) + i
 		h.Leaf(leaf, lc, t.nodes[nodeIdx][:0])
 
 		if cutoffTier >= treeHeight-1 {
@@ -348,7 +357,7 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 			res.Proofs[i-1] = proofs
 		} else {
 			// Even leaf; it is possible our sibling was overflow.
-			if i+1 == len(leafData)-int(overflow) {
+			if i+1 == len(leafData)-int(spilloverLeafCount) {
 				// This is the final normal leaf and it's even.
 				// That means the right sibling is an overflow leaf.
 				// The overflow leaf already had another overflow sibling,
@@ -376,8 +385,8 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 		Nonce: cfg.Nonce,
 	}
 	rootProofIdxBase := int(fullLayerWidth) - 1 + nNormalLeaves
-	for i := uint16(0); i < overflow/2; i++ {
-		leftIdx := uint16(len(leafData)) - overflow + i + i // Two adds might be faster than a multiply.
+	for i := uint16(0); i < spilloverLeafCount/2; i++ {
+		leftIdx := uint16(len(leafData)) - spilloverLeafCount + i + i // Two adds might be faster than a multiply.
 		rightIdx := leftIdx + 1
 		binary.BigEndian.PutUint16(nc.FirstLeafIndex[:], leftIdx)
 		binary.BigEndian.PutUint16(nc.LastLeafIndex[:], rightIdx)
@@ -398,13 +407,13 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 		if i == 0 && (len(leafData)&1) == 1 {
 			// First overflow node on an odd leaf count.
 			// That means we have to fill in the final normal leaf's first proof.
-			res.Proofs[len(leafData)-int(overflow)-1][0] = t.nodes[nodeIdx]
+			res.Proofs[len(leafData)-int(spilloverLeafCount)-1][0] = t.nodes[nodeIdx]
 		}
 
 		// Whether the proof is going to the left or right node,
 		// is dependent not on the i index here but on the evenness or oddness
 		// of the destination within the full layer.
-		mergeTargetPosition := nodeIdx - int(overflow)
+		mergeTargetPosition := nodeIdx - int(spilloverLeafCount)
 		if (mergeTargetPosition & 1) == 1 {
 			// Odd logical position in the full row.
 			if int(leftIdx-1) > 0 { // Is there a proof to our left?
@@ -429,7 +438,7 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 		}
 	}
 
-	t.complete(uint(overflow), fullLayerWidth, cfg, res)
+	t.complete(uint(spilloverLeafCount), fullLayerWidth, cfg, res)
 	return res
 }
 
