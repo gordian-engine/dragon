@@ -361,7 +361,6 @@ func (t *Tree) Populate(leafData [][]byte, cfg PopulateConfig) PopulateResult {
 				// we did not initialize the normal proof.
 				// We are going to allocate for the proof now,
 				// but we don't know the hash of the first proof yet.
-				// res.Proofs[i] = make([][]byte, proofLen)
 				res.Proofs[i] = proofMem[i*int(proofLen) : (i+1)*int(proofLen)]
 			} else {
 				// Not overflow, just initialize it.

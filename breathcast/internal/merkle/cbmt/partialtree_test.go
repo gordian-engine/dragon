@@ -103,9 +103,7 @@ func TestPartialTree_AddLeaf_5_3(t *testing.T) {
 	require.ErrorIs(t, cbmt.ErrIncorrectLeafData, pt.AddLeaf(4, []byte("wrong"), res.Proofs[4]))
 }
 
-// Disabled for now; need to continue work on adding leaves
-// when the root proofs do not cover the whole tree.
-func xTestPartialTree_AddLeaf_4_1(t *testing.T) {
+func TestPartialTree_AddLeaf_4_1(t *testing.T) {
 	t.Parallel()
 
 	leafData := fixtureLeafData[:4]

@@ -208,6 +208,17 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 	}
 	binary.BigEndian.PutUint16(lc.LeafIndex[:], leafIdx)
 
+	// Did we record already having this leaf?
+	if t.haveLeaves.Test(uint(leafIdx)) {
+		curHash := make([]byte, t.hashSize)
+		t.hasher.Leaf(leafData, lc, curHash[:0])
+		if !bytes.Equal(t.nodes[nodeIdxForLeaf], curHash) {
+			return ErrIncorrectLeafData
+		}
+
+		return ErrAlreadyHadProof
+	}
+
 	if len(proofs) == 0 {
 		// Empty proofs input implies that we should already have the leaf hash.
 		// We know which node it should be in.
@@ -313,13 +324,13 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 			layerWidth = 1 << uint16(bits.Len16(t.nLeaves)-1)
 			layerStartNodeIdx = int(spilloverLeafCount)
 
-			curNodeOffset = (int(firstSpilloverLeafIdx) + (nodeIdxForLeaf >> 1)) // >> 1
+			curNodeOffset = (int(firstSpilloverLeafIdx) + (nodeIdxForLeaf >> 1))
 		} else {
 			// It wasn't a spillover, but our calculation
 			// needs to consider whether we had a perfect binary tree.
 			if t.nLeaves&(t.nLeaves-1) == 0 {
 				// It was a perfect binary tree.
-				layerWidth = uint16(1 << (bits.Len16(t.nLeaves) - 1))
+				layerWidth = uint16(1 << (bits.Len16(t.nLeaves) - 2))
 				layerStartNodeIdx = int(layerWidth) << 1
 			} else {
 				panic("TODO: layer view calculations for non-power-of-two tree")
@@ -338,6 +349,7 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 	// so we can walk the tree until we encounter a node we already trust.
 	// On the first run that will be from rootProofs,
 	// but on later leaves we may encounter a sibling we've seen before.
+	fmt.Printf("AddLeaf: layer iteration\n")
 	for layerWidth >= 2 {
 		if t.haveNodes.Test(uint(layerStartNodeIdx + curNodeOffset)) {
 			// We've encountered a hash we already trust,
@@ -448,7 +460,41 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 		))
 	}
 
-	panic("TODO: write hashes back into t.nodes")
+	// The final hash matches the expected;
+	// recall that we have one more discovered hash than siblings.
+	// The final hash doesn't pair with a sibling proof,
+	// so all the other hashes and their sibling hashes
+	// now get stored in t.nodes.
+	fmt.Printf("AddLeaf: copy hashes\n")
+	t.haveLeaves.Set(uint(leafIdx))
+
+	for i, sib := range siblings {
+		var discoveredNodeIdx int
+		if sib.IsLeft {
+			discoveredNodeIdx = sib.NodeIdx + 1
+		} else {
+			discoveredNodeIdx = sib.NodeIdx - 1
+		}
+
+		hashOffset := i * t.hashSize
+		copy(t.nodes[discoveredNodeIdx], discoveredHashes[hashOffset:hashOffset+t.hashSize])
+		t.haveNodes.Set(uint(discoveredNodeIdx))
+		fmt.Printf(
+			"\tset discovered node for sibling %d, to node idx %d, with hash %x\n",
+			i, discoveredNodeIdx, t.nodes[discoveredNodeIdx],
+		)
+
+		// Then also set the sibling's node details.
+
+		copy(t.nodes[sib.NodeIdx], sib.Hash)
+		t.haveNodes.Set(uint(sib.NodeIdx))
+		fmt.Printf(
+			"\tset sibling %d, with hash %x, to node %d\n",
+			i, sib.Hash, sib.NodeIdx,
+		)
+	}
+
+	return nil
 }
 
 type sibling struct {
