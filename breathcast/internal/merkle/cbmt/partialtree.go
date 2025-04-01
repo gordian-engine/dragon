@@ -336,6 +336,8 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 		}
 
 		siblings = append(siblings, sib)
+		fmt.Printf("\tappended sibling: %#v\n", sib)
+		fmt.Printf("\twas it spillover? %t\n", isSpillover)
 
 		// Now set up the layer view.
 		if isSpillover {
@@ -368,7 +370,16 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 	// On the first run that will be from rootProofs,
 	// but on later leaves we may encounter a sibling we've seen before.
 	fmt.Printf("AddLeaf: layer iteration\n")
-	spanWidth := uint16(2)
+
+	// How many nodes on the bottommost full layer,
+	// that each node on the current layer accounts for.
+	var spanWidth uint16
+	if leafIdx >= normalLeafCount {
+		// It was a spillover leaf so the row we are looking at is worth 1 apiece.
+		spanWidth = 1
+	} else {
+		spanWidth = 2
+	}
 	for layerWidth >= 2 {
 		fmt.Printf("\tlayer width: %d\n", layerWidth)
 		if t.haveNodes.Test(uint(layerStartNodeIdx + curNodeOffset)) {
@@ -404,12 +415,7 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 			sib.NodeIdx = layerStartNodeIdx + curNodeOffset + 1
 		}
 
-		var sibOffset uint16
-		if sib.IsLeft {
-			sibOffset = uint16(curNodeOffset - 1)
-		} else {
-			sibOffset = uint16(curNodeOffset + 1)
-		}
+		sibOffset := uint16(sib.NodeIdx - layerStartNodeIdx)
 		fmt.Printf("\tsib offset=%d\n", sibOffset)
 
 		// The number of full bottom layer nodes we have to account for.
@@ -445,6 +451,8 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 				leafEnd += 2 * (spanWidth - normalNodesRemaining) // TODO: this seems wrong.
 			}
 		} else {
+			// There were no normal nodes remaining,
+			// so all the remaining spans are worth double.
 			leafEnd += 2 * spanWidth
 		}
 		sib.LeafStart = leafStart
