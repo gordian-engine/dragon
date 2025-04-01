@@ -2,6 +2,8 @@ package cbmt_test
 
 import (
 	"fmt"
+	"math/bits"
+	"math/rand/v2"
 	"testing"
 
 	"github.com/gordian-engine/dragon/breathcast/bcmerkle/bcsha256"
@@ -145,6 +147,65 @@ func TestPartialTree_AddLeaf_4_1(t *testing.T) {
 
 	// And trying to add the wrong leaf data returns the appropriate error.
 	require.ErrorIs(t, cbmt.ErrIncorrectLeafData, pt.AddLeaf(0, []byte("wrong"), res.Proofs[0]))
+}
+
+func TestPartialTree_AddLeaf_7_0(t *testing.T) {
+	t.Parallel()
+
+	leafData := fixtureLeafData[:7]
+
+	/* Tree layout:
+
+	0123456
+	012 3456
+	0 12 34 56
+	x x 1 2 3 4 5 6
+	*/
+
+	pt, res := NewTestPartialTree(t, leafData, 0)
+
+	// First add is no error.
+	require.NoError(t, pt.AddLeaf(0, leafData[0], res.Proofs[0]))
+	require.ErrorIs(t, cbmt.ErrAlreadyHadProof, pt.AddLeaf(0, leafData[0], res.Proofs[0]))
+
+	// And trying to add the wrong leaf data returns the appropriate error.
+	require.ErrorIs(t, cbmt.ErrIncorrectLeafData, pt.AddLeaf(0, []byte("wrong"), res.Proofs[0]))
+}
+
+// This test isn't passing yet; we are using it to drive smaller, independent tests.
+func xTestPartialTree_AddLeaf_sequence(t *testing.T) {
+	t.Parallel()
+	for nl := uint16(3); nl < 18; nl++ {
+		depth := uint8(bits.Len16(nl))
+		for c := uint8(0); c <= depth; c++ {
+			name := fmt.Sprintf("nLeaves=%d, cutoff=%d", nl, c)
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+
+				leafData := fixtureLeafData[:nl]
+
+				pt, res := NewTestPartialTree(t, leafData, c)
+
+				// Use a fixed seed per test,
+				// so we can add leaves in a determinstic pseudorandom order.
+				var seed [32]byte
+				copy(seed[:], t.Name())
+				rng := rand.New(rand.NewChaCha8(seed))
+
+				leafIdxs := make([]uint16, nl)
+				for i := range nl {
+					leafIdxs[i] = i
+				}
+				rng.Shuffle(len(leafIdxs), func(i, j int) {
+					leafIdxs[i], leafIdxs[j] = leafIdxs[j], leafIdxs[i]
+				})
+
+				for _, li := range leafIdxs {
+					require.NoError(t, pt.AddLeaf(li, leafData[li], res.Proofs[li]))
+				}
+			})
+		}
+	}
 }
 
 func NewTestPartialTree(t *testing.T, leafData [][]byte, cutoffTier uint8) (*cbmt.PartialTree, cbmt.PopulateResult) {

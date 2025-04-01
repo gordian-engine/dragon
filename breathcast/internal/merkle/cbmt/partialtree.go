@@ -155,7 +155,7 @@ var ErrInsufficientProof = errors.New("insufficient proof to add leaf")
 // If we already had the proof for the leaf but the leaf data did not match,
 // [ErrIncorrectLeafData] is returned.
 func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) error {
-	fmt.Printf("AddLeaf: entry\n")
+	fmt.Printf("\n----------------------------\nAddLeaf: entry (leafIdx=%d)\n", leafIdx)
 	// First identify spillover leaves and overflow nodes.
 	// As a reminder, for a tree like this:
 	//
@@ -178,13 +178,15 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 	firstSpilloverLeafIdx := t.nLeaves
 	var spilloverLeafCount uint16
 	var nodeIdxForLeaf int
+	var fullLayerWidth uint16
 	if t.nLeaves&(t.nLeaves-1) == 0 {
 		// The leaves are a power of two.
 		nodeIdxForLeaf = int(leafIdx)
+		fullLayerWidth = t.nLeaves
 	} else {
 		fmt.Printf("\tnLeaves (%d) is not a power of 2\n", t.nLeaves)
 		// We do have an overflow leaf index.
-		fullLayerWidth := uint16(1 << (bits.Len16(t.nLeaves) - 1))
+		fullLayerWidth = uint16(1 << (bits.Len16(t.nLeaves) - 1))
 		overflowNodeCount := t.nLeaves - fullLayerWidth
 		spilloverLeafCount = 2 * overflowNodeCount
 		firstSpilloverLeafIdx = t.nLeaves - spilloverLeafCount
@@ -278,12 +280,14 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 			LeafEnd:   leafIdx + 2,
 			NodeIdx:   nodeIdxForLeaf + 1,
 		})
+		proofs = proofs[1:]
+		fmt.Printf("\tauto calculated overflow sibling: %#v\n", siblings[len(siblings)-1])
 
 		// We do have spillover leaves.
 		// Just Len16(t.nLeaves) would be the virtual width of the spillover layer,
 		// one less would be the first full layer,
 		// so one less than that is the next layer.
-		layerWidth = uint16(bits.Len16(t.nLeaves)) - 2
+		layerWidth = uint16(1) << ((bits.Len16(t.nLeaves)) - 2)
 		layerStartNodeIdx = int(spilloverLeafCount) + (1 << (bits.Len16(t.nLeaves) - 1))
 		curNodeOffset = int(leafIdx >> 1)
 	} else {
@@ -292,6 +296,7 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 		sib := sibling{
 			Hash: proofs[0],
 		}
+		proofs = proofs[1:]
 
 		// Our even-odd check depends on spillover or normal leaf.
 		isSpillover := leafIdx >= firstSpilloverLeafIdx
@@ -304,17 +309,30 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 			sib.IsLeft = (leafIdx & 1) == 1
 		}
 
-		// The sibling only spans one leaf in either case.
+		// Set up leaf spans for the sibling depending on left or right
+		// and normal or spillover.
 		if sib.IsLeft {
-			sib.LeafStart = leafIdx - 1
-			sib.LeafEnd = leafIdx - 1
-
 			sib.NodeIdx = nodeIdxForLeaf - 1
-		} else {
-			sib.LeafStart = leafIdx + 1
-			sib.LeafEnd = leafIdx + 1
 
+			if isSpillover {
+				sibOffset := ((nodeIdxForLeaf - 1) / 2) * 2
+				sib.LeafStart = firstSpilloverLeafIdx + uint16(sibOffset)
+				sib.LeafEnd = sib.LeafStart + 1 // Always has to be +1 for spillover.
+			} else {
+				panic("TODO")
+			}
+		} else {
 			sib.NodeIdx = nodeIdxForLeaf + 1
+
+			if isSpillover {
+				sibOffset := ((nodeIdxForLeaf + 1) / 2) * 2
+				sib.LeafStart = firstSpilloverLeafIdx + uint16(sibOffset)
+				sib.LeafEnd = min(sib.LeafStart+1, t.nLeaves-1)
+			} else {
+				sibLeafIdx := leafIdx + 1
+				sib.LeafStart = sibLeafIdx
+				sib.LeafEnd = min(sibLeafIdx, t.nLeaves-1)
+			}
 		}
 
 		siblings = append(siblings, sib)
@@ -342,7 +360,7 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 	// which matches an already trusted hash.
 	var expectedProofHash []byte
 
-	// TODO: need to track the overflow start position again.
+	normalLeafCount := t.nLeaves - spilloverLeafCount
 
 	// Now we have the first sibling,
 	// and the layer width and the node index where the layer starts;
@@ -350,7 +368,9 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 	// On the first run that will be from rootProofs,
 	// but on later leaves we may encounter a sibling we've seen before.
 	fmt.Printf("AddLeaf: layer iteration\n")
+	spanWidth := uint16(2)
 	for layerWidth >= 2 {
+		fmt.Printf("\tlayer width: %d\n", layerWidth)
 		if t.haveNodes.Test(uint(layerStartNodeIdx + curNodeOffset)) {
 			// We've encountered a hash we already trust,
 			// so we don't need to accumulate any more siblings.
@@ -370,32 +390,75 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 			)
 		}
 
-		// layer := t.nodes[layerStartNodeIdx : layerStartNodeIdx+int(layerWidth)]
-
-		fmt.Printf("\tlayer iter: width=%d, curNodeOffset=%d\n", layerWidth, curNodeOffset)
+		fmt.Printf("\tlayer iter: width=%d, curNodeOffset=%d, spanWidth=%d\n", layerWidth, curNodeOffset, spanWidth)
+		sib := sibling{
+			Hash: proofs[0],
+		}
 		if (curNodeOffset & 1) == 1 {
 			// Odd node, sibling is on the left.
-			siblings = append(siblings, sibling{
-				IsLeft: true,
-				// TODO: LeafStart, LeafEnd
-				NodeIdx: layerStartNodeIdx + curNodeOffset - 1,
-				Hash:    proofs[0],
-			})
+			sib.IsLeft = true
+			sib.NodeIdx = layerStartNodeIdx + curNodeOffset - 1
+
 		} else {
 			// Even node, sibling is on the right.
-			siblings = append(siblings, sibling{
-				IsLeft: false,
-				// TODO: LeafStart, LeafEnd
-				NodeIdx: layerStartNodeIdx + curNodeOffset + 1,
-				Hash:    proofs[0],
-			})
+			sib.NodeIdx = layerStartNodeIdx + curNodeOffset + 1
 		}
+
+		var sibOffset uint16
+		if sib.IsLeft {
+			sibOffset = uint16(curNodeOffset - 1)
+		} else {
+			sibOffset = uint16(curNodeOffset + 1)
+		}
+		fmt.Printf("\tsib offset=%d\n", sibOffset)
+
+		// The number of full bottom layer nodes we have to account for.
+		// At least one of these is worth only one leaf,
+		// but depending on the tree shape (i.e. if there was spillover),
+		// some may be worth two leaves.
+		nodesAlreadyConsumed := sibOffset * spanWidth
+
+		// Track how many normal nodes we've used up.
+		// If we've exceeded this, then all other nodes we cover are worth two.
+		normalNodesRemaining := normalLeafCount
+
+		fmt.Printf("\t0) normal leaves remaining=%d\n", normalNodesRemaining)
+		var leafStart uint16
+		if nodesAlreadyConsumed < normalLeafCount {
+			// There are enough normal nodes to cover the nodes we've consumed.
+			leafStart = nodesAlreadyConsumed
+			normalNodesRemaining = normalLeafCount - nodesAlreadyConsumed
+		} else {
+			leafStart = normalLeafCount
+			normalNodesRemaining = 0
+			overflowNodesConsumed := nodesAlreadyConsumed - normalLeafCount
+			leafStart += 2 * overflowNodesConsumed
+		}
+
+		leafEnd := leafStart - 1
+		if normalNodesRemaining > 0 {
+			if spanWidth <= normalNodesRemaining {
+				leafEnd += spanWidth
+			} else {
+				// spanWidth is more than the normal leaves remaining.
+				leafEnd += normalNodesRemaining
+				leafEnd += 2 * (spanWidth - normalNodesRemaining) // TODO: this seems wrong.
+			}
+		} else {
+			leafEnd += 2 * spanWidth
+		}
+		sib.LeafStart = leafStart
+		sib.LeafEnd = leafEnd
+		siblings = append(siblings, sib)
+		fmt.Printf("\tJust appended sibling %d: %#v\n", len(siblings)-1, sib)
 
 		// Setup for next iteration.
 		proofs = proofs[1:]
 		layerStartNodeIdx += int(layerWidth)
 		layerWidth >>= 1
 		curNodeOffset >>= 1
+
+		spanWidth <<= 1
 	}
 
 	if expectedProofHash == nil {
@@ -441,12 +504,16 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 		hashDst := discoveredHashes[curHashStart+t.hashSize : curHashStart+t.hashSize]
 
 		if sib.IsLeft {
+			fmt.Printf("\t(left: sib=%x cur=%x)\n", sib.Hash, curHash)
 			binary.BigEndian.PutUint16(nc.FirstLeafIndex[:], sib.LeafStart)
 			t.hasher.Node(sib.Hash, curHash, nc, hashDst)
 		} else {
+			fmt.Printf("\t(right: cur=%x sib=%x)\n", curHash, sib.Hash)
 			binary.BigEndian.PutUint16(nc.LastLeafIndex[:], sib.LeafEnd)
 			t.hasher.Node(curHash, sib.Hash, nc, hashDst)
 		}
+
+		fmt.Printf("\tJust wrote hash: %x\n", hashDst[:t.hashSize])
 	}
 
 	if !bytes.Equal(
@@ -454,7 +521,7 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 		expectedProofHash,
 	) {
 		// Panic momentarily, as we are not testing failure case yet.
-		panic(fmt.Errorf("hash mismatch: got %x, want %x",
+		panic(fmt.Errorf("hash mismatch: got %x, expected discovered hash %x",
 			discoveredHashes[len(discoveredHashes)-t.hashSize:],
 			expectedProofHash,
 		))
