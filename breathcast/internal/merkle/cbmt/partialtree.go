@@ -111,7 +111,6 @@ func NewPartialTree(
 		// we know that FlipRange will set them.
 		// (There doesn't appear to be a better method for bitset.BitSet for this.)
 		pt.haveNodes.FlipRange(uint(writeIdx), uint(writeIdx)+uint(sz))
-		fmt.Printf("flip range 1: %d, %d\n", writeIdx, writeIdx+sz)
 
 		rootIdxStart += sz
 		sz <<= 1
@@ -123,15 +122,8 @@ func NewPartialTree(
 		// They are at the end of the given rootProofs,
 		// but they are at the start of the nodes.
 		n := copy(pt.nodes, rootProofs[rootIdxStart:])
-		fmt.Printf("copied %d nodes\n", n)
 
 		pt.haveNodes.FlipRange(0, uint(n))
-		fmt.Printf("flip range 2: %d, %d\n", 0, n)
-	}
-
-	fmt.Printf("NewPartialTree:\n")
-	for i := range pt.haveNodes.Len() {
-		fmt.Printf("\thave node %02d? %t\n", i, pt.haveNodes.Test(i))
 	}
 
 	return pt
@@ -155,7 +147,6 @@ var ErrInsufficientProof = errors.New("insufficient proof to add leaf")
 // If we already had the proof for the leaf but the leaf data did not match,
 // [ErrIncorrectLeafData] is returned.
 func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) error {
-	fmt.Printf("\n----------------------------\nAddLeaf: entry (leafIdx=%d)\n", leafIdx)
 	// First identify spillover leaves and overflow nodes.
 	// As a reminder, for a tree like this:
 	//
@@ -184,16 +175,11 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 		nodeIdxForLeaf = int(leafIdx)
 		fullLayerWidth = t.nLeaves
 	} else {
-		fmt.Printf("\tnLeaves (%d) is not a power of 2\n", t.nLeaves)
 		// We do have an overflow leaf index.
 		fullLayerWidth = uint16(1 << (bits.Len16(t.nLeaves) - 1))
 		overflowNodeCount := t.nLeaves - fullLayerWidth
 		spilloverLeafCount = 2 * overflowNodeCount
 		firstSpilloverLeafIdx = t.nLeaves - spilloverLeafCount
-		fmt.Printf(
-			"\tfullLayerWidth=%d overflowNodeCount=%d spilloverLeafCount=%d firstSpilloverLeafIdx=%d\n",
-			fullLayerWidth, overflowNodeCount, spilloverLeafCount, firstSpilloverLeafIdx,
-		)
 
 		if leafIdx < firstSpilloverLeafIdx {
 			nodeIdxForLeaf = int(leafIdx) + int(spilloverLeafCount)
@@ -265,10 +251,8 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 	// on the layer above our leaf.
 	var curNodeOffset int
 
-	fmt.Printf("AddLeaf: first sibling discovery\n")
 	// We have at least one proof.
 	if leafIdx == firstSpilloverLeafIdx-1 && ((leafIdx & 1) == 0) {
-		fmt.Printf("\tnormal sibling to overflow node case\n")
 		// If we are an even leaf, our sibling is odd to the right.
 		// If our odd sibling to the right is an overflow node,
 		// it spans one extra leaf.
@@ -281,7 +265,6 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 			NodeIdx:   nodeIdxForLeaf + 1,
 		})
 		proofs = proofs[1:]
-		fmt.Printf("\tauto calculated overflow sibling: %#v\n", siblings[len(siblings)-1])
 
 		// We do have spillover leaves.
 		// Just Len16(t.nLeaves) would be the virtual width of the spillover layer,
@@ -291,7 +274,6 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 		layerStartNodeIdx = int(spilloverLeafCount) + (1 << (bits.Len16(t.nLeaves) - 1))
 		curNodeOffset = int(leafIdx >> 1)
 	} else {
-		fmt.Printf("\tnormal or spillover sibling case\n")
 		// Spillover and normal leaves are handled nearly the same.
 		sib := sibling{
 			Hash: proofs[0],
@@ -300,9 +282,6 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 
 		// Our even-odd check depends on spillover or normal leaf.
 		isSpillover := leafIdx >= firstSpilloverLeafIdx
-		fmt.Printf("\tis spillover? (%d >= %d) %t\n",
-			leafIdx, firstSpilloverLeafIdx, isSpillover,
-		)
 		if isSpillover {
 			sib.IsLeft = (nodeIdxForLeaf & 1) == 1
 		} else {
@@ -344,8 +323,6 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 		}
 
 		siblings = append(siblings, sib)
-		fmt.Printf("\tappended sibling: %#v\n", sib)
-		fmt.Printf("\twas it spillover? %t\n", isSpillover)
 
 		// Now set up the layer view.
 		if isSpillover {
@@ -382,7 +359,6 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 	// so we can walk the tree until we encounter a node we already trust.
 	// On the first run that will be from rootProofs,
 	// but on later leaves we may encounter a sibling we've seen before.
-	fmt.Printf("AddLeaf: layer iteration\n")
 
 	// How many nodes on the bottommost full layer,
 	// that each node on the current layer accounts for.
@@ -394,27 +370,13 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 		spanWidth = 2
 	}
 	for layerWidth >= 2 {
-		fmt.Printf("\tlayer width: %d\n", layerWidth)
 		if t.haveNodes.Test(uint(layerStartNodeIdx + curNodeOffset)) {
 			// We've encountered a hash we already trust,
 			// so we don't need to accumulate any more siblings.
 			expectedProofHash = t.nodes[layerStartNodeIdx+curNodeOffset]
-			fmt.Printf(
-				"\tencountered already trusted hash at node index %d (%d+%d): %x\n",
-				layerStartNodeIdx+curNodeOffset,
-				layerStartNodeIdx, curNodeOffset,
-				expectedProofHash,
-			)
 			break
-		} else {
-			fmt.Printf(
-				"\tdid not have hash for node index %d (%d + %d)\n",
-				layerStartNodeIdx+curNodeOffset,
-				layerStartNodeIdx, curNodeOffset,
-			)
 		}
 
-		fmt.Printf("\tlayer iter: width=%d, curNodeOffset=%d, spanWidth=%d\n", layerWidth, curNodeOffset, spanWidth)
 		sib := sibling{
 			Hash: proofs[0],
 		}
@@ -429,7 +391,6 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 		}
 
 		sibOffset := uint16(sib.NodeIdx - layerStartNodeIdx)
-		fmt.Printf("\tsib offset=%d\n", sibOffset)
 
 		// The number of full bottom layer nodes we have to account for.
 		// At least one of these is worth only one leaf,
@@ -441,7 +402,6 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 		// If we've exceeded this, then all other nodes we cover are worth two.
 		normalNodesRemaining := normalLeafCount
 
-		fmt.Printf("\t0) normal leaves remaining=%d\n", normalNodesRemaining)
 		var leafStart uint16
 		if nodesAlreadyConsumed < normalLeafCount {
 			// There are enough normal nodes to cover the nodes we've consumed.
@@ -471,7 +431,6 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 		sib.LeafStart = leafStart
 		sib.LeafEnd = leafEnd
 		siblings = append(siblings, sib)
-		fmt.Printf("\tJust appended sibling %d: %#v\n", len(siblings)-1, sib)
 
 		// Setup for next iteration.
 		proofs = proofs[1:]
@@ -487,10 +446,6 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 		// so we must have stopped at layerWidth=1,
 		// so the expected proof must be the root.
 		expectedProofHash = t.nodes[len(t.nodes)-1]
-		fmt.Printf(
-			"\tdidn't encounter expected proof hash, so falling back to root hash %x\n",
-			expectedProofHash,
-		)
 	}
 
 	// Now that we have all the siblings and the expected proof hash,
@@ -503,8 +458,6 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 	// so we will copy the values from here to there
 	// if everything verifies properly.
 	discoveredHashes := make([]byte, t.hashSize*(len(siblings)+1))
-
-	fmt.Printf("AddLeaf: finalization\n")
 
 	// Store the leaf hash first.
 	// Arguably we could get by without keeping the leaf hash,
@@ -525,16 +478,12 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 		hashDst := discoveredHashes[curHashStart+t.hashSize : curHashStart+t.hashSize]
 
 		if sib.IsLeft {
-			fmt.Printf("\t(left: sib=%x cur=%x)\n", sib.Hash, curHash)
 			binary.BigEndian.PutUint16(nc.FirstLeafIndex[:], sib.LeafStart)
 			t.hasher.Node(sib.Hash, curHash, nc, hashDst)
 		} else {
-			fmt.Printf("\t(right: cur=%x sib=%x)\n", curHash, sib.Hash)
 			binary.BigEndian.PutUint16(nc.LastLeafIndex[:], sib.LeafEnd)
 			t.hasher.Node(curHash, sib.Hash, nc, hashDst)
 		}
-
-		fmt.Printf("\tJust wrote hash: %x\n", hashDst[:t.hashSize])
 	}
 
 	if !bytes.Equal(
@@ -553,7 +502,6 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 	// The final hash doesn't pair with a sibling proof,
 	// so all the other hashes and their sibling hashes
 	// now get stored in t.nodes.
-	fmt.Printf("AddLeaf: copy hashes\n")
 	t.haveLeaves.Set(uint(leafIdx))
 
 	for i, sib := range siblings {
@@ -567,19 +515,11 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 		hashOffset := i * t.hashSize
 		copy(t.nodes[discoveredNodeIdx], discoveredHashes[hashOffset:hashOffset+t.hashSize])
 		t.haveNodes.Set(uint(discoveredNodeIdx))
-		fmt.Printf(
-			"\tset discovered node for sibling %d, to node idx %d, with hash %x\n",
-			i, discoveredNodeIdx, t.nodes[discoveredNodeIdx],
-		)
 
 		// Then also set the sibling's node details.
 
 		copy(t.nodes[sib.NodeIdx], sib.Hash)
 		t.haveNodes.Set(uint(sib.NodeIdx))
-		fmt.Printf(
-			"\tset sibling %d, with hash %x, to node %d\n",
-			i, sib.Hash, sib.NodeIdx,
-		)
 	}
 
 	return nil
