@@ -147,6 +147,10 @@ func TestPartialTree_AddLeaf_4_1(t *testing.T) {
 
 	// And trying to add the wrong leaf data returns the appropriate error.
 	require.ErrorIs(t, cbmt.ErrIncorrectLeafData, pt.AddLeaf(0, []byte("wrong"), res.Proofs[0]))
+
+	// Also add another leaf that is on the right half of the leaves.
+	require.NoError(t, pt.AddLeaf(2, leafData[2], res.Proofs[2]))
+	require.ErrorIs(t, cbmt.ErrAlreadyHadProof, pt.AddLeaf(2, leafData[2], res.Proofs[2]))
 }
 
 func TestPartialTree_AddLeaf_7_0(t *testing.T) {

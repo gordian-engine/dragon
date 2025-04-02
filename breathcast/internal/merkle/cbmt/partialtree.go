@@ -350,17 +350,17 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 		} else {
 			// It wasn't a spillover leaf, but our calculation
 			// needs to consider whether we had a perfect binary tree.
+			layerWidth = uint16(1 << (bits.Len16(t.nLeaves) - 2))
+			curNodeOffset = int(leafIdx >> 1)
+
 			if t.nLeaves&(t.nLeaves-1) == 0 {
 				// It was a perfect binary tree.
-				layerWidth = uint16(1 << (bits.Len16(t.nLeaves) - 2))
 				layerStartNodeIdx = int(layerWidth) << 1
 			} else {
 				// It wasn't a perfect binary tree.
 				// That means there were spillover leaves,
 				// and the leaf we just hashed was a normal leaf.
-				layerWidth = uint16(1 << (bits.Len16(t.nLeaves) - 2))
 				layerStartNodeIdx = int(spilloverLeafCount>>1) + int(t.nLeaves)
-				curNodeOffset = int(leafIdx) / 2
 			}
 		}
 	}
