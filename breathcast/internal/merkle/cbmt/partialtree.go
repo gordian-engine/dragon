@@ -319,7 +319,9 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 				sib.LeafStart = firstSpilloverLeafIdx + uint16(sibOffset)
 				sib.LeafEnd = sib.LeafStart + 1 // Always has to be +1 for spillover.
 			} else {
-				panic("TODO")
+				sibLeafIdx := leafIdx - 1
+				sib.LeafStart = sibLeafIdx
+				sib.LeafEnd = sibLeafIdx
 			}
 		} else {
 			sib.NodeIdx = nodeIdxForLeaf + 1
