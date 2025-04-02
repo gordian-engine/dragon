@@ -267,7 +267,7 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 
 	fmt.Printf("AddLeaf: first sibling discovery\n")
 	// We have at least one proof.
-	if leafIdx == firstSpilloverLeafIdx-1 && (leafIdx&(leafIdx-1) == 0) {
+	if leafIdx == firstSpilloverLeafIdx-1 && ((leafIdx & 1) == 0) {
 		fmt.Printf("\tnormal sibling to overflow node case\n")
 		// If we are an even leaf, our sibling is odd to the right.
 		// If our odd sibling to the right is an overflow node,
