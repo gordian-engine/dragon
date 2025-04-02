@@ -256,7 +256,7 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 	siblings := make([]sibling, 0, treeHeight)
 
 	// Depending on the leaf and the tree structure,
-	// we are going to iterate from the bottommost layer of the tree
+	// we are going to iterate from the bottommost full layer of the tree
 	// or the second bottommost.
 	var layerWidth uint16
 	var layerStartNodeIdx int
@@ -346,14 +346,19 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 
 			curNodeOffset = (int(firstSpilloverLeafIdx) + (nodeIdxForLeaf >> 1))
 		} else {
-			// It wasn't a spillover, but our calculation
+			// It wasn't a spillover leaf, but our calculation
 			// needs to consider whether we had a perfect binary tree.
 			if t.nLeaves&(t.nLeaves-1) == 0 {
 				// It was a perfect binary tree.
 				layerWidth = uint16(1 << (bits.Len16(t.nLeaves) - 2))
 				layerStartNodeIdx = int(layerWidth) << 1
 			} else {
-				panic("TODO: layer view calculations for non-power-of-two tree")
+				// It wasn't a perfect binary tree.
+				// That means there were spillover leaves,
+				// and the leaf we just hashed was a normal leaf.
+				layerWidth = uint16(1 << (bits.Len16(t.nLeaves) - 2))
+				layerStartNodeIdx = int(spilloverLeafCount>>1) + int(t.nLeaves)
+				curNodeOffset = int(leafIdx) / 2
 			}
 		}
 	}
