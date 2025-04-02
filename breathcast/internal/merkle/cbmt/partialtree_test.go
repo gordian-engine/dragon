@@ -176,6 +176,31 @@ func TestPartialTree_AddLeaf_7_0(t *testing.T) {
 	require.ErrorIs(t, cbmt.ErrIncorrectLeafData, pt.AddLeaf(0, []byte("wrong"), res.Proofs[0]))
 }
 
+func TestPartialTree_AddLeaf_9_2(t *testing.T) {
+	t.Parallel()
+
+	leafData := fixtureLeafData[:9]
+
+	/* Tree layout:
+
+	0123456789ab
+	0123 456789ab
+	01 23 456 789a
+	0 1 2 3 4 5 6 78
+	x x x x x x x x x x x x x x 7 8
+
+	*/
+
+	pt, res := NewTestPartialTree(t, leafData, 2)
+
+	// First add is no error.
+	require.NoError(t, pt.AddLeaf(6, leafData[6], res.Proofs[6]))
+	require.ErrorIs(t, cbmt.ErrAlreadyHadProof, pt.AddLeaf(6, leafData[6], res.Proofs[6]))
+
+	// And trying to add the wrong leaf data returns the appropriate error.
+	require.ErrorIs(t, cbmt.ErrIncorrectLeafData, pt.AddLeaf(6, []byte("wrong"), res.Proofs[6]))
+}
+
 func TestPartialTree_AddLeaf_11_1(t *testing.T) {
 	t.Parallel()
 

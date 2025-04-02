@@ -333,7 +333,13 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 			} else {
 				sibLeafIdx := leafIdx + 1
 				sib.LeafStart = sibLeafIdx
-				sib.LeafEnd = min(sibLeafIdx, t.nLeaves-1)
+				sib.LeafEnd = sibLeafIdx
+				if sibLeafIdx == firstSpilloverLeafIdx {
+					// Normally nodes at this layer cover one leaf,
+					// but this is a particular case where the self leaf is not overflow,
+					// but the sibling is.
+					sib.LeafEnd++
+				}
 			}
 		}
 
