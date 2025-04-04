@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/bits"
 	"sync"
 	"time"
 
+	"github.com/gordian-engine/dragon/breathcast/bcmerkle/bcsha256"
+	"github.com/gordian-engine/dragon/breathcast/internal/merkle/cbmt"
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/internal/dchan"
 	"github.com/klauspost/reedsolomon"
@@ -300,12 +303,45 @@ func (p *Protocol) CreateRelayOperation(
 
 	shards := reedsolomon.AllocAligned(int(cfg.NData+cfg.NParity), int(cfg.ShardSize))
 
+	if len(cfg.RootProof) > (1<<16)-1 {
+		panic(fmt.Errorf(
+			"BUG: root proofs length must fit into a uint16 (got length %d)",
+			len(cfg.RootProof),
+		))
+	}
+
+	cutoffTier, ok := cutoffTierFromRootProofsLen(uint16(len(cfg.RootProof)))
+	if !ok {
+		return nil, fmt.Errorf(
+			"invalid root proof length %d: must be of form 2^n - 1",
+			len(cfg.RootProof),
+		)
+	}
+
 	t := &RelayOperation{
 		log: p.log.With("op", "relay"),
 
 		p: p,
 
+		pt: cbmt.NewPartialTree(cbmt.PartialTreeConfig{
+			NLeaves: cfg.NData + cfg.NParity,
+
+			// TODO: configure these through RelayOperationConfig instead of hardcoding.
+			Hasher:   bcsha256.Hasher{},
+			HashSize: bcsha256.HashSize,
+
+			Nonce: cfg.Nonce,
+
+			ProofCutoffTier: cutoffTier,
+
+			RootProofs: cfg.RootProof,
+		}),
+
 		enc: enc,
+
+		broadcastID: cfg.BroadcastID,
+		nData:       cfg.NData,
+		nParity:     cfg.NParity,
 
 		rootProof: cfg.RootProof,
 
@@ -321,6 +357,24 @@ func (p *Protocol) CreateRelayOperation(
 	go t.run(taskCtx, shards)
 
 	return t, nil
+}
+
+func cutoffTierFromRootProofsLen(proofsLen uint16) (tier uint8, ok bool) {
+	if proofsLen == 0 {
+		return 0, false
+	}
+
+	// The length must be of form (2^n)-1.
+	// Therefore adding one makes it an even power of two.
+	// And then we can use the property of (2^n) & ((2^n)-1) == 0
+	// to check if the value is a power of two.
+	if (proofsLen & (proofsLen + 1)) != 0 {
+		return 0, false
+	}
+
+	// Otherwise, the +1 was indeed a power of two,
+	// so we just need the number of bits required for proofsLen as-is.
+	return uint8(bits.Len16(proofsLen) - 1), true
 }
 
 // ExtractBroadcastHeader extracts the application-provided header data

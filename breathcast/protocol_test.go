@@ -2,6 +2,7 @@ package breathcast_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"io"
 	"testing"
 	"time"
@@ -175,6 +176,10 @@ func TestProtocolOriginate_accept(t *testing.T) {
 	// Normally there would be real application logic
 	// to translate the received app header into an accepted broadcast config.
 
+	// The fake root proof needs to be the correct length,
+	// so just sha256 some text.
+	fakeRootProof := sha256.Sum256([]byte("fake root proof"))
+
 	// The acceptor is also responsible for mapping relay tasks with streams.
 	// Since this would be the first stream for this operation,
 	// we create a new relay task out of band.
@@ -189,7 +194,7 @@ func TestProtocolOriginate_accept(t *testing.T) {
 			// We didn't use PrepareOrigination,
 			// so we don't have a real root proof here.
 			RootProof: [][]byte{
-				[]byte("fake root proof"),
+				fakeRootProof[:],
 			},
 
 			NData:   uint16(len(dataChunks)),

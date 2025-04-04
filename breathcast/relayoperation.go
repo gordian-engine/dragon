@@ -1,13 +1,16 @@
 package breathcast
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/bits-and-blooms/bitset"
+	"github.com/gordian-engine/dragon/breathcast/internal/merkle/cbmt"
 	"github.com/gordian-engine/dragon/internal/dchan"
 	"github.com/klauspost/reedsolomon"
 	"github.com/quic-go/quic-go"
@@ -26,6 +29,11 @@ type RelayOperation struct {
 	// The protocol that owns the operation,
 	// so we can enter through its main loop.
 	p *Protocol
+
+	pt *cbmt.PartialTree
+
+	broadcastID    []byte
+	nData, nParity uint16
 
 	enc reedsolomon.Encoder
 
@@ -115,8 +123,55 @@ func (o *RelayOperation) run(ctx context.Context, shards [][]byte) {
 			}
 			go w.AcceptBroadcastFromEmpty(ctx, req.S)
 			close(req.Resp)
+
+		case req := <-o.checkDatagramRequests:
+			o.handleCheckDatagramRequest(ctx, req)
 		}
 	}
+}
+
+func (o *RelayOperation) handleCheckDatagramRequest(ctx context.Context, req checkDatagramRequest) {
+	// The datagram layout is:
+	//   - 1 byte, protocol ID
+	//   - arbitrary but fixed-length broadcast ID
+	//   - 2-byte (big-endian uint16) chunk ID
+	//   - raw chunk data
+	minLen := 1 + int(o.p.broadcastIDLength) + 2 + 1 // At least 1 byte of raw chunk data.
+
+	// Initial sanity checks.
+	raw := req.Raw
+	if len(raw) < minLen {
+		panic(fmt.Errorf(
+			"BUG: impossibly short datagram; length should have been at least %d, but got %d",
+			len(raw), minLen,
+		))
+	}
+	if raw[0] != o.p.protocolID {
+		panic(fmt.Errorf(
+			"BUG: tried to check datagram with invalid protocol ID 0x%x (only 0x%x is valid)",
+			raw[0], o.p.protocolID,
+		))
+	}
+	if !bytes.Equal(raw[1:o.p.broadcastIDLength+1], o.broadcastID) {
+		panic(fmt.Errorf(
+			"BUG: received datagram with incorrect broadcast ID: expected 0x%x, got 0x%x",
+			o.broadcastID, raw[1:o.p.broadcastIDLength+1],
+		))
+	}
+
+	// The response depends on whether the index was valid in the first place,
+	// and then on whether we already have the leaf for that index.
+	idx := binary.BigEndian.Uint16(raw[1+int(o.p.broadcastIDLength) : 1+int(o.p.broadcastIDLength)+2])
+	var resp checkDatagramResponse
+	if idx >= (o.nData + o.nParity) {
+		resp = checkDatagramInvalidIndex
+	} else if o.pt.HasLeaf(idx) {
+		resp = checkDatagramAlreadyHaveChunk
+	} else {
+		resp = checkDatagramNeed
+	}
+
+	req.Resp <- resp
 }
 
 // AcceptBroadcast accepts the incoming broadcast handshake,
@@ -204,16 +259,33 @@ func (o *RelayOperation) HandleDatagram(
 		return nil
 
 	case checkDatagramNeed:
-		panic("TODO: verify proof and send back to main loop")
+		return o.attemptToAddLeaf(ctx, raw)
 
 	default:
 		panic(fmt.Errorf("TODO: handle check datagram response value %d", checkResp))
 	}
 }
 
+func (o *RelayOperation) attemptToAddLeaf(ctx context.Context, raw []byte) error {
+	// This is mildly tricky.
+	// We are on a goroutine outside the main loop,
+	// and we want to call (*PartialTree).AddLeaf,
+	// but we don't have a PartialTree instance.
+	//
+	// So it seems like the main loop should be able to do a minimal amount of work --
+	// by getting the sequence of siblings and assigning them into a preallocated slice --
+	// and then we can do all the hash calculations on this goroutine.
+	//
+	// Then we can report back to the main loop this leaf's hash and the new proofs.
+	panic("TODO: handle adding leaf")
+}
+
 type RelayOperationConfig struct {
 	// The ID for this specific broadcast operation being relayed.
 	BroadcastID []byte
+
+	// Arbitrary-length nonce required for the Merkle tree.
+	Nonce []byte
 
 	// The Merkle root proof
 	// and possibly some of its descendants.

@@ -129,6 +129,14 @@ func NewPartialTree(
 	return pt
 }
 
+// HasLeaf reports whether the given leaf has already been added to the tree
+// via [*PartialTree.AddLeaf].
+//
+// HasLeaf reports false if idx is out of bounds.
+func (t *PartialTree) HasLeaf(idx uint16) bool {
+	return t.haveLeaves.Test(uint(idx))
+}
+
 var ErrAlreadyHadProof = errors.New("already had proof for given leaf")
 
 var ErrIncorrectLeafData = errors.New("leaf data did not match expected hash")

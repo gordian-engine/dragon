@@ -27,7 +27,7 @@ func (w *relayWorker) run(ctx context.Context) {
 	}
 }
 
-// AcceptFromEmpty handles a new broadcast message,
+// AcceptBroadcastFromEmpty handles a new broadcast message,
 // responding that we have no shards yet.
 func (w *relayWorker) AcceptBroadcastFromEmpty(ctx context.Context, s quic.Stream) {
 	defer w.op.workerWG.Done()
@@ -37,6 +37,8 @@ func (w *relayWorker) AcceptBroadcastFromEmpty(ctx context.Context, s quic.Strea
 		return
 	}
 
+	// This is a fixed response in this method;
+	// we have no existing chunks, so we indicate as much to the sender.
 	if _, err := s.Write([]byte{0}); err != nil {
 		w.handleStreamError(fmt.Errorf("failed to write have-nothing acknowledgement: %w", err))
 		return
@@ -68,6 +70,10 @@ func (w *relayWorker) AcceptBroadcastFromEmpty(ctx context.Context, s quic.Strea
 		))
 		return
 	}
+
+	// TODO:
+	// Now that the sender has finished the unreliable sends,
+	// we have to tell the sender what we still need.
 
 	// Standard processing now.
 	w.run(ctx)
