@@ -129,6 +129,141 @@ func NewPartialTree(
 	return pt
 }
 
+// Clone returns a newly allocated clone of t.
+//
+// Since cbmt is an internal package,
+// we are only using the Clone method as a temporary measure.
+// The actual issue is that during the breathcast relay operation,
+// the main loop owns the primary PartialTree instance;
+// but verifying a new leaf may require too much work.
+// Therefore we want to verify a new leaf on a separate goroutine.
+//
+// Ideally, the separate work would involve much less allocation.
+// This should be possible by walking the existing partial tree
+// and collecting any (now-immutable) existing nodes
+// along the leaf's proof path,
+// and providing that subset of proofs to the other goroutine.
+// But that starts to get into the subtle implementation details
+// of the partial tree, so instead,
+// we just clone the original tree in order for the other goroutine
+// to add the leaf directly,
+// and then the main loop can use the updated clone
+// to merge the result into the primary partial tree.
+func (t *PartialTree) Clone() *PartialTree {
+	c := &PartialTree{
+		haveNodes:  t.haveNodes.Clone(),
+		haveLeaves: t.haveLeaves.Clone(),
+
+		nLeaves:  t.nLeaves,
+		hasher:   t.hasher,
+		hashSize: t.hashSize,
+
+		// The nonce is intended to be immutable,
+		// so directly referencing it should be safe.
+		nonce: t.nonce,
+	}
+
+	// Now the nodes are a little more complicated.
+	// Existing nodes are immutable,
+	// so we will reference those directly
+	// (which end up referencing the primary tree's underlying byte slice for nodes).
+	// Nodes that haven't been set yet are allocated directly here.
+
+	missingMem := make([]byte, t.hashSize*(len(t.nodes)-int(t.haveNodes.Count())))
+	var missingIdx int
+
+	nodes := make([][]byte, len(t.nodes))
+	for i := range nodes {
+		if t.haveNodes.Test(uint(i)) {
+			// Parent tree has the node, so borrow that slice.
+			nodes[i] = t.nodes[i]
+		} else {
+			// We may end up writing to this node,
+			// so it needs to be backed up by our missingMem slice.
+			end := missingIdx + t.hashSize
+			nodes[i] = missingMem[missingIdx:end]
+			missingIdx = end
+		}
+	}
+	c.nodes = nodes
+
+	return c
+}
+
+// MergeFrom merges new data from src into t.
+// The src value must have been created through [*PartialTree.Clone] on t.
+//
+// src is destructively updated during MergeFrom,
+// and it must not be used again until
+// calling [*PartialTree.WriteTo] with src as the dst argument.
+func (t *PartialTree) MergeFrom(src *PartialTree) {
+	// One quick sanity check to avoid possible bugs.
+	// The root proof is always the last node,
+	// so if that slice isn't pointing at the exact same location in memory,
+	// these cannot be matched properly.
+	if len(t.nodes) != len(src.nodes) || !bytes.Equal(t.nodes[len(t.nodes)-1], src.nodes[len(src.nodes)-1]) {
+		panic(fmt.Errorf(
+			"BUG: attempted to MergeFrom a non-cloned source; dst root hash=%x, src root hash=%x",
+			t.nodes[len(t.nodes)-1], src.nodes[len(src.nodes)-1],
+		))
+	}
+
+	// The trees look like they match, so there are two things to do.
+	// First, the easier one, update t.haveLeaves.
+	t.haveLeaves.InPlaceUnion(src.haveLeaves)
+
+	// Now the more subtle part.
+	// Do an in-place destructive update of the source,
+	// to figure out exactly which nodes are new.
+	src.haveNodes.InPlaceDifference(t.haveNodes)
+
+	// Now iterate the nodes that t didn't have,
+	// so we can copy those node values into t.
+	for u, ok := src.haveNodes.NextSet(0); ok; u, ok = src.haveNodes.NextSet(u + 1) {
+		copy(t.nodes[int(u)], src.nodes[int(u)])
+	}
+
+	// Finally, update t.haveNodes.
+	// We could have set these bit-by-bit in the previous loop,
+	// but it seems more efficient to do word-by-word this way.
+	t.haveNodes.InPlaceUnion(src.haveNodes)
+}
+
+// ResetClone resets a previously created clone to match the current state of t.
+//
+// [*PartialTree.MergeFrom] destructively updates the state of a clone,
+// and ResetClone brings the clone back to a synchronized state.
+// This is intended to be used in the main loop of RelayOperation,
+// until the PartialTree type is refactor for more allocation-friendly
+// leaf updates happening outside the relay operation main loop.
+func (t *PartialTree) ResetClone(dst *PartialTree) {
+	// Basically the same sanity check as MergeFrom.
+	if len(t.nodes) != len(dst.nodes) || !bytes.Equal(t.nodes[len(t.nodes)-1], dst.nodes[len(dst.nodes)-1]) {
+		panic(fmt.Errorf(
+			"BUG: attempted to ResetClone to a non-cloned dest; src root hash=%x, dst root hash=%x",
+			t.nodes[len(t.nodes)-1], dst.nodes[len(dst.nodes)-1],
+		))
+	}
+
+	// The clone had previous allocations for any missing nodes
+	// at the time that the clone was created.
+	// So for the nodes that t has, we can just update
+	// the clone's nodes to point at t's nodes.
+	// This means we will not be referencing some parts
+	// of the clone's backing memory, but that's fine.
+	// It should be better to just sit on the chunk of allocated memory
+	// than to keep re-allocating for smaller slices.
+	//
+	// If we were tracking the length of the root proofs,
+	// we could avoid re-assigning that chunk.
+	// But at that point we should do the proper refactor to avoid cloning at all.
+	for u, ok := t.haveNodes.NextSet(0); ok; u, ok = t.haveNodes.NextSet(u + 1) {
+		dst.nodes[int(u)] = t.nodes[int(u)]
+	}
+	_ = t.haveNodes.Copy(dst.haveNodes)
+	_ = t.haveLeaves.Copy(dst.haveLeaves)
+}
+
 // HasLeaf reports whether the given leaf has already been added to the tree
 // via [*PartialTree.AddLeaf].
 //

@@ -7,6 +7,8 @@ package bcmerkle
 // To be allocation-efficient, the Hasher implementation
 // must append its hash output to dst, instead of creating a new byte slice.
 // Hasher must not retain references to the dst slice.
+//
+// Furthermore, Hasher methods must be safe to call concurrently.
 type Hasher interface {
 	Leaf(in []byte, c LeafContext, dst []byte)
 	Node(left, right []byte, c NodeContext, dst []byte)

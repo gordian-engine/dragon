@@ -8,6 +8,7 @@ import (
 
 	"github.com/gordian-engine/dragon/breathcast/bcmerkle/bcsha256"
 	"github.com/gordian-engine/dragon/breathcast/internal/merkle/cbmt"
+	"github.com/gordian-engine/dragon/internal/dtest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -50,6 +51,63 @@ func TestNewPartialTree(t *testing.T) {
 				require.NotNil(t, pt)
 			})
 		}
+	}
+}
+
+func TestPartialTree_Clone_concurrency(t *testing.T) {
+	t.Parallel()
+
+	leafData := fixtureLeafData[:4]
+	pt, res := NewTestPartialTree(t, leafData, 0)
+
+	ready := make(chan struct{}, 4)
+	startAll := make(chan struct{})
+	done := make(chan *cbmt.PartialTree)
+
+	for i := range 4 {
+		c := pt.Clone()
+		go func() {
+			dtest.SendSoon(t, ready, struct{}{})
+			_ = dtest.ReceiveSoon(t, startAll)
+			require.NoError(t, c.AddLeaf(uint16(i), leafData[i], res.Proofs[i]))
+			require.True(t, c.HasLeaf(uint16(i)))
+
+			dtest.SendSoon(t, done, c)
+		}()
+	}
+	for range 4 {
+		_ = dtest.ReceiveSoon(t, ready)
+	}
+
+	close(startAll)
+
+	for range 4 {
+		c := dtest.ReceiveSoon(t, done)
+
+		pt.MergeFrom(c)
+	}
+}
+
+func TestPartialTree_Clone_serialReset(t *testing.T) {
+	t.Parallel()
+
+	leafData := fixtureLeafData[:4]
+	pt, res := NewTestPartialTree(t, leafData, 0)
+
+	c := pt.Clone()
+	require.NoError(t, c.AddLeaf(3, leafData[3], res.Proofs[3]))
+	pt.MergeFrom(c)
+
+	for i := range uint16(3) {
+		pt.ResetClone(c)
+
+		require.NoError(t, c.AddLeaf(i, leafData[i], res.Proofs[i]))
+
+		pt.MergeFrom(c)
+	}
+
+	for i := range uint16(4) {
+		require.True(t, pt.HasLeaf(i))
 	}
 }
 
