@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log/slog"
+	"math/bits"
 	"sync"
 	"time"
 
@@ -31,6 +32,14 @@ type RelayOperation struct {
 	p *Protocol
 
 	pt *cbmt.PartialTree
+
+	// We are currently using clones for splitting PartialTree work
+	// to other goroutines.
+	//
+	// When the other goroutines finish with their clone,
+	// the clone is appended to this list
+	// so it can be reclaimed the next time we need a clone.
+	treeClones []*cbmt.PartialTree
 
 	broadcastID    []byte
 	nData, nParity uint16
@@ -62,6 +71,14 @@ type checkDatagramRequest struct {
 	Resp chan checkDatagramResponse
 }
 
+type checkDatagramResponse struct {
+	Code checkDatagramResponseCode
+
+	// If the caller needs to add a leaf,
+	// this tree value will be non-nil.
+	Tree *cbmt.PartialTree
+}
+
 // incomingDatagram is the raw data of a broadcast chunk datagram,
 // and its chunk index.
 //
@@ -72,15 +89,15 @@ type incomingDatagram struct {
 	Idx uint16
 }
 
-// checkDatagramResponse is the information that the protocol main loop
+// checkDatagramResponseCode is the information that the protocol main loop
 // sends to the datagram receiver,
 // indicating what work needs to be offloaded from the main loop
 // to the receiver's goroutine.
-type checkDatagramResponse uint8
+type checkDatagramResponseCode uint8
 
 const (
 	// Nothing for zero.
-	_ checkDatagramResponse = iota
+	_ checkDatagramResponseCode = iota
 
 	// The index was out of bounds.
 	checkDatagramInvalidIndex
@@ -164,11 +181,28 @@ func (o *RelayOperation) handleCheckDatagramRequest(ctx context.Context, req che
 	idx := binary.BigEndian.Uint16(raw[1+int(o.p.broadcastIDLength) : 1+int(o.p.broadcastIDLength)+2])
 	var resp checkDatagramResponse
 	if idx >= (o.nData + o.nParity) {
-		resp = checkDatagramInvalidIndex
+		resp = checkDatagramResponse{
+			Code: checkDatagramInvalidIndex,
+			// No tree necessary.
+		}
 	} else if o.pt.HasLeaf(idx) {
-		resp = checkDatagramAlreadyHaveChunk
+		resp = checkDatagramResponse{
+			Code: checkDatagramAlreadyHaveChunk,
+			// No tree necessary?
+		}
 	} else {
-		resp = checkDatagramNeed
+		resp = checkDatagramResponse{
+			Code: checkDatagramNeed,
+		}
+
+		if len(o.treeClones) == 0 {
+			resp.Tree = o.pt.Clone()
+		} else {
+			treeIdx := len(o.treeClones) - 1
+			resp.Tree = o.treeClones[treeIdx]
+			o.treeClones[treeIdx] = nil
+			o.treeClones = o.treeClones[:treeIdx-1]
+		}
 	}
 
 	req.Resp <- resp
@@ -251,7 +285,7 @@ func (o *RelayOperation) HandleDatagram(
 		// Okay.
 	}
 
-	switch checkResp {
+	switch checkResp.Code {
 	case checkDatagramInvalidIndex:
 		panic("TODO: handle invalid index")
 	case checkDatagramAlreadyHaveChunk:
@@ -259,25 +293,62 @@ func (o *RelayOperation) HandleDatagram(
 		return nil
 
 	case checkDatagramNeed:
-		return o.attemptToAddLeaf(ctx, raw)
+		return o.attemptToAddLeaf(ctx, checkResp.Tree, raw)
 
 	default:
-		panic(fmt.Errorf("TODO: handle check datagram response value %d", checkResp))
+		panic(fmt.Errorf(
+			"TODO: handle check datagram response value %d", checkResp.Code,
+		))
 	}
 }
 
-func (o *RelayOperation) attemptToAddLeaf(ctx context.Context, raw []byte) error {
-	// This is mildly tricky.
-	// We are on a goroutine outside the main loop,
-	// and we want to call (*PartialTree).AddLeaf,
-	// but we don't have a PartialTree instance.
-	//
-	// So it seems like the main loop should be able to do a minimal amount of work --
-	// by getting the sequence of siblings and assigning them into a preallocated slice --
-	// and then we can do all the hash calculations on this goroutine.
-	//
-	// Then we can report back to the main loop this leaf's hash and the new proofs.
-	panic("TODO: handle adding leaf")
+func (o *RelayOperation) attemptToAddLeaf(
+	ctx context.Context, t *cbmt.PartialTree, raw []byte,
+) error {
+	// The input tree here is a clone of the tree in the main loop.
+	// We have to add the leaf to the clone,
+	// and regardless of the outcome of adding the leaf,
+	// we have to return the clone to the main loop
+	// so it can be reused.
+
+	// First we have to extract the leaf index.
+	idxOffset := 1 + int(o.p.broadcastIDLength)
+	leafIdx := binary.BigEndian.Uint16(raw[idxOffset : idxOffset+2])
+
+	// Now, the number of proofs depends on whether this was a spillover leaf.
+
+	nLeaves := o.nData + o.nParity
+	treeHeight := bits.Len16(nLeaves)
+	proofLen := treeHeight - bits.Len(uint(len(o.rootProof)))
+	hasSpillover := nLeaves&(nLeaves-1) != 0
+	if hasSpillover {
+		// The leaves weren't a power of two.
+		// Increment the tree height for spillover.
+		treeHeight++
+		// And if we are indexing a leaf that would be spillover,
+		// increment the proof length for it too.
+		spilloverCount := nLeaves - uint16(1<<(treeHeight-2))
+		if leafIdx >= spilloverCount {
+			proofLen++
+		}
+	}
+	proofs := make([][]byte, proofLen)
+
+	// We don't have a direct reference to the hash size on o.
+	hashSize := len(o.rootProof[0])
+
+	idxOffset += 2 // Move past the leaf index.
+	for i := range proofs {
+		proofs[i] = raw[idxOffset : idxOffset+hashSize]
+		idxOffset += hashSize
+	}
+
+	// TODO: send the result back to main loop here.
+	err := t.AddLeaf(leafIdx, raw, proofs)
+	if err != nil {
+		panic(err)
+	}
+	return nil
 }
 
 type RelayOperationConfig struct {

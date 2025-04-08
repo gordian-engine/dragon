@@ -633,11 +633,11 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 		discoveredHashes[len(discoveredHashes)-t.hashSize:],
 		expectedProofHash,
 	) {
-		// Panic momentarily, as we are not testing failure case yet.
-		panic(fmt.Errorf("hash mismatch: got %x, expected discovered hash %x",
+		return fmt.Errorf(
+			"AddLeaf: hash mismatch: calculated %x, expected %x",
 			discoveredHashes[len(discoveredHashes)-t.hashSize:],
 			expectedProofHash,
-		))
+		)
 	}
 
 	// The final hash matches the expected;
