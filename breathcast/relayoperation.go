@@ -54,6 +54,10 @@ type RelayOperation struct {
 	// they need to consult the main loop to decide what work needs to be done.
 	checkDatagramRequests chan checkDatagramRequest
 
+	// When a checkDatagramResponseCode indicates the leaf should be added,
+	// the working goroutine must send the response back to the main loop.
+	addLeafRequests chan addLeafRequest
+
 	newDatagrams *dchan.Multicast[incomingDatagram]
 
 	ackTimeout time.Duration
@@ -76,6 +80,14 @@ type checkDatagramResponse struct {
 
 	// If the caller needs to add a leaf,
 	// this tree value will be non-nil.
+	Tree *cbmt.PartialTree
+}
+
+// addLeafRequest is an internal request occurring after
+// attempting to add a leaf to a cloned partial tree.
+// There is no response back from the main loop for this.
+type addLeafRequest struct {
+	Add  bool
 	Tree *cbmt.PartialTree
 }
 
@@ -143,6 +155,15 @@ func (o *RelayOperation) run(ctx context.Context, shards [][]byte) {
 
 		case req := <-o.checkDatagramRequests:
 			o.handleCheckDatagramRequest(ctx, req)
+
+		case req := <-o.addLeafRequests:
+			if req.Add {
+				o.pt.MergeFrom(req.Tree)
+			}
+
+			// And hold on to the clone in case we can reuse it.
+			// TODO: discard the tree if we have too few missing shards remaining.
+			o.treeClones = append(o.treeClones, req.Tree)
 		}
 	}
 }
@@ -188,7 +209,9 @@ func (o *RelayOperation) handleCheckDatagramRequest(ctx context.Context, req che
 	} else if o.pt.HasLeaf(idx) {
 		resp = checkDatagramResponse{
 			Code: checkDatagramAlreadyHaveChunk,
-			// No tree necessary?
+			// Not sending a tree value back here,
+			// but we could send back the expected hash of the chunk
+			// so the worker can confirm its correctness.
 		}
 	} else {
 		resp = checkDatagramResponse{
@@ -196,12 +219,16 @@ func (o *RelayOperation) handleCheckDatagramRequest(ctx context.Context, req che
 		}
 
 		if len(o.treeClones) == 0 {
+			// No restored clones available, so allocate a new one.
 			resp.Tree = o.pt.Clone()
 		} else {
+			// We have at least one old clone available for reuse.
 			treeIdx := len(o.treeClones) - 1
 			resp.Tree = o.treeClones[treeIdx]
 			o.treeClones[treeIdx] = nil
-			o.treeClones = o.treeClones[:treeIdx-1]
+			o.treeClones = o.treeClones[:treeIdx]
+
+			o.pt.ResetClone(resp.Tree)
 		}
 	}
 
@@ -343,12 +370,27 @@ func (o *RelayOperation) attemptToAddLeaf(
 		idxOffset += hashSize
 	}
 
-	// TODO: send the result back to main loop here.
 	content := raw[idxOffset:]
 	err := t.AddLeaf(leafIdx, content, proofs)
-	if err != nil {
-		panic(err)
+
+	req := addLeafRequest{
+		Add:  err == nil,
+		Tree: t,
 	}
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf(
+			"context canceled while sending add leaf request: %w",
+			context.Cause(ctx),
+		)
+	case o.addLeafRequests <- req:
+		// Okay.
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to add leaf: %w", err)
+	}
+
 	return nil
 }
 

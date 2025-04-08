@@ -345,9 +345,10 @@ func (p *Protocol) CreateRelayOperation(
 
 		rootProof: cfg.RootProof,
 
-		// Both arbitrarily sized for now.
+		// All arbitrarily sized for now.
 		acceptBroadcastRequests: make(chan acceptBroadcastRequest, 4),
 		checkDatagramRequests:   make(chan checkDatagramRequest, 4),
+		addLeafRequests:         make(chan addLeafRequest, 4),
 
 		newDatagrams: dchan.NewMulticast[incomingDatagram](),
 
