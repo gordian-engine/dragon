@@ -14,12 +14,12 @@ import (
 )
 
 func TestRelayOperation_HandleDatagram(t *testing.T) {
-	t.Skip("TODO: HandleDatagram isn't fully implemented yet")
-
 	t.Parallel()
 
 	// Prepare an origination of some random data.
 	data := dtest.RandomDataForTest(t, 16*1024)
+
+	nonce := []byte("nonce")
 	po, err := breathcast.PrepareOrigination(data, breathcast.PrepareOriginationConfig{
 		MaxChunkSize:    1000,
 		ProtocolID:      0xFE,
@@ -28,7 +28,7 @@ func TestRelayOperation_HandleDatagram(t *testing.T) {
 		HeaderProofTier: 1,
 		Hasher:          bcsha256.Hasher{},
 		HashSize:        bcsha256.HashSize,
-		Nonce:           []byte("nonce"),
+		Nonce:           nonce,
 	})
 	require.NoError(t, err)
 
@@ -62,7 +62,7 @@ func TestRelayOperation_HandleDatagram(t *testing.T) {
 	// For this test we'll create the relay operation directly first.
 	rop, err := p1.CreateRelayOperation(ctx, ctx, breathcast.RelayOperationConfig{
 		BroadcastID: []byte{'x'},
-		Nonce:       []byte("some nonce"),
+		Nonce:       nonce,
 
 		RootProof: po.RootProof,
 

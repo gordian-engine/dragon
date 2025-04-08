@@ -344,7 +344,8 @@ func (o *RelayOperation) attemptToAddLeaf(
 	}
 
 	// TODO: send the result back to main loop here.
-	err := t.AddLeaf(leafIdx, raw, proofs)
+	content := raw[idxOffset:]
+	err := t.AddLeaf(leafIdx, content, proofs)
 	if err != nil {
 		panic(err)
 	}
