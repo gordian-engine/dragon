@@ -16,9 +16,11 @@ type relayWorker struct {
 	op *RelayOperation
 }
 
+// run is the main loop for a relayWorker.
+// It is not intended to be called directly,
+// but rather is the terminal state of other methods
+// like [*relayWorker.AcceptBroadcastFromEmpty].
 func (w *relayWorker) run(ctx context.Context) {
-	defer w.op.workerWG.Done()
-
 	for {
 		select {
 		case <-ctx.Done():
