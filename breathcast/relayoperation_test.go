@@ -79,4 +79,21 @@ func TestRelayOperation_HandleDatagram(t *testing.T) {
 	// we should be able to accept a single datagram successfully.
 
 	require.NoError(t, rop.HandleDatagram(ctx, po.Chunks[0]))
+
+	// Receiving another copy of the same datagram does not cause an error.
+	require.NoError(t, rop.HandleDatagram(ctx, po.Chunks[0]))
+
+	// Now all the parity datagrams can be handled without issue.
+	for i := po.NumData; i < po.NumData+po.NumParity; i++ {
+		require.NoError(t, rop.HandleDatagram(ctx, po.Chunks[i]))
+	}
+
+	// Now do a subset of the data chunks,
+	// so that we have a sufficient count to reconstitute the data.
+	haveShardCount := 1 + po.NumParity
+	for i := 1; i < po.NumData-haveShardCount; i++ {
+		require.NoError(t, rop.HandleDatagram(ctx, po.Chunks[i]))
+	}
+
+	// TODO: assert that the operation has the complete reconstituted data now.
 }

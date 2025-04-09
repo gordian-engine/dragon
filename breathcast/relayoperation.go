@@ -361,7 +361,7 @@ func (o *RelayOperation) attemptToAddLeaf(
 		// And if we are indexing a leaf that would be spillover,
 		// increment the proof length for it too.
 		spilloverCount := nLeaves - uint16(1<<(treeHeight-2))
-		if leafIdx >= spilloverCount {
+		if leafIdx >= nLeaves-(spilloverCount*2) {
 			proofLen++
 		}
 	}
