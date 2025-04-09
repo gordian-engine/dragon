@@ -24,6 +24,10 @@ import (
 // The application owns management of any live relay operations,
 // and the application is responsible for routing incoming streams
 // to the [*RelayOperation.AcceptBroadcast] method.
+// Note, the broadcast is created through a [*Protocol.Originate].
+//
+// Once the broadcast is accepted,
+// the operation manages all communication with peers.
 type RelayOperation struct {
 	log *slog.Logger
 
@@ -154,7 +158,7 @@ func (o *RelayOperation) run(ctx context.Context, shards [][]byte) {
 			close(req.Resp)
 
 		case req := <-o.checkDatagramRequests:
-			o.handleCheckDatagramRequest(ctx, req)
+			o.handleCheckDatagramRequest(req)
 
 		case req := <-o.addLeafRequests:
 			if req.Add {
@@ -168,7 +172,7 @@ func (o *RelayOperation) run(ctx context.Context, shards [][]byte) {
 	}
 }
 
-func (o *RelayOperation) handleCheckDatagramRequest(ctx context.Context, req checkDatagramRequest) {
+func (o *RelayOperation) handleCheckDatagramRequest(req checkDatagramRequest) {
 	// The datagram layout is:
 	//   - 1 byte, protocol ID
 	//   - arbitrary but fixed-length broadcast ID
@@ -232,6 +236,8 @@ func (o *RelayOperation) handleCheckDatagramRequest(ctx context.Context, req che
 		}
 	}
 
+	// This response channel is created internally
+	// and can be assumed to be buffered sufficiently.
 	req.Resp <- resp
 }
 

@@ -289,6 +289,25 @@ type originateRequest struct {
 	Resp chan struct{}
 }
 
+// CreateRelayOperation is called when accepting an incoming broadcast.
+// The workflow for calling this method is:
+//
+//  1. The application monitors the [ProtocolConfig.ConnectionChanges] channel
+//     to track the peers in the active view.
+//  2. The application runs a goroutine for each active connection,
+//     to call AcceptStream.
+//     Upon seeing the configured ProtocolID on the stream,
+//     the application calls [*Protocol.ExtractStreamBroadcastHeader]
+//     to get the broadcast header from the stream.
+//     The broadcast header contains application-specific data
+//     and metadata about the particular broadcast.
+//  3. If the broadcast header contains valid application data,
+//     and if there is no existing and corresponding RelayOperation,
+//     the application calls CreateRelayOperation to create the operation.
+//  4. Following a call to CreateRelayOperation in the previous step,
+//     or with prior knowledge that a corresponding RelayOperation exists,
+//     the application calls [*RelayOperation.AcceptBroadcast],
+//     passing in the just-accepted stream.
 func (p *Protocol) CreateRelayOperation(
 	createCtx, taskCtx context.Context,
 	cfg RelayOperationConfig,
@@ -378,16 +397,18 @@ func cutoffTierFromRootProofsLen(proofsLen uint16) (tier uint8, ok bool) {
 	return uint8(bits.Len16(proofsLen) - 1), true
 }
 
-// ExtractBroadcastHeader extracts the application-provided header data
+// ExtractStreamBroadcastHeader extracts the application-provided header data
 // from the given reader (which should be a QUIC stream).
 // The extracted data is appended to the given dst slice,
 // which is permitted to be nil.
+//
+// The stream is an origination stream created through [*Protocol.Originate].
 //
 // The caller is responsible for setting any read deadlines.
 //
 // It is assumed that the caller has already consumed
 // the protocol ID byte matching [ProtocolConfig.ProtocolID].
-func ExtractBroadcastHeader(r io.Reader, dst []byte) ([]byte, error) {
+func ExtractStreamBroadcastHeader(r io.Reader, dst []byte) ([]byte, error) {
 	// First extract the have ratio and the header length.
 	var buf [3]byte
 	if _, err := io.ReadFull(r, buf[:]); err != nil {
@@ -398,6 +419,11 @@ func ExtractBroadcastHeader(r io.Reader, dst []byte) ([]byte, error) {
 	}
 
 	if buf[0] != 0xff {
+		// At the moment we are only accepting broadcast streams
+		// from peers who have 100% of the data.
+		// The 100% case is handled specially,
+		// and anything else is a relay-to-relay operation
+		// which has a bit more complexity.
 		panic(fmt.Errorf(
 			"TODO: handle relayed broadcast (got ratio byte 0x%x)", buf[0],
 		))
@@ -436,7 +462,7 @@ func ExtractBroadcastHeader(r io.Reader, dst []byte) ([]byte, error) {
 // without rebuilding and reallocating the slice.
 //
 // If the datagram is too short to contain a full broadcast ID,
-// both returned slice will be nil.
+// the returned slice will be nil.
 //
 // The returned slice is a subslice of the input,
 // so retaining the return value will retain the input.

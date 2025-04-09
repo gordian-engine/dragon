@@ -83,7 +83,7 @@ func TestProtocol_Originate_header(t *testing.T) {
 
 	// Caller must manually set the read deadline before extracting broadcast header.
 	require.NoError(t, acceptedStream.SetReadDeadline(time.Now().Add(time.Second)))
-	extractedHeader, err := breathcast.ExtractBroadcastHeader(acceptedStream, nil)
+	extractedHeader, err := breathcast.ExtractStreamBroadcastHeader(acceptedStream, nil)
 	require.NoError(t, err)
 
 	require.Equal(t, header, extractedHeader)
@@ -167,7 +167,7 @@ func TestProtocolOriginate_accept(t *testing.T) {
 
 	// Caller must manually set the read deadline before extracting broadcast header.
 	require.NoError(t, acceptedStream.SetReadDeadline(time.Now().Add(time.Second)))
-	extractedHeader, err := breathcast.ExtractBroadcastHeader(acceptedStream, nil)
+	extractedHeader, err := breathcast.ExtractStreamBroadcastHeader(acceptedStream, nil)
 	require.NoError(t, err)
 
 	require.Equal(t, appHeader, extractedHeader)
