@@ -6,11 +6,9 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log/slog"
-	"math/bits"
 	"sync"
 	"time"
 
-	"github.com/bits-and-blooms/bitset"
 	"github.com/gordian-engine/dragon/breathcast/internal/merkle/cbmt"
 	"github.com/gordian-engine/dragon/internal/dchan"
 	"github.com/klauspost/reedsolomon"
@@ -35,6 +33,7 @@ type RelayOperation struct {
 	// so we can enter through its main loop.
 	p *Protocol
 
+	// The Merkle tree that we are reconstituting from peers.
 	pt *cbmt.PartialTree
 
 	// We are currently using clones for splitting PartialTree work
@@ -51,6 +50,9 @@ type RelayOperation struct {
 	enc reedsolomon.Encoder
 
 	rootProof [][]byte
+
+	// Channel that is closed when the data has been reconstituted.
+	dataReady chan struct{}
 
 	acceptBroadcastRequests chan acceptBroadcastRequest
 
@@ -91,8 +93,21 @@ type checkDatagramResponse struct {
 // attempting to add a leaf to a cloned partial tree.
 // There is no response back from the main loop for this.
 type addLeafRequest struct {
-	Add  bool
+	// Whether to attempt to merge the provided tree.
+	Add bool
+
+	// The cloned tree we populated.
+	// If Add is true, then any new hashes in Tree
+	// will get copied to the main partial tree instance.
 	Tree *cbmt.PartialTree
+
+	// The relay operation will retain a reference to this slice,
+	// so that it can be directly sent to other peers.
+	RawDatagram []byte
+
+	// The parsed datagram,
+	// which contains the leaf index and the raw data content.
+	Parsed broadcastDatagram
 }
 
 // incomingDatagram is the raw data of a broadcast chunk datagram,
@@ -128,12 +143,6 @@ const (
 )
 
 func (o *RelayOperation) run(ctx context.Context, shards [][]byte) {
-	// Assume that when we begin a relay operation, we have populated shards.
-	// Note that we can't rely on the length of the shards,
-	// as reedsolomon.AllocAligned sets the slices to non-zero length.
-	have := bitset.New(uint(len(shards)))
-	_ = have
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -161,12 +170,36 @@ func (o *RelayOperation) run(ctx context.Context, shards [][]byte) {
 			o.handleCheckDatagramRequest(req)
 
 		case req := <-o.addLeafRequests:
-			if req.Add {
+			idx := req.Parsed.ChunkIndex
+			if req.Add && !o.pt.HaveLeaves().Test(uint(idx)) {
+				// If there were two concurrent requests for the same index,
+				// we don't need to go through merging the duplicate.
 				o.pt.MergeFrom(req.Tree)
+
+				// Immediately note the newly available datagram,
+				// as this could unblock other goroutines and peers.
+				o.newDatagrams.Set(incomingDatagram{
+					Raw: req.RawDatagram,
+					Idx: idx,
+				})
+				o.newDatagrams = o.newDatagrams.Next
+
+				// Now we copy the content to the encoder's shards.
+				// This copy is not greatly memory-efficient,
+				// since between those shards and the datagrams we hold,
+				// we are storing two copies of the data;
+				// but the encoder is supposed to see a significant throughput increase
+				// when working with correctly memory-aligned shards,
+				// so we assume for now that it's worth the tradeoff.
+				copy(shards[idx], req.Parsed.Data)
+
+				// TODO: check our shard count now
+				// and see if we are able to rebuild the data block at this point.
 			}
 
-			// And hold on to the clone in case we can reuse it.
-			// TODO: discard the tree if we have too few missing shards remaining.
+			// And hold on to the clone in case we can reuse it,
+			// regardless of whether the datagram was addable.
+			// TODO: discard the tree if there would be more clones than missing chunks.
 			o.treeClones = append(o.treeClones, req.Tree)
 		}
 	}
@@ -177,8 +210,9 @@ func (o *RelayOperation) handleCheckDatagramRequest(req checkDatagramRequest) {
 	//   - 1 byte, protocol ID
 	//   - arbitrary but fixed-length broadcast ID
 	//   - 2-byte (big-endian uint16) chunk ID
+	//   - sequence of proofs (length implied via chunk ID)
 	//   - raw chunk data
-	minLen := 1 + int(o.p.broadcastIDLength) + 2 + 1 // At least 1 byte of raw chunk data.
+	minLen := 1 + int(o.p.broadcastIDLength) + 2 + 1 // At least 1 byte of proofs and raw chunk data.
 
 	// Initial sanity checks.
 	raw := req.Raw
@@ -344,45 +378,28 @@ func (o *RelayOperation) attemptToAddLeaf(
 	// we have to return the clone to the main loop
 	// so it can be reused.
 
-	// First we have to extract the leaf index.
-	idxOffset := 1 + int(o.p.broadcastIDLength)
-	leafIdx := binary.BigEndian.Uint16(raw[idxOffset : idxOffset+2])
-
-	// Now, the number of proofs depends on whether this was a spillover leaf.
-
-	nLeaves := o.nData + o.nParity
-	treeHeight := bits.Len16(nLeaves)
-	proofLen := treeHeight - bits.Len(uint(len(o.rootProof)))
-	hasSpillover := nLeaves&(nLeaves-1) != 0
-	if hasSpillover {
-		// The leaves weren't a power of two.
-		// Increment the tree height for spillover.
-		treeHeight++
-		// And if we are indexing a leaf that would be spillover,
-		// increment the proof length for it too.
-		spilloverCount := nLeaves - uint16(1<<(treeHeight-2))
-		if leafIdx >= nLeaves-(spilloverCount*2) {
-			proofLen++
-		}
-	}
-	proofs := make([][]byte, proofLen)
-
-	// We don't have a direct reference to the hash size on o.
-	hashSize := len(o.rootProof[0])
-
-	idxOffset += 2 // Move past the leaf index.
-	for i := range proofs {
-		proofs[i] = raw[idxOffset : idxOffset+hashSize]
-		idxOffset += hashSize
-	}
-
-	content := raw[idxOffset:]
-	err := t.AddLeaf(leafIdx, content, proofs)
+	// TODO: we need a length check here to ensure parsing does not panic.
+	bd := parseBroadcastDatagram(
+		raw,
+		o.p.broadcastIDLength,
+		o.nData+o.nParity,
+		uint(len(o.rootProof)),
+		len(o.rootProof[0]),
+	)
+	err := t.AddLeaf(bd.ChunkIndex, bd.Data, bd.Proofs)
 
 	req := addLeafRequest{
 		Add:  err == nil,
 		Tree: t,
 	}
+	if err == nil {
+		// Only set the field if we expect the main loop to retain it.
+		// If there was an error, we don't want the datagram,
+		// so it may be eligible for earlier GC.
+		req.RawDatagram = raw
+		req.Parsed = bd
+	}
+
 	select {
 	case <-ctx.Done():
 		return fmt.Errorf(

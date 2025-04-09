@@ -129,6 +129,16 @@ func NewPartialTree(
 	return pt
 }
 
+// HaveLeaves returns the bitset indicating the indices of which leaves
+// have been successfully added to the partial tree.
+//
+// This is a direct reference to the underlying bit set,
+// so it must not be modified,
+// and it must not be read concurrently with calls to other methods on t.
+func (t *PartialTree) HaveLeaves() *bitset.BitSet {
+	return t.haveLeaves
+}
+
 // Clone returns a newly allocated clone of t.
 //
 // Since cbmt is an internal package,
