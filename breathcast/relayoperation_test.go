@@ -86,14 +86,21 @@ func TestRelayOperation_HandleDatagram(t *testing.T) {
 	// Now all the parity datagrams can be handled without issue.
 	for i := po.NumData; i < po.NumData+po.NumParity; i++ {
 		require.NoError(t, rop.HandleDatagram(ctx, po.Chunks[i]))
+		dtest.NotSending(t, rop.DataReady())
 	}
 
-	// Now do a subset of the data chunks,
-	// so that we have a sufficient count to reconstitute the data.
+	// Now do a subset of the data chunks.
+	// We are still one short after this loop.
 	haveShardCount := 1 + po.NumParity
 	for i := 1; i < po.NumData-haveShardCount; i++ {
 		require.NoError(t, rop.HandleDatagram(ctx, po.Chunks[i]))
+		dtest.NotSending(t, rop.DataReady())
 	}
 
-	// TODO: assert that the operation has the complete reconstituted data now.
+	// And with one more data shard, the data is ready.
+	require.NoError(t, rop.HandleDatagram(ctx, po.Chunks[po.NumData-haveShardCount+1]))
+	// The close happens on a separate goroutine and is unsynchronized.
+	dtest.ReceiveSoon(t, rop.DataReady())
+
+	// TODO: assert the actual data content matches.
 }

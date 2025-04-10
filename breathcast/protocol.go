@@ -321,6 +321,10 @@ func (p *Protocol) CreateRelayOperation(
 	}
 
 	shards := reedsolomon.AllocAligned(int(cfg.NData+cfg.NParity), int(cfg.ShardSize))
+	for i := range shards {
+		// The relay operation relies on unpopulated shards being zero-length.
+		shards[i] = shards[i][:0]
+	}
 
 	if len(cfg.RootProof) > (1<<16)-1 {
 		panic(fmt.Errorf(
@@ -337,7 +341,7 @@ func (p *Protocol) CreateRelayOperation(
 		)
 	}
 
-	t := &RelayOperation{
+	op := &RelayOperation{
 		log: p.log.With("op", "relay"),
 
 		p: p,
@@ -364,6 +368,8 @@ func (p *Protocol) CreateRelayOperation(
 
 		rootProof: cfg.RootProof,
 
+		dataReady: make(chan struct{}),
+
 		// All arbitrarily sized for now.
 		acceptBroadcastRequests: make(chan acceptBroadcastRequest, 4),
 		checkDatagramRequests:   make(chan checkDatagramRequest, 4),
@@ -374,9 +380,9 @@ func (p *Protocol) CreateRelayOperation(
 		ackTimeout: cfg.AckTimeout,
 	}
 
-	go t.run(taskCtx, shards)
+	go op.run(taskCtx, shards)
 
-	return t, nil
+	return op, nil
 }
 
 func cutoffTierFromRootProofsLen(proofsLen uint16) (tier uint8, ok bool) {

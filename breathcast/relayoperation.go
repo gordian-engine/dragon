@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -69,6 +70,12 @@ type RelayOperation struct {
 	ackTimeout time.Duration
 
 	workerWG sync.WaitGroup
+}
+
+// DataReady returns a channel that is closed
+// once the data has been reconstructed.
+func (o *RelayOperation) DataReady() <-chan struct{} {
+	return o.dataReady
 }
 
 type acceptBroadcastRequest struct {
@@ -143,6 +150,8 @@ const (
 )
 
 func (o *RelayOperation) run(ctx context.Context, shards [][]byte) {
+	var shardsSoFar uint16
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -191,10 +200,29 @@ func (o *RelayOperation) run(ctx context.Context, shards [][]byte) {
 				// but the encoder is supposed to see a significant throughput increase
 				// when working with correctly memory-aligned shards,
 				// so we assume for now that it's worth the tradeoff.
-				copy(shards[idx], req.Parsed.Data)
+				shards[idx] = append(shards[idx], req.Parsed.Data...)
 
-				// TODO: check our shard count now
-				// and see if we are able to rebuild the data block at this point.
+				shardsSoFar++
+				if shardsSoFar >= o.nData {
+					// TODO: need to check that we haven't reconstructed already.
+					// If we get an extra shard concurrently with the last one,
+					// we currently would double-close o.dataReady.
+					if err := o.enc.Reconstruct(shards); err != nil {
+						// Something is extremely wrong if reconstruction fails.
+						// We verified every Merkle proof along the way.
+						// The panic message needs to be very detailed.
+						var buf bytes.Buffer
+						fmt.Fprintf(&buf, "IMPOSSIBLE: reconstruction failed")
+						for i, shard := range shards {
+							fmt.Fprintf(&buf, "\n% 5d: %x", i, shard)
+						}
+						panic(errors.New(buf.String()))
+					}
+
+					// Data has been reconstructed.
+					// Notify any watchers.
+					close(o.dataReady)
+				}
 			}
 
 			// And hold on to the clone in case we can reuse it,
