@@ -23,7 +23,7 @@ import (
 // The application owns management of any live relay operations,
 // and the application is responsible for routing incoming streams
 // to the [*RelayOperation.AcceptBroadcast] method.
-// Note, the broadcast is created through a [*Protocol.Originate].
+// Note, the broadcast is created through [*Protocol.Originate].
 //
 // Once the broadcast is accepted,
 // the operation manages all communication with peers.
@@ -162,78 +162,51 @@ func (o *RelayOperation) run(ctx context.Context, shards [][]byte) {
 			return
 
 		case req := <-o.acceptBroadcastRequests:
-			// TODO: we need to invoke the worker differently depending on
-			// how many shards we already have.
-			//
-			// No shards is the default, and a trivial, case.
-			o.workerWG.Add(1)
-			w := &relayWorker{
-				log: o.log.With("broadcast_stream", req.S.StreamID()),
-
-				op: o,
-			}
-			go w.AcceptBroadcastFromEmpty(ctx, req.S)
-			close(req.Resp)
+			o.handleAcceptBroadcastRequest(ctx, req, shardsSoFar)
 
 		case req := <-o.checkDatagramRequests:
-			o.handleCheckDatagramRequest(req)
+			o.handleCheckDatagramRequest(req, shardsSoFar)
 
 		case req := <-o.addLeafRequests:
-			idx := req.Parsed.ChunkIndex
-			if req.Add && !o.pt.HaveLeaves().Test(uint(idx)) {
-				// If there were two concurrent requests for the same index,
-				// we don't need to go through merging the duplicate.
-				o.pt.MergeFrom(req.Tree)
-
-				// Immediately note the newly available datagram,
-				// as this could unblock other goroutines and peers.
-				o.newDatagrams.Set(incomingDatagram{
-					Raw: req.RawDatagram,
-					Idx: idx,
-				})
-				o.newDatagrams = o.newDatagrams.Next
-
-				// Now we copy the content to the encoder's shards.
-				// This copy is not greatly memory-efficient,
-				// since between those shards and the datagrams we hold,
-				// we are storing two copies of the data;
-				// but the encoder is supposed to see a significant throughput increase
-				// when working with correctly memory-aligned shards,
-				// so we assume for now that it's worth the tradeoff.
-				shards[idx] = append(shards[idx], req.Parsed.Data...)
-
-				shardsSoFar++
-				if shardsSoFar >= o.nData {
-					// TODO: need to check that we haven't reconstructed already.
-					// If we get an extra shard concurrently with the last one,
-					// we currently would double-close o.dataReady.
-					if err := o.enc.Reconstruct(shards); err != nil {
-						// Something is extremely wrong if reconstruction fails.
-						// We verified every Merkle proof along the way.
-						// The panic message needs to be very detailed.
-						var buf bytes.Buffer
-						fmt.Fprintf(&buf, "IMPOSSIBLE: reconstruction failed")
-						for i, shard := range shards {
-							fmt.Fprintf(&buf, "\n% 5d: %x", i, shard)
-						}
-						panic(errors.New(buf.String()))
-					}
-
-					// Data has been reconstructed.
-					// Notify any watchers.
-					close(o.dataReady)
-				}
-			}
-
-			// And hold on to the clone in case we can reuse it,
-			// regardless of whether the datagram was addable.
-			// TODO: discard the tree if there would be more clones than missing chunks.
-			o.treeClones = append(o.treeClones, req.Tree)
+			shardsSoFar = o.handleAddLeafRequest(req, shards, shardsSoFar)
 		}
 	}
 }
 
-func (o *RelayOperation) handleCheckDatagramRequest(req checkDatagramRequest) {
+func (o *RelayOperation) handleAcceptBroadcastRequest(
+	ctx context.Context, req acceptBroadcastRequest,
+	shardsSoFar uint16,
+) {
+	switch shardsSoFar {
+	case 0:
+		o.workerWG.Add(1)
+		w := &relayWorker{
+			log: o.log.With("broadcast_stream", req.S.StreamID()),
+
+			op: o,
+		}
+		go w.AcceptBroadcastFromEmpty(ctx, req.S)
+		close(req.Resp)
+	default:
+		panic(errors.New(
+			"TODO: handle accepting a new broadcast when we already have some shards",
+		))
+	}
+}
+
+func (o *RelayOperation) handleCheckDatagramRequest(req checkDatagramRequest, shardsSoFar uint16) {
+	if shardsSoFar >= o.nData {
+		// We already have every shard, so we ignore incoming datagrams at this point.
+		// We shouldn't even get any more check datagram requests,
+		// since HandleDatagram should check whether the data is ready first.
+		// But it is still possible that the data became ready
+		// while that request was already in flight.
+		req.Resp <- checkDatagramResponse{
+			Code: checkDatagramAlreadyHaveChunk,
+		}
+		return
+	}
+
 	// The datagram layout is:
 	//   - 1 byte, protocol ID
 	//   - arbitrary but fixed-length broadcast ID
@@ -303,6 +276,76 @@ func (o *RelayOperation) handleCheckDatagramRequest(req checkDatagramRequest) {
 	req.Resp <- resp
 }
 
+func (o *RelayOperation) handleAddLeafRequest(
+	req addLeafRequest,
+	shards [][]byte,
+	shardsSoFar uint16,
+) uint16 {
+	idx := req.Parsed.ChunkIndex
+	if req.Add && shardsSoFar < o.nData && !o.pt.HaveLeaves().Test(uint(idx)) {
+		// If there were two concurrent requests for the same index,
+		// we don't need to go through merging the duplicate.
+		o.pt.MergeFrom(req.Tree)
+
+		// Immediately note the newly available datagram,
+		// as this could unblock other goroutines and peers.
+		o.newDatagrams.Set(incomingDatagram{
+			Raw: req.RawDatagram,
+			Idx: idx,
+		})
+		o.newDatagrams = o.newDatagrams.Next
+
+		// Now we copy the content to the encoder's shards.
+		// This copy is not greatly memory-efficient,
+		// since between those shards and the datagrams we hold,
+		// we are storing two copies of the data;
+		// but the encoder is supposed to see a significant throughput increase
+		// when working with correctly memory-aligned shards,
+		// so we assume for now that it's worth the tradeoff.
+		shards[idx] = append(shards[idx], req.Parsed.Data...)
+
+		shardsSoFar++
+		if shardsSoFar >= o.nData {
+			// TODO: need to check that we haven't reconstructed already.
+			// If we get an extra shard concurrently with the last one,
+			// we currently would double-close o.dataReady.
+			if err := o.enc.Reconstruct(shards); err != nil {
+				// Something is extremely wrong if reconstruction fails.
+				// We verified every Merkle proof along the way.
+				// The panic message needs to be very detailed.
+				var buf bytes.Buffer
+				fmt.Fprintf(&buf, "IMPOSSIBLE: reconstruction failed")
+				for i, shard := range shards {
+					fmt.Fprintf(&buf, "\n% 5d: %x", i, shard)
+				}
+				panic(errors.New(buf.String()))
+			}
+
+			// Data has been reconstructed.
+			// Notify any watchers.
+			close(o.dataReady)
+		}
+	}
+
+	// And hold on to the clone in case we can reuse it,
+	// regardless of whether the datagram was addable.
+	if shardsSoFar < o.nData {
+		// TODO: we could discard the tree
+		// if there would be more clones than missing chunks,
+		// but that also risks re-allocating a new clone
+		// if we are concurrently receiving datagrams.
+		// Maybe we could allow the slice to be twice the size of the gap.
+		o.treeClones = append(o.treeClones, req.Tree)
+	} else {
+		// We won't be using the tree clones anymore
+		// now that we've reconstructed the data.
+		// Drop the whole slice for earlier GC.
+		o.treeClones = nil
+	}
+
+	return shardsSoFar
+}
+
 // AcceptBroadcast accepts the incoming broadcast handshake,
 // replying with a protocol-specific message indicating what shards
 // the operation instance already has.
@@ -344,6 +387,15 @@ func (o *RelayOperation) HandleDatagram(
 	ctx context.Context,
 	raw []byte,
 ) error {
+	// Before trying to interact with the main loop,
+	// see if the data has already been reconstructed.
+	select {
+	case <-o.dataReady:
+		return nil
+	default:
+		// Keep going.
+	}
+
 	// This is a two-phase operation with the operation's main loop.
 	// First, we pass the entire raw slice to the main loop.
 	// The main loop inspects the chunk ID to determine if the ID is valid

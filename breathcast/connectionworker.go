@@ -19,6 +19,8 @@ type connectionWorker struct {
 	QUIC  quic.Connection
 	Chain dcert.Chain
 
+	// The Protocol main loop fans out originations
+	// to the Originations channel instance on every connectionWorker.
 	Originations chan origination
 
 	// TODO: identify how the relay operation occurs.

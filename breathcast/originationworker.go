@@ -3,8 +3,11 @@ package breathcast
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"log/slog"
 	"time"
+
+	"github.com/quic-go/quic-go"
 )
 
 // After sending all the datagrams of chunks,
@@ -100,6 +103,15 @@ func (w *originationWorker) run(o origination) {
 		return
 	}
 
+	if err := w.sendDatagrams(s.Context(), w.cw.QUIC, o); err != nil {
+		w.log.Info(
+			"Failed to send datagrams",
+			"err", err,
+		)
+		w.handleOriginationError(err)
+		return
+	}
+
 	// TODO: would start sending datagrams here.
 	// Not yet clear if that should block this goroutine or happen asynchronously.
 
@@ -127,6 +139,50 @@ func (w *originationWorker) run(o origination) {
 func (w *originationWorker) handleOriginationError(e error) {
 	// TODO: this needs to either directly close the connection,
 	// or it needs to feed back to somewhere else indicating we need to close.
+}
+
+func (w *originationWorker) sendDatagrams(
+	streamCtx context.Context, conn quic.Connection, o origination,
+) error {
+	// TODO: we should be able to accept a strategy for how datagrams are sent.
+	// We should expect different throttling needs, for instance.
+	// There could also be other QoS concerns about datagram order.
+	//
+	// Until we support a strategy for this, we'll just send the chunks in order.
+	for i := range len(o.DataChunks) + len(o.ParityChunks) {
+		if (i & 7) == 7 {
+			// Short sleep for a chance outgoing network buffer to catch up.
+			select {
+			case <-streamCtx.Done():
+				return fmt.Errorf(
+					"stream context canceled while sending datagrams: %w",
+					context.Cause(streamCtx),
+				)
+			case <-o.Ctx.Done():
+				return fmt.Errorf(
+					"origination context canceld while sending datagrams: %w",
+					context.Cause(o.Ctx),
+				)
+			case <-time.After(time.Microsecond):
+				// Okay.
+			}
+		}
+
+		var c []byte
+		if i < len(o.DataChunks) {
+			c = o.DataChunks[i]
+		} else {
+			c = o.ParityChunks[i-len(o.DataChunks)]
+		}
+
+		if err := conn.SendDatagram(c); err != nil {
+			return fmt.Errorf("failed to send datagram: %w", err)
+		}
+
+		i++
+	}
+
+	return nil
 }
 
 func joinTwoContexts(ctx1, ctx2 context.Context) (context.Context, context.CancelFunc) {

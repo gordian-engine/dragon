@@ -36,6 +36,8 @@ type ListenerSet struct {
 // with count number of listeners.
 // There are no active connections;
 // use [*ListenerSet.Dialer] to make a dialer and dial another peer.
+//
+// The UDP connections are closed as part of [*testing.T.Cleanup].
 func NewListenerSet(t *testing.T, ctx context.Context, count int) *ListenerSet {
 	t.Helper()
 

@@ -19,6 +19,17 @@ import (
 )
 
 // Protocol controls all the operations of the "breathcast" broadcasting protocol.
+//
+// The primary useful methods are [*Protocol.Originate]
+// to broadcast data to peers in the active set,
+// and [*Protocol.CreateRelayOperation] to handle an incoming broadcast.
+//
+// Originating a broadcast requires using [PrepareOrigination] first
+// to split data into chunks and datagrams.
+//
+// There should only be one relay operation created per incoming broadcast.
+// As the application accepts new streams with a matching protocol ID,
+// those streams must be passed to the [*RelayOperation.AcceptBroadcast].
 type Protocol struct {
 	log *slog.Logger
 
@@ -51,11 +62,11 @@ type ProtocolConfig struct {
 	// How to inform the protocol of connection changes.
 	ConnectionChanges <-chan dconn.Change
 
-	// The single header byte to be sent on outgoing streams.
+	// The single protocol-identifying byte to be sent on outgoing streams.
 	ProtocolID byte
 
 	// The fixed length of broadcast identifiers.
-	// This needs to be extracted from the origination header
+	// The broadcast ID needs to be extracted from the origination header
 	// and it consumes space in chunk datagrams.
 	BroadcastIDLength uint8
 }
