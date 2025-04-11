@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bits-and-blooms/bitset"
 	"github.com/gordian-engine/dragon/breathcast/internal/merkle/cbmt"
 	"github.com/gordian-engine/dragon/internal/dchan"
 	"github.com/klauspost/reedsolomon"
@@ -65,6 +66,11 @@ type RelayOperation struct {
 	// the working goroutine must send the response back to the main loop.
 	addLeafRequests chan addLeafRequest
 
+	// When a broadcaster indicates they are done sending,
+	// the worker goroutines need a copy
+	// of the main loop's bit set.
+	bitsetRequests chan bitsetRequest
+
 	newDatagrams *dchan.Multicast[incomingDatagram]
 
 	ackTimeout time.Duration
@@ -115,6 +121,11 @@ type addLeafRequest struct {
 	// The parsed datagram,
 	// which contains the leaf index and the raw data content.
 	Parsed broadcastDatagram
+}
+
+type bitsetRequest struct {
+	BS   *bitset.BitSet
+	Resp chan struct{}
 }
 
 // incomingDatagram is the raw data of a broadcast chunk datagram,
@@ -169,6 +180,10 @@ func (o *RelayOperation) run(ctx context.Context, shards [][]byte) {
 
 		case req := <-o.addLeafRequests:
 			shardsSoFar = o.handleAddLeafRequest(req, shards, shardsSoFar)
+
+		case req := <-o.bitsetRequests:
+			o.pt.HaveLeaves().CopyFull(req.BS)
+			close(req.Resp)
 		}
 	}
 }

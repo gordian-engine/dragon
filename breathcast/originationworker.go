@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/big"
 	"time"
 
 	"github.com/bits-and-blooms/bitset"
@@ -146,8 +147,52 @@ func (w *originationWorker) run(o origination) {
 		return
 	}
 
-	// TODO: read status from peer, so we know what chunks they still need.
-	// We can reuse needDatagrams here.
+	// Now that we have noted completion,
+	// the peer must send us their compressed bitset.
+	// There is a 4-byte header first:
+	// uint16 for the number of set bits,
+	// and another uint16 for the number of bytes for the combination index.
+	var meta [4]byte
+
+	const bitsetTimeout = 50 * time.Millisecond // TODO: make this configurable.
+	if err := s.SetReadDeadline(time.Now().Add(bitsetTimeout)); err != nil {
+		w.log.Info(
+			"Failed to set read deadline for compressed bitset",
+			"err", err,
+		)
+		w.handleOriginationError(err)
+		return
+	}
+	if _, err := io.ReadFull(s, meta[:]); err != nil {
+		w.log.Info(
+			"Failed to set read bitset metadata",
+			"err", err,
+		)
+		w.handleOriginationError(err)
+		return
+	}
+
+	k := binary.BigEndian.Uint16(meta[:2])
+	combIdxSize := binary.BigEndian.Uint16(meta[2:])
+
+	combBytes := make([]byte, combIdxSize)
+	if _, err := io.ReadFull(s, combBytes); err != nil {
+		w.log.Info(
+			"Failed to read combination index bytes",
+			"err", err,
+		)
+		w.handleOriginationError(err)
+		return
+	}
+	var combIdx big.Int
+	combIdx.SetBytes(combBytes)
+
+	var peerHas bitset.BitSet
+	n := len(o.DataChunks) + len(o.ParityChunks)
+	decodeCombinationIndex(n, int(k), &combIdx, &peerHas)
+
+	// TODO: iterate over cleared bits in peerHas,
+	// and send back the chunks over the reliable stream.
 }
 
 func (w *originationWorker) handleOriginationError(e error) {

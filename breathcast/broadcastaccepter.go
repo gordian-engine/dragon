@@ -2,11 +2,14 @@ package breathcast
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"log/slog"
+	"math/big"
 	"time"
 
+	"github.com/bits-and-blooms/bitset"
 	"github.com/quic-go/quic-go"
 )
 
@@ -65,6 +68,9 @@ func (w *broadcastAccepter) AcceptFromEmpty(ctx context.Context, s quic.Stream) 
 
 	var buf [1]byte
 	if _, err := io.ReadFull(s, buf[:]); err != nil {
+		// TODO: if we got all the data,
+		// the CloseStreamOnDataReady goroutine would have called s.CancelRead,
+		// which would cause an error here, that we need to properly handle.
 		w.handleStreamError(fmt.Errorf("failed to read finish confirmation byte: %w", err))
 		return
 	}
@@ -77,9 +83,73 @@ func (w *broadcastAccepter) AcceptFromEmpty(ctx context.Context, s quic.Stream) 
 		return
 	}
 
-	// TODO:
 	// Now that the sender has finished the unreliable sends,
 	// we have to tell the sender what we still need.
+	// To do that, we have to query the relay operation.
+	totalChunks := uint(w.op.nData) + uint(w.op.nParity)
+	bs := bitset.MustNew(totalChunks)
+	ready := make(chan struct{})
+	req := bitsetRequest{
+		BS:   bs,
+		Resp: ready,
+	}
+	select {
+	case <-ctx.Done():
+		// Just return without logging in this case.
+		return
+	case w.op.bitsetRequests <- req:
+		// Okay.
+	}
+
+	// Now wait for the main loop to respond,
+	select {
+	case <-ctx.Done():
+		// Just return without logging in this case.
+		return
+	case <-ready:
+		// Okay.
+	}
+
+	// Our bitset is up to date.
+	// Build the compressed representation.
+	var combIdx big.Int
+	calculateCombinationIndex(int(totalChunks), bs, &combIdx)
+
+	// TODO: get this timeout from configuration instead.
+	const bitsetTimeout = 50 * time.Millisecond
+	if err := s.SetWriteDeadline(time.Now().Add(bitsetTimeout)); err != nil {
+		w.handleStreamError(fmt.Errorf("failed to set bitset deadline: %w", err))
+		return
+	}
+
+	// Writing the bitset requires two pieces of metadata.
+	// The uint16 k (as in n choose k),
+	// and the size of the binary representation.
+	// The binary representation could be more than 255 bytes,
+	// but it should never be more than 65k bytes;
+	// so we represent that as a uint16 as well.
+	var meta [4]byte
+	binary.BigEndian.PutUint16(meta[:2], uint16(bs.Count()))
+	ciByteCount := (combIdx.BitLen() + 7) / 8
+	binary.BigEndian.PutUint16(meta[2:], uint16(ciByteCount))
+	if _, err := s.Write(meta[:]); err != nil {
+		w.handleStreamError(fmt.Errorf(
+			"failed to set write bitset metadata: %w", err,
+		))
+		return
+	}
+
+	// For now we are going to use Bytes directly,
+	// even though that allocates a new slice.
+	if _, err := s.Write(combIdx.Bytes()); err != nil {
+		w.handleStreamError(fmt.Errorf(
+			"failed to set write bitset metadata: %w", err,
+		))
+		return
+	}
+
+	// TODO: now we need to begin reading back datagrams
+	// sent over this reliable stream.
 
 	// Standard processing now.
 	w.run(ctx)
