@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"log/slog"
 	"time"
 
+	"github.com/bits-and-blooms/bitset"
 	"github.com/quic-go/quic-go"
 )
 
@@ -94,6 +96,11 @@ func (w *originationWorker) run(o origination) {
 		return
 	}
 
+	// We're going to need a bit set to know which datagrams to send.
+	// Allocate it before dealing with the read deadline,
+	// so that a slow allocation during GC doesn't eat into that deadline.
+	needDatagrams := bitset.MustNew(uint(len(o.DataChunks) + len(o.ParityChunks)))
+
 	if err := s.SetReadDeadline(time.Now().Add(o.ReceiveAckTimeout)); err != nil {
 		w.log.Info(
 			"Failed to set read deadline for origination stream",
@@ -103,7 +110,16 @@ func (w *originationWorker) run(o origination) {
 		return
 	}
 
-	if err := w.sendDatagrams(s.Context(), w.cw.QUIC, o); err != nil {
+	if err := w.receiveInitialAck(s, needDatagrams); err != nil {
+		w.log.Info(
+			"Failed to receive initial acknowledgement to origination stream",
+			"err", err,
+		)
+		w.handleOriginationError(err)
+		return
+	}
+
+	if err := w.sendDatagrams(s.Context(), w.cw.QUIC, o, needDatagrams); err != nil {
 		w.log.Info(
 			"Failed to send datagrams",
 			"err", err,
@@ -111,9 +127,6 @@ func (w *originationWorker) run(o origination) {
 		w.handleOriginationError(err)
 		return
 	}
-
-	// TODO: would start sending datagrams here.
-	// Not yet clear if that should block this goroutine or happen asynchronously.
 
 	if err := s.SetWriteDeadline(time.Now().Add(o.SendCompletionTimeout)); err != nil {
 		w.log.Info(
@@ -134,6 +147,7 @@ func (w *originationWorker) run(o origination) {
 	}
 
 	// TODO: read status from peer, so we know what chunks they still need.
+	// We can reuse needDatagrams here.
 }
 
 func (w *originationWorker) handleOriginationError(e error) {
@@ -141,16 +155,51 @@ func (w *originationWorker) handleOriginationError(e error) {
 	// or it needs to feed back to somewhere else indicating we need to close.
 }
 
+// receiveInitialAck accepts the initial acknowledgement from the peer
+// following our origination.
+func (w *originationWorker) receiveInitialAck(
+	s quic.Stream, needDatagrams *bitset.BitSet,
+) error {
+	// Read the single byte indicator first.
+	var ackType [1]byte
+	if _, err := io.ReadFull(s, ackType[:]); err != nil {
+		return fmt.Errorf("failed to read ack type byte: %w", err)
+	}
+
+	switch ackType[0] {
+	case 0:
+		// Peer has nothing.
+		// We know the bitset is all clear and is already the correct length.
+		needDatagrams.FlipRange(0, needDatagrams.Len())
+		return nil
+	default:
+		// We are going to eventually support other types.
+		panic(fmt.Errorf(
+			"TODO: handle non-zero ack type (got %x)", ackType[0],
+		))
+	}
+}
+
 func (w *originationWorker) sendDatagrams(
-	streamCtx context.Context, conn quic.Connection, o origination,
+	streamCtx context.Context, conn quic.Connection,
+	o origination, needDatagrams *bitset.BitSet,
 ) error {
 	// TODO: we should be able to accept a strategy for how datagrams are sent.
 	// We should expect different throttling needs, for instance.
 	// There could also be other QoS concerns about datagram order.
 	//
 	// Until we support a strategy for this, we'll just send the chunks in order.
+
+	// How many chunks we have sent so far.
+	// Counter for injecting short sleeps every so often.
+	var n uint
+
 	for i := range len(o.DataChunks) + len(o.ParityChunks) {
-		if (i & 7) == 7 {
+		if !needDatagrams.Test(uint(i)) {
+			continue
+		}
+
+		if (n & 7) == 7 {
 			// Short sleep for a chance outgoing network buffer to catch up.
 			select {
 			case <-streamCtx.Done():
@@ -179,7 +228,7 @@ func (w *originationWorker) sendDatagrams(
 			return fmt.Errorf("failed to send datagram: %w", err)
 		}
 
-		i++
+		n++
 	}
 
 	return nil

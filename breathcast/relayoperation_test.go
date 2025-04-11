@@ -192,6 +192,18 @@ func TestRelayOperation_HandleDatagram_reliableShim(t *testing.T) {
 	_, err = p0.Originate(ctx, []byte("dummy header"), po.Chunks[:po.NumData], po.Chunks[po.NumData:])
 	require.NoError(t, err)
 
+	// The origination work started on a separate goroutine.
+	// Now we need to quickly accept the stream.
+	acceptCtx, acceptCancel := context.WithTimeout(ctx, time.Second)
+	s, err := c1.AcceptStream(acceptCtx)
+	acceptCancel()
+	require.NoError(t, err)
+
+	// The origination stream expects us to report we have nothing.
+	// We don't need to read the origination details for this test.
+	_, err = s.Write([]byte{0})
+	require.NoError(t, err)
+
 	_ = dtest.ReceiveSoon(t, rop.DataReady())
 
 	// TODO: assert the actual data content matches.
