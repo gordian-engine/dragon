@@ -179,13 +179,14 @@ func (o *RelayOperation) handleAcceptBroadcastRequest(
 ) {
 	switch shardsSoFar {
 	case 0:
-		o.workerWG.Add(1)
-		w := &relayWorker{
+		o.workerWG.Add(2)
+		w := &broadcastAccepter{
 			log: o.log.With("broadcast_stream", req.S.StreamID()),
 
 			op: o,
 		}
-		go w.AcceptBroadcastFromEmpty(ctx, req.S)
+		go w.AcceptFromEmpty(ctx, req.S)
+		go w.CloseStreamOnDataReady(ctx, req.S)
 		close(req.Resp)
 	default:
 		panic(errors.New(

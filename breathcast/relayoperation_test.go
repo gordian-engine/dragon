@@ -193,7 +193,7 @@ func TestRelayOperation_HandleDatagram_reliableShim(t *testing.T) {
 	require.NoError(t, err)
 
 	// The origination work started on a separate goroutine.
-	// Now we need to quickly accept the stream.
+	// Now we need to quickly accept the stream from the receiver side.
 	acceptCtx, acceptCancel := context.WithTimeout(ctx, time.Second)
 	s, err := c1.AcceptStream(acceptCtx)
 	acceptCancel()

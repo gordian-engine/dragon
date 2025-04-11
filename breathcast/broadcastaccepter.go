@@ -10,17 +10,21 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-type relayWorker struct {
+// broadcastAccepter is a helper type for [RelayOperation]
+// to accept an broadcast from a peer.
+// It updates the RelayOperation as new information is received,
+// and it informs the peer of what shards are needed.
+type broadcastAccepter struct {
 	log *slog.Logger
 
 	op *RelayOperation
 }
 
-// run is the main loop for a relayWorker.
+// run is the main loop for a broadcastAccepter.
 // It is not intended to be called directly,
 // but rather is the terminal state of other methods
-// like [*relayWorker.AcceptBroadcastFromEmpty].
-func (w *relayWorker) run(ctx context.Context) {
+// like [*broadcastAccepter.AcceptFromEmpty].
+func (w *broadcastAccepter) run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -29,9 +33,9 @@ func (w *relayWorker) run(ctx context.Context) {
 	}
 }
 
-// AcceptBroadcastFromEmpty handles a new broadcast message,
+// AcceptFromEmpty handles a new broadcast message,
 // responding that we have no shards yet.
-func (w *relayWorker) AcceptBroadcastFromEmpty(ctx context.Context, s quic.Stream) {
+func (w *broadcastAccepter) AcceptFromEmpty(ctx context.Context, s quic.Stream) {
 	defer w.op.workerWG.Done()
 
 	if err := s.SetWriteDeadline(time.Now().Add(w.op.ackTimeout)); err != nil {
@@ -81,8 +85,31 @@ func (w *relayWorker) AcceptBroadcastFromEmpty(ctx context.Context, s quic.Strea
 	w.run(ctx)
 }
 
-func (w *relayWorker) handleStreamError(e error) {
+func (w *broadcastAccepter) handleStreamError(e error) {
 	// TODO: this should feed back up somewhere to close the stream,
 	// and possibly close the connection too.
 	w.log.Warn("Error when handling stream", "err", e)
+}
+
+// CloseStreamOnDataReady observes w's RelayOperation
+// to detect when the data has been ready.
+// It sends a particular error code indicating a clean shutdown,
+// to the remote end.
+func (w *broadcastAccepter) CloseStreamOnDataReady(ctx context.Context, s quic.Stream) {
+	defer w.op.workerWG.Done()
+
+	select {
+	case <-ctx.Done():
+		// Quitting.
+		return
+	case <-s.Context().Done():
+		// Stream otherwise closed somehow.
+		return
+	case <-w.op.dataReady:
+		// We don't need the stream anymore.
+		// TODO: move this constant somewhere meaningful,
+		// and figure out what other codes would be relevant here.
+		const broadcastReceived quic.StreamErrorCode = 0x1234_5678
+		s.CancelRead(broadcastReceived)
+	}
 }
