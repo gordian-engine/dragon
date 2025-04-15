@@ -169,11 +169,18 @@ func (p *Protocol2) NewOrigination(
 		protocolID: p.protocolID,
 		appHeader:  cfg.AppHeader,
 
-		datagrams:  cfg.Datagrams,
-		isComplete: true,
+		datagrams: cfg.Datagrams,
+
+		dataReady: make(chan struct{}),
+
+		// acceptBroadcastRequests and checkDatagramRequests
+		// can both be nil in this case.
 
 		mainLoopDone: make(chan struct{}),
 	}
+
+	// Since we are originating, we have all the data already.
+	close(op.dataReady)
 
 	req := newBroadcastRequest{
 		Op:   op,
@@ -267,8 +274,6 @@ func (p *Protocol2) NewIncomingBroadcast(
 		enc: enc,
 
 		rootProof: cfg.RootProofs,
-
-		dataReady: make(chan struct{}),
 	}
 
 	op := &BroadcastOperation{
@@ -286,7 +291,11 @@ func (p *Protocol2) NewIncomingBroadcast(
 
 		incoming: is,
 
+		dataReady: make(chan struct{}),
+
 		acceptBroadcastRequests: make(chan acceptBroadcastRequest2),
+		checkDatagramRequests:   make(chan checkDatagramRequest),
+		addDatagramRequests:     make(chan addLeafRequest),
 
 		mainLoopDone: make(chan struct{}),
 	}
