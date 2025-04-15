@@ -79,27 +79,6 @@ func (o *BroadcastOperation) mainLoop(
 	defer close(o.mainLoopDone)
 	defer wg.Done()
 
-	// Shortcut if we are originating.
-	if o.isComplete {
-		o.initOrigination(ctx, conns)
-		o.runOrigination(ctx, conns, connChanges)
-		return
-	}
-
-	// We aren't originating, so we must be relaying.
-	// TODO: o.initRelay(ctx, conns)
-	o.runRelay(ctx, connChanges)
-
-	panic("TODO: handle incomplete initial broadcast")
-}
-
-// runOrigination is the main loop when the operation
-// has the full set of data.
-func (o *BroadcastOperation) runOrigination(
-	ctx context.Context,
-	conns map[string]dconn.Conn,
-	connChanges *dchan.Multicast[dconn.Change],
-) {
 	// We set up the protocol header once
 	// in case we need it during a connection change.
 	var protoHeader [4]byte
@@ -110,6 +89,26 @@ func (o *BroadcastOperation) runOrigination(
 
 	binary.BigEndian.PutUint16(protoHeader[2:], uint16(len(o.appHeader)))
 
+	// Shortcut if we are originating.
+	if o.isComplete {
+		o.initOrigination(ctx, conns)
+		o.runOrigination(ctx, conns, connChanges, protoHeader)
+		return
+	}
+
+	// We aren't originating, so we must be relaying.
+	// TODO: o.initRelay(ctx, conns)
+	o.runRelay(ctx, conns, connChanges, protoHeader)
+}
+
+// runOrigination is the main loop when the operation
+// has the full set of data.
+func (o *BroadcastOperation) runOrigination(
+	ctx context.Context,
+	conns map[string]dconn.Conn,
+	connChanges *dchan.Multicast[dconn.Change],
+	protoHeader [4]byte,
+) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -155,7 +154,9 @@ func (o *BroadcastOperation) handleOriginationConnChange(
 // does not have the full set of data.
 func (o *BroadcastOperation) runRelay(
 	ctx context.Context,
+	conns map[string]dconn.Conn,
 	connChanges *dchan.Multicast[dconn.Change],
+	protoHeader [4]byte,
 ) {
 	for {
 		select {
@@ -164,13 +165,38 @@ func (o *BroadcastOperation) runRelay(
 			return
 
 		case <-connChanges.Ready:
-			panic("TODO: handle conn change")
+			connChanges = o.handleRelayConnChange(ctx, conns, connChanges, protoHeader)
 
 		case req := <-o.acceptBroadcastRequests:
-			_ = req
-			panic("TODO: accept incoming broadcast")
+			ib := &incomingBroadcast{
+				log: o.log.With("remote", req.Conn.QUIC.RemoteAddr()),
+				op:  o,
+
+				state: o.incoming,
+			}
+			go ib.RunBackground(ctx, req.Stream)
+			close(req.Resp)
 		}
 	}
+}
+
+func (o *BroadcastOperation) handleRelayConnChange(
+	ctx context.Context,
+	conns map[string]dconn.Conn,
+	connChanges *dchan.Multicast[dconn.Change],
+	protoHeader [4]byte,
+) *dchan.Multicast[dconn.Change] {
+	cc := connChanges.Val
+	if cc.Adding {
+		conns[string(cc.Conn.Chain.Leaf.RawSubjectPublicKeyInfo)] = cc.Conn
+		// TODO: if we are actively relaying,
+		// we need to open an outbound relay to the new connection.
+	} else {
+		delete(conns, string(cc.Conn.Chain.Leaf.RawSubjectPublicKeyInfo))
+		// TODO: do we need to stop the in-progress operations in this case?
+	}
+
+	return connChanges.Next
 }
 
 func (o *BroadcastOperation) Wait() {

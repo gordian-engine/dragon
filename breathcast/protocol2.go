@@ -6,8 +6,11 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/gordian-engine/dragon/breathcast/bcmerkle"
+	"github.com/gordian-engine/dragon/breathcast/internal/merkle/cbmt"
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/internal/dchan"
+	"github.com/klauspost/reedsolomon"
 )
 
 // Protocol2 is a revised implementation of [Protocol].
@@ -191,6 +194,122 @@ func (p *Protocol2) NewOrigination(
 	case <-ctx.Done():
 		return nil, fmt.Errorf(
 			"context canceled while waiting for origination response: %w",
+			context.Cause(ctx),
+		)
+	case <-req.Resp:
+		return req.Op, nil
+	}
+}
+
+// IncomingBroadcastConfig is the config for [*Protocol2.NewIncomingBroadcast].
+type IncomingBroadcastConfig struct {
+	// How to identify this particular broadcast operation.
+	BroadcastID []byte
+
+	// The application header,
+	// so we can forward it directly to other peers.
+	AppHeader []byte
+
+	// Number of data and parity chunks.
+	NData, NParity uint16
+
+	// How to verify hashes of incoming chunks.
+	Hasher    bcmerkle.Hasher
+	HashSize  int
+	HashNonce []byte
+
+	// The root proofs extracted from the incoming application header.
+	// More root proofs in the header means that
+	// proofs in datagrams consume less space.
+	RootProofs [][]byte
+
+	// The size of the underlying erasure-coded shards.
+	// Necessary for reconstituting the original application data.
+	ShardSize uint16
+}
+
+func (p *Protocol2) NewIncomingBroadcast(
+	ctx context.Context,
+	cfg IncomingBroadcastConfig,
+) (*BroadcastOperation, error) {
+	// Set up the incoming state value first.
+	enc, err := reedsolomon.New(
+		int(cfg.NData), int(cfg.NParity),
+		reedsolomon.WithAutoGoroutines(int(cfg.ShardSize)),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create reed solomon encoder: %w", err)
+	}
+
+	tier, ok := cutoffTierFromRootProofsLen(uint16(len(cfg.RootProofs)))
+	if !ok {
+		return nil, fmt.Errorf("invalid root proof length %d", len(cfg.RootProofs))
+	}
+	pt := cbmt.NewPartialTree(cbmt.PartialTreeConfig{
+		NLeaves: cfg.NData + cfg.NParity,
+
+		Hasher:   cfg.Hasher,
+		HashSize: cfg.HashSize,
+		Nonce:    cfg.HashNonce,
+
+		ProofCutoffTier: tier,
+
+		RootProofs: cfg.RootProofs,
+	})
+
+	is := &incomingState{
+		pt: pt,
+
+		broadcastID: cfg.BroadcastID,
+		nData:       cfg.NData,
+		nParity:     cfg.NParity,
+
+		enc: enc,
+
+		rootProof: cfg.RootProofs,
+
+		dataReady: make(chan struct{}),
+	}
+
+	op := &BroadcastOperation{
+		log: p.log.With(
+			"op", "broadcast",
+			"bid", fmt.Sprintf("%x", cfg.BroadcastID), // TODO: dlog.Hex helper?
+		),
+
+		protocolID: p.protocolID,
+		appHeader:  cfg.AppHeader,
+
+		// We will save the datagrams from incoming data,
+		// so it's fine that the inner slices are all nil.
+		datagrams: make([][]byte, cfg.NData+cfg.NParity),
+
+		incoming: is,
+
+		acceptBroadcastRequests: make(chan acceptBroadcastRequest2),
+
+		mainLoopDone: make(chan struct{}),
+	}
+
+	req := newBroadcastRequest{
+		Op:   op,
+		Resp: make(chan struct{}),
+	}
+
+	select {
+	case <-ctx.Done():
+		return nil, fmt.Errorf(
+			"context canceled while sending incoming broadcast request: %w",
+			context.Cause(ctx),
+		)
+	case p.newBroadcastRequests <- req:
+		// Okay.
+	}
+
+	select {
+	case <-ctx.Done():
+		return nil, fmt.Errorf(
+			"context canceled while waiting for incoming broadcast response: %w",
 			context.Cause(ctx),
 		)
 	case <-req.Resp:

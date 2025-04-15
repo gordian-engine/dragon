@@ -98,8 +98,40 @@ func TestProtocol2_NewOrigination(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, byte(0x91), oneByte[0])
 
+	// The incoming stream has the right application header.
 	appHeader, err := breathcast.ExtractStreamBroadcastHeader(s, nil)
 	require.NoError(t, err)
 	require.Equal(t, []byte("fake app header"), appHeader)
-	t.SkipNow()
+
+	// So now the accepting protocol can make a broadcast operation instance.
+	bop1, err := pa.NewIncomingBroadcast(ctx, breathcast.IncomingBroadcastConfig{
+		BroadcastID: []byte("xyz"),
+
+		AppHeader: []byte("fake app header"),
+
+		NData:   uint16(orig.NumData),
+		NParity: uint16(orig.NumParity),
+
+		Hasher:    bcsha256.Hasher{},
+		HashSize:  bcsha256.HashSize,
+		HashNonce: nonce,
+
+		RootProofs: orig.RootProof,
+
+		// TODO: this seems wrong.
+		// orig.Chunks is supposed to be the prepared datagrams
+		// (which means that it is named wrong).
+		// So how do we get the erasure-coded shard size?
+		ShardSize: uint16(len(orig.Chunks[0])),
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, bop1.AcceptBroadcast(
+		ctx,
+		dconn.Conn{
+			QUIC:  c1,
+			Chain: ls.Leaves[0].Chain,
+		},
+		s,
+	))
 }

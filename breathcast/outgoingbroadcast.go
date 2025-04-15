@@ -134,6 +134,7 @@ func (o *outgoingBroadcast) Run(
 }
 
 func (o *outgoingBroadcast) handleError(e error) {
+	// TODO: do something with the error here.
 }
 
 // receiveInitialAck accepts the initial acknowledgement from the peer.
