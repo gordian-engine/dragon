@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/gordian-engine/dragon/breathcast"
 	"github.com/gordian-engine/dragon/breathcast/bcmerkle/bcsha256"
@@ -125,6 +126,8 @@ func TestProtocol2_NewOrigination(t *testing.T) {
 		ShardSize: uint16(len(orig.Chunks[0])),
 	})
 	require.NoError(t, err)
+	defer bop1.Wait()
+	defer cancel()
 
 	require.NoError(t, bop1.AcceptBroadcast(
 		ctx,
@@ -134,4 +137,8 @@ func TestProtocol2_NewOrigination(t *testing.T) {
 		},
 		s,
 	))
+
+	// Short sleep to allow background work to happen,
+	// in case anything fails or panics.
+	time.Sleep(10 * time.Millisecond)
 }

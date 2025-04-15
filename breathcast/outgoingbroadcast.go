@@ -128,16 +128,22 @@ func (o *outgoingBroadcast) Run(
 		return
 	}
 
-	// TODO: iterate over cleared bits in peerHas,
-	// and send back the chunks over the reliable stream.
-	_ = peerHas
+	// For now, we are going to synchronously send every missing datagram.
+	// But with this structure, we are not able to dynamically respond to new bitset updates.
+	// TODO: split this method into two goroutines, similar to how incomingBroadcast works.
+	if err := o.syncSendDatagrams(ctx, s, peerHas); err != nil {
+		o.log.Info("Failed to send missing chunks over synchronous channel", "err", err)
+		o.handleError(err)
+		return
+	}
 }
 
 func (o *outgoingBroadcast) handleError(e error) {
 	// TODO: do something with the error here.
 }
 
-// receiveInitialAck accepts the initial acknowledgement from the peer.
+// receiveInitialAck accepts the initial acknowledgement from the peer,
+// sent immediately after our end sends the entire application header.
 func (o *outgoingBroadcast) receiveInitialAck(
 	s quic.Stream, needDatagrams *bitset.BitSet,
 ) error {
@@ -221,7 +227,7 @@ func (o *outgoingBroadcast) receiveBitset(
 		return nil, fmt.Errorf("failed to set read deadline for compressed bitset: %w", err)
 	}
 	if _, err := io.ReadFull(s, meta[:]); err != nil {
-		return nil, fmt.Errorf("failed to set read bitset metadata: %w", err)
+		return nil, fmt.Errorf("failed to read bitset metadata: %w", err)
 	}
 
 	k := binary.BigEndian.Uint16(meta[:2])
@@ -229,7 +235,7 @@ func (o *outgoingBroadcast) receiveBitset(
 
 	combBytes := make([]byte, combIdxSize)
 	if _, err := io.ReadFull(s, combBytes); err != nil {
-		return nil, fmt.Errorf("failed to set read bitset data: %w", err)
+		return nil, fmt.Errorf("failed to read bitset data: %w", err)
 	}
 	var combIdx big.Int
 	combIdx.SetBytes(combBytes)
@@ -239,4 +245,47 @@ func (o *outgoingBroadcast) receiveBitset(
 	decodeCombinationIndex(n, int(k), &combIdx, &peerHas)
 
 	return &peerHas, nil
+}
+
+func (o *outgoingBroadcast) syncSendDatagrams(
+	ctx context.Context,
+	s quic.SendStream,
+	peerHas *bitset.BitSet,
+) error {
+	// For now we are just iterating the cleared bits in order,
+	// but this would be very wasteful if multiple broadcasters were doing this.
+	// It might be best if the remote could tell us something like,
+	// "divide the datagrams into 16 'segments' and send me what is missing from segment 3".
+	//
+	// Failing that, we could at least just shuffle the iteration order.
+	var meta [4]byte
+	for u, ok := peerHas.NextClear(0); ok; u, ok = peerHas.NextClear(u + 1) {
+		// There are two pieces of metadata to send before the actual datagram.
+		// The chunk index and the size of the datagram.
+		binary.BigEndian.PutUint16(meta[:2], uint16(u))
+		binary.BigEndian.PutUint16(meta[2:], uint16(len(o.op.datagrams[u])))
+
+		const syncDatagramTimeout = 2 * time.Millisecond // TODO: make configurable.
+		if err := s.SetWriteDeadline(time.Now().Add(syncDatagramTimeout)); err != nil {
+			return fmt.Errorf(
+				"failed to set write deadline when sending synchronous datagram: %w",
+				err,
+			)
+		}
+
+		if _, err := s.Write(meta[:]); err != nil {
+			return fmt.Errorf(
+				"failed to write synchronous datagram's metadata: %w", err,
+			)
+		}
+
+		// Keep the same deadline for sending the actual datagram content.
+		if _, err := s.Write(o.op.datagrams[u]); err != nil {
+			return fmt.Errorf(
+				"failed to write synchronous datagram: %w", err,
+			)
+		}
+	}
+
+	return nil
 }

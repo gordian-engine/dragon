@@ -2,6 +2,9 @@ package breathcast
 
 import (
 	"context"
+	"encoding/binary"
+	"fmt"
+	"io"
 	"log/slog"
 	"time"
 
@@ -28,11 +31,15 @@ type incomingBroadcast struct {
 func (i *incomingBroadcast) RunBackground(ctx context.Context, s quic.Stream) {
 	i.op.wg.Add(2)
 
-	go i.runBitsetUpdates(ctx, s)
-	go i.acceptSyncUpdates(ctx, s)
+	syncUpdatesReady := make(chan struct{})
+
+	go i.runBitsetUpdates(ctx, s, syncUpdatesReady)
+	go i.acceptSyncUpdates(ctx, s, syncUpdatesReady)
 }
 
-func (i *incomingBroadcast) runBitsetUpdates(ctx context.Context, s quic.SendStream) {
+func (i *incomingBroadcast) runBitsetUpdates(
+	ctx context.Context, s quic.SendStream, syncUpdatesReady <-chan struct{},
+) {
 	defer i.op.wg.Done()
 
 	// We need to send the first update immediately.
@@ -59,10 +66,25 @@ func (i *incomingBroadcast) runBitsetUpdates(ctx context.Context, s quic.SendStr
 		return
 	}
 
+	select {
+	case <-ctx.Done():
+		i.log.Info(
+			"Context canceled while waiting for datagram termination",
+			"cause", context.Cause(ctx),
+		)
+		i.handleError(context.Cause(ctx))
+		return
+	case <-syncUpdatesReady:
+		// Time to send out the updated bitset.
+		// TODO: we need to actually observe the updated bitset for this.
+	}
+
 	// TODO: loop, receiving updated bit sets and periodically sending them out.
 }
 
-func (i *incomingBroadcast) acceptSyncUpdates(ctx context.Context, s quic.ReceiveStream) {
+func (i *incomingBroadcast) acceptSyncUpdates(
+	ctx context.Context, s quic.ReceiveStream, syncUpdatesReady chan<- struct{},
+) {
 	defer i.op.wg.Done()
 
 	// We don't know when the first synchronous update will arrive,
@@ -76,7 +98,95 @@ func (i *incomingBroadcast) acceptSyncUpdates(ctx context.Context, s quic.Receiv
 		return
 	}
 
+	var oneByte [1]byte
+	if _, err := io.ReadFull(s, oneByte[:]); err != nil {
+		i.log.Info(
+			"Failed to read datagram termination byte",
+			"err", err,
+		)
+		i.handleError(err)
+		return
+	}
 
+	if oneByte[0] != 0xff {
+		err := fmt.Errorf("expected 0xff, got 0x%x", oneByte[0])
+		i.log.Info(
+			"Received invalid datagram termination byte",
+			"err", err,
+		)
+		i.handleError(err)
+		return
+	}
+
+	// Now that we have received the termination byte,
+	// we need to send the compressed bitset of what we have so far.
+	// But we rely on the runBitsetUpdates goroutine to do that,
+	// so send that signal now.
+	close(syncUpdatesReady)
+
+	// Now we read as many datagram messages as we need.
+	var meta [4]byte
+	for {
+		// Check whether we're done.
+		select {
+		case <-ctx.Done():
+			i.log.Info(
+				"Context canceled while waiting for remaining synchronous data",
+				"cause", context.Cause(ctx),
+			)
+			i.handleError(context.Cause(ctx))
+			return
+		case <-i.op.dataReady:
+			// We have everything; nothing left to do.
+			return
+		default:
+			// Keep going.
+		}
+
+		const readSyncDatagramTimeout = 5 * time.Millisecond // TODO: make configurable.
+		if err := s.SetReadDeadline(time.Now().Add(readSyncDatagramTimeout)); err != nil {
+			i.log.Info(
+				"Failed to set read deadline for reading synchronous data",
+				"err", err,
+			)
+			i.handleError(err)
+			return
+		}
+
+		if _, err := io.ReadFull(s, meta[:]); err != nil {
+			i.log.Info(
+				"Failed to set read synchronous metadata",
+				"err", err,
+			)
+			i.handleError(err)
+			return
+		}
+
+		// TODO: we should actually have a read-only copy of the bit set here,
+		// so that we can evaluate whether a synchronous message is new information.
+		// Instead, for now, we just get the whole datagram and pass it to the operation.
+		// This is inefficient but it should work for now.
+		sz := binary.BigEndian.Uint16(meta[2:])
+		buf := make([]byte, sz)
+
+		if _, err := io.ReadFull(s, buf[:]); err != nil {
+			i.log.Info(
+				"Failed to set read synchronous data",
+				"err", err,
+			)
+			i.handleError(err)
+			return
+		}
+
+		if err := i.op.HandleDatagram(ctx, buf); err != nil {
+			i.log.Info(
+				"Failed to set handle synchronous data",
+				"err", err,
+			)
+			i.handleError(err)
+			return
+		}
+	}
 }
 
 // Run accepts incoming data on the given stream.

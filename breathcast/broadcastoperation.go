@@ -194,7 +194,7 @@ func (o *BroadcastOperation) runRelay(
 
 				state: o.incoming,
 			}
-			go ib.RunBackground(ctx, req.Stream)
+			ib.RunBackground(ctx, req.Stream)
 			close(req.Resp)
 		}
 	}
