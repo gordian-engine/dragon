@@ -84,6 +84,8 @@ func TestProtocol2_NewOrigination(t *testing.T) {
 		BroadcastID: []byte("xyz"),
 		AppHeader:   []byte("fake app header"),
 		Datagrams:   orig.Chunks,
+
+		NData: uint16(orig.NumData),
 	})
 	require.NoError(t, err)
 	defer bop0.Wait()

@@ -27,6 +27,9 @@ type BroadcastOperation struct {
 	have      *bitset.BitSet // TODO: remove in favor of incoming state fields.
 	datagrams [][]byte
 
+	// Needed for limiting the number of synchronous chunks sent.
+	nData uint16
+
 	incoming *incomingState
 
 	// Fields needed to parse datagrams.

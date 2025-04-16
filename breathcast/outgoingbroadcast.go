@@ -258,6 +258,11 @@ func (o *outgoingBroadcast) syncSendDatagrams(
 	// "divide the datagrams into 16 'segments' and send me what is missing from segment 3".
 	//
 	// Failing that, we could at least just shuffle the iteration order.
+	have := peerHas.Count()
+	if have >= uint(o.op.nData) {
+		// We shouldn't have reached this function, probably.
+		return nil
+	}
 	var meta [4]byte
 	for u, ok := peerHas.NextClear(0); ok; u, ok = peerHas.NextClear(u + 1) {
 		// There are two pieces of metadata to send before the actual datagram.
@@ -275,15 +280,20 @@ func (o *outgoingBroadcast) syncSendDatagrams(
 
 		if _, err := s.Write(meta[:]); err != nil {
 			return fmt.Errorf(
-				"failed to write synchronous datagram's metadata: %w", err,
+				"failed to write synchronous metadata: %w", err,
 			)
 		}
 
 		// Keep the same deadline for sending the actual datagram content.
 		if _, err := s.Write(o.op.datagrams[u]); err != nil {
 			return fmt.Errorf(
-				"failed to write synchronous datagram: %w", err,
+				"failed to write synchronous data: %w", err,
 			)
+		}
+
+		have++
+		if have >= uint(o.op.nData) {
+			return nil
 		}
 	}
 

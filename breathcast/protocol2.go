@@ -145,6 +145,8 @@ type OriginationConfig struct {
 
 	AppHeader []byte
 	Datagrams [][]byte
+
+	NData uint16
 }
 
 func (p *Protocol2) NewOrigination(
@@ -170,6 +172,7 @@ func (p *Protocol2) NewOrigination(
 		appHeader:  cfg.AppHeader,
 
 		datagrams: cfg.Datagrams,
+		nData:     cfg.NData,
 
 		dataReady: make(chan struct{}),
 
@@ -299,6 +302,7 @@ func (p *Protocol2) NewIncomingBroadcast(
 		// We will save the datagrams from incoming data,
 		// so it's fine that the inner slices are all nil.
 		datagrams: make([][]byte, cfg.NData+cfg.NParity),
+		nData:     cfg.NData,
 
 		broadcastIDLength: p.broadcastIDLength,
 		nChunks:           cfg.NData + cfg.NParity,

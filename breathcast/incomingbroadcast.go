@@ -40,7 +40,27 @@ func (i *incomingBroadcast) RunBackground(ctx context.Context, s quic.Stream) {
 	addedLeaves := i.state.addedLeafIndices
 
 	go i.runBitsetUpdates(ctx, s, syncUpdatesReady, haveLeaves.Clone(), addedLeaves)
-	go i.acceptSyncUpdates(ctx, s, syncUpdatesReady)
+	go i.acceptSyncUpdates(ctx, s, syncUpdatesReady, haveLeaves.Clone(), addedLeaves)
+
+	// TODO: refactor this into a proper method.
+	// Canceling the stream read here will immediately unblock
+	// the acceptSyncUpdates goroutine,
+	// if it is in the middle of a blocking read.
+	// The runBitsetUpdates just writes and should end itself properly.
+	i.op.wg.Add(1)
+	go func() {
+		defer i.op.wg.Done()
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.Context().Done():
+			return
+		case <-i.op.dataReady:
+			// TODO: use a proper constant for this code.
+			s.CancelRead(0x123456)
+		}
+	}()
 }
 
 func (i *incomingBroadcast) runBitsetUpdates(
@@ -193,6 +213,7 @@ func (i *incomingBroadcast) sendBitset(
 
 func (i *incomingBroadcast) acceptSyncUpdates(
 	ctx context.Context, s quic.ReceiveStream, syncUpdatesReady chan<- struct{},
+	haveLeaves *bitset.BitSet, addedLeaves *dchan.Multicast[uint],
 ) {
 	defer i.op.wg.Done()
 
@@ -248,6 +269,18 @@ func (i *incomingBroadcast) acceptSyncUpdates(
 		case <-i.op.dataReady:
 			// We have everything; nothing left to do.
 			return
+		case <-addedLeaves.Ready:
+			haveLeaves.Set(addedLeaves.Val)
+			addedLeaves = addedLeaves.Next
+
+			if haveLeaves.Count() >= uint(i.op.nData) {
+				// We've have everything.
+				// TODO: do we need a way to close the stream here?
+				return
+			}
+
+			// Restart loop in case there are more leaves to account for.
+			continue
 		default:
 			// Keep going.
 		}
@@ -271,13 +304,60 @@ func (i *incomingBroadcast) acceptSyncUpdates(
 			return
 		}
 
-		// TODO: we should actually have a read-only copy of the bit set here,
-		// so that we can evaluate whether a synchronous message is new information.
-		// Instead, for now, we just get the whole datagram and pass it to the operation.
-		// This is inefficient but it should work for now.
+		// We have the metadata, so refresh the leaves
+		// before we decide whether to process or skip the data.
+	REFRESH_LEAVES:
+		for {
+			select {
+			case <-ctx.Done():
+				i.log.Info(
+					"Context canceled while refreshing leaves",
+					"cause", context.Cause(ctx),
+				)
+				i.handleError(context.Cause(ctx))
+				return
+			case <-i.op.dataReady:
+				// We have everything; nothing left to do.
+				return
+			case <-addedLeaves.Ready:
+				haveLeaves.Set(addedLeaves.Val)
+				addedLeaves = addedLeaves.Next
+
+				if haveLeaves.Count() >= uint(i.op.nData) {
+					// We've have everything.
+					// TODO: do we need a way to close the stream here?
+					return
+				}
+
+				// Restart loop in case there are more leaves to account for.
+				continue
+			default:
+				break REFRESH_LEAVES
+			}
+		}
+
+		// We still need more leaves.
+		idx := binary.BigEndian.Uint16(meta[:2])
 		sz := binary.BigEndian.Uint16(meta[2:])
 
 		// TODO: validate that sz matches expected limits.
+
+		if haveLeaves.Test(uint(idx)) {
+			// We don't need this leaf in particular.
+
+			// TODO: discarding data could be a signal to refresh our bitsets to peers.
+
+			if _, err := io.CopyN(io.Discard, s, int64(sz)); err != nil {
+				i.log.Info(
+					"Failed to discard unneeded synchronous data",
+					"err", err,
+				)
+				i.handleError(err)
+				return
+			}
+
+			continue
+		}
 
 		buf := make([]byte, sz)
 
