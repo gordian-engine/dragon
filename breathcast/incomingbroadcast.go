@@ -131,6 +131,11 @@ UPDATE_HAVE_LEAVES:
 			)
 			i.handleError(cause)
 			return
+		case <-i.op.dataReady:
+			// We have the data now.
+			// TODO: do we need to close the stream somehow,
+			// or does that happen somewhere else?
+			return
 		case <-addedLeaves.Ready:
 			haveLeaves.Set(addedLeaves.Val)
 			addedLeaves = addedLeaves.Next
@@ -259,7 +264,7 @@ func (i *incomingBroadcast) acceptSyncUpdates(
 
 		if _, err := io.ReadFull(s, meta[:]); err != nil {
 			i.log.Info(
-				"Failed to set read synchronous metadata",
+				"Failed to read synchronous metadata",
 				"err", err,
 			)
 			i.handleError(err)
@@ -271,11 +276,14 @@ func (i *incomingBroadcast) acceptSyncUpdates(
 		// Instead, for now, we just get the whole datagram and pass it to the operation.
 		// This is inefficient but it should work for now.
 		sz := binary.BigEndian.Uint16(meta[2:])
+
+		// TODO: validate that sz matches expected limits.
+
 		buf := make([]byte, sz)
 
 		if _, err := io.ReadFull(s, buf[:]); err != nil {
 			i.log.Info(
-				"Failed to set read synchronous data",
+				"Failed to read synchronous data",
 				"err", err,
 			)
 			i.handleError(err)
@@ -284,35 +292,12 @@ func (i *incomingBroadcast) acceptSyncUpdates(
 
 		if err := i.op.HandleDatagram(ctx, buf); err != nil {
 			i.log.Info(
-				"Failed to set handle synchronous data",
+				"Failed to handle synchronous data",
 				"err", err,
 			)
 			i.handleError(err)
 			return
 		}
-	}
-}
-
-// Run accepts incoming data on the given stream.
-// The application layer must have already parsed the protocol ID,
-// the broadcast ID, and the application header.
-// Then the application passes the incoming broadcast
-// to [*BroadcastOperation.AcceptBroadcast],
-// which delegates it to this goroutine,
-// if the operation still needs any data.
-func (i *incomingBroadcast) Run(
-	ctx context.Context,
-	s quic.Stream,
-) {
-	// Compress the bitset before
-	const writeBitsetTimeout = 20 * time.Millisecond // TODO: make configurable.
-	if err := s.SetWriteDeadline(time.Now().Add(writeBitsetTimeout)); err != nil {
-		i.log.Info(
-			"Failed to set write deadline for outgoing bitset",
-			"err", err,
-		)
-		i.handleError(err)
-		return
 	}
 }
 

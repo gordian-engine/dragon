@@ -240,11 +240,11 @@ func (o *outgoingBroadcast) receiveBitset(
 	var combIdx big.Int
 	combIdx.SetBytes(combBytes)
 
-	var peerHas bitset.BitSet
+	peerHas := bitset.MustNew(uint(len(o.op.datagrams)))
 	n := len(o.op.datagrams)
-	decodeCombinationIndex(n, int(k), &combIdx, &peerHas)
+	decodeCombinationIndex(n, int(k), &combIdx, peerHas)
 
-	return &peerHas, nil
+	return peerHas, nil
 }
 
 func (o *outgoingBroadcast) syncSendDatagrams(

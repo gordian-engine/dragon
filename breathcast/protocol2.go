@@ -264,6 +264,14 @@ func (p *Protocol2) NewIncomingBroadcast(
 		RootProofs: cfg.RootProofs,
 	})
 
+	shards := reedsolomon.AllocAligned(
+		int(cfg.NData)+int(cfg.NParity), int(cfg.ShardSize),
+	)
+	for i := range shards {
+		// The incoming state relies on unpopulated shards being zero-length.
+		shards[i] = shards[i][:0]
+	}
+
 	is := &incomingState{
 		pt: pt,
 
@@ -271,7 +279,8 @@ func (p *Protocol2) NewIncomingBroadcast(
 		nData:       cfg.NData,
 		nParity:     cfg.NParity,
 
-		enc: enc,
+		enc:    enc,
+		shards: shards,
 
 		rootProof: cfg.RootProofs,
 
@@ -290,6 +299,11 @@ func (p *Protocol2) NewIncomingBroadcast(
 		// We will save the datagrams from incoming data,
 		// so it's fine that the inner slices are all nil.
 		datagrams: make([][]byte, cfg.NData+cfg.NParity),
+
+		broadcastIDLength: p.broadcastIDLength,
+		nChunks:           cfg.NData + cfg.NParity,
+		hashSize:          cfg.HashSize,
+		rootProofCount:    len(cfg.RootProofs),
 
 		incoming: is,
 

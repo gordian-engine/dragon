@@ -23,6 +23,7 @@ type incomingState struct {
 	nData, nParity uint16
 
 	enc reedsolomon.Encoder
+	shards [][]byte
 
 	rootProof [][]byte
 

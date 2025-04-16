@@ -1,8 +1,10 @@
 package breathcast
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -175,6 +177,12 @@ func (o *BroadcastOperation) runRelay(
 			}
 			ib.RunBackground(ctx, req.Stream)
 			close(req.Resp)
+
+		case req := <-o.checkDatagramRequests:
+			o.handleCheckDatagramRequest(req)
+
+		case req := <-o.addDatagramRequests:
+			o.handleAddDatagramRequest(req)
 		}
 	}
 }
@@ -196,6 +204,148 @@ func (o *BroadcastOperation) handleRelayConnChange(
 	}
 
 	return connChanges.Next
+}
+
+func (o *BroadcastOperation) handleCheckDatagramRequest(req checkDatagramRequest) {
+	// The datagram layout is:
+	//   - 1 byte, protocol ID
+	//   - fixed-length broadcast ID
+	//   - 2-byte (big-endian uint16) chunk ID
+	//   - sequence of proofs (length implied via chunk ID)
+	//   - raw chunk data
+	minLen := 1 + int(o.broadcastIDLength) + 2 + 1 // At least 1 byte of proofs and raw chunk data.
+
+	// Initial sanity checks.
+	raw := req.Raw
+	if len(raw) < minLen {
+		panic(fmt.Errorf(
+			"BUG: impossibly short datagram; length should have been at least %d, but got %d",
+			len(raw), minLen,
+		))
+	}
+	if raw[0] != o.protocolID {
+		panic(fmt.Errorf(
+			"BUG: tried to check datagram with invalid protocol ID 0x%x (only 0x%x is valid)",
+			raw[0], o.protocolID,
+		))
+	}
+
+	bID := o.incoming.broadcastID
+	if !bytes.Equal(bID, raw[1:o.broadcastIDLength+1]) {
+		panic(fmt.Errorf(
+			"BUG: received datagram with incorrect broadcast ID: expected 0x%x, got 0x%x",
+			bID, raw[1:o.broadcastIDLength+1],
+		))
+	}
+
+	// The response depends on whether the index was valid in the first place,
+	// and then on whether we already have the leaf for that index.
+	idx := binary.BigEndian.Uint16(raw[1+int(o.broadcastIDLength) : 1+int(o.broadcastIDLength)+2])
+	var resp checkDatagramResponse
+	if idx >= (o.nChunks) {
+		resp = checkDatagramResponse{
+			Code: checkDatagramInvalidIndex,
+			// No tree necessary.
+		}
+	} else if o.incoming.pt.HasLeaf(idx) {
+		resp = checkDatagramResponse{
+			Code: checkDatagramAlreadyHaveChunk,
+			// Not sending a tree value back here,
+			// but we could send back the expected hash of the chunk
+			// so the worker can confirm its correctness.
+		}
+	} else {
+		resp = checkDatagramResponse{
+			Code: checkDatagramNeed,
+		}
+
+		// TODO: extract to (*incomingState).GetTreeClone().
+		if len(o.incoming.treeClones) == 0 {
+			// No restored clones available, so allocate a new one.
+			resp.Tree = o.incoming.pt.Clone()
+		} else {
+			// We have at least one old clone available for reuse.
+			treeIdx := len(o.incoming.treeClones) - 1
+			resp.Tree = o.incoming.treeClones[treeIdx]
+			o.incoming.treeClones[treeIdx] = nil
+			o.incoming.treeClones = o.incoming.treeClones[:treeIdx]
+
+			o.incoming.pt.ResetClone(resp.Tree)
+		}
+	}
+
+	// This response channel is created internally
+	// and can be assumed to be buffered sufficiently.
+	req.Resp <- resp
+}
+
+func (o *BroadcastOperation) handleAddDatagramRequest(
+	req addLeafRequest,
+) {
+	idx := req.Parsed.ChunkIndex
+	i := o.incoming
+	pt := i.pt
+	leavesSoFar := pt.HaveLeaves().Count()
+	if req.Add && leavesSoFar < uint(i.nData) && !pt.HaveLeaves().Test(uint(idx)) {
+		// If there were two concurrent requests for the same index,
+		// we don't need to go through merging the duplicate.
+		pt.MergeFrom(req.Tree)
+
+		// Now we copy the content to the encoder's shards.
+		// This copy is not greatly memory-efficient,
+		// since between those shards and the datagrams we hold,
+		// we are storing two copies of the data;
+		// but the encoder is supposed to see a significant throughput increase
+		// when working with correctly memory-aligned shards,
+		// so we assume for now that it's worth the tradeoff.
+		i.shards[idx] = append(i.shards[idx], req.Parsed.Data...)
+
+		// Also we have the raw datagram data that we can now retain.
+		o.datagrams[idx] = req.RawDatagram
+
+		// Now that the datagrams have been updated,
+		// we can notify any observers that we have the datagram.
+		i.addedLeafIndices.Set(uint(idx))
+		i.addedLeafIndices = i.addedLeafIndices.Next
+
+		leavesSoFar++
+		if leavesSoFar >= uint(i.nData) {
+			// TODO: need to check that we haven't reconstructed already.
+			// If we get an extra shard concurrently with the last one,
+			// we currently would double-close o.dataReady.
+			if err := i.enc.Reconstruct(i.shards); err != nil {
+				// Something is extremely wrong if reconstruction fails.
+				// We verified every Merkle proof along the way.
+				// The panic message needs to be very detailed.
+				var buf bytes.Buffer
+				fmt.Fprintf(&buf, "IMPOSSIBLE: reconstruction failed")
+				for j, shard := range i.shards {
+					fmt.Fprintf(&buf, "\n% 5d: %x", j, shard)
+				}
+				panic(errors.New(buf.String()))
+			}
+
+			// Data has been reconstructed.
+			// Notify any watchers.
+			close(o.dataReady)
+		}
+	}
+
+	// And hold on to the clone in case we can reuse it,
+	// regardless of whether the datagram was addable.
+	if leavesSoFar < uint(i.nData) {
+		// TODO: we could discard the tree
+		// if there would be more clones than missing chunks,
+		// but that also risks re-allocating a new clone
+		// if we are concurrently receiving datagrams.
+		// Maybe we could allow the slice to be twice the size of the gap.
+		i.treeClones = append(i.treeClones, req.Tree)
+	} else {
+		// We won't be using the tree clones anymore
+		// now that we've reconstructed the data.
+		// Drop the whole slice for earlier GC.
+		i.treeClones = nil
+	}
 }
 
 func (o *BroadcastOperation) Wait() {
