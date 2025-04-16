@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/big"
 	"time"
 
+	"github.com/bits-and-blooms/bitset"
+	"github.com/gordian-engine/dragon/internal/dchan"
 	"github.com/quic-go/quic-go"
 )
 
@@ -33,12 +36,16 @@ func (i *incomingBroadcast) RunBackground(ctx context.Context, s quic.Stream) {
 
 	syncUpdatesReady := make(chan struct{})
 
-	go i.runBitsetUpdates(ctx, s, syncUpdatesReady)
+	haveLeaves := i.state.pt.HaveLeaves()
+	addedLeaves := i.state.addedLeafIndices
+
+	go i.runBitsetUpdates(ctx, s, syncUpdatesReady, haveLeaves.Clone(), addedLeaves)
 	go i.acceptSyncUpdates(ctx, s, syncUpdatesReady)
 }
 
 func (i *incomingBroadcast) runBitsetUpdates(
 	ctx context.Context, s quic.SendStream, syncUpdatesReady <-chan struct{},
+	haveLeaves *bitset.BitSet, addedLeaves *dchan.Multicast[uint],
 ) {
 	defer i.op.wg.Done()
 
@@ -66,20 +73,117 @@ func (i *incomingBroadcast) runBitsetUpdates(
 		return
 	}
 
-	select {
-	case <-ctx.Done():
-		i.log.Info(
-			"Context canceled while waiting for datagram termination",
-			"cause", context.Cause(ctx),
-		)
-		i.handleError(context.Cause(ctx))
-		return
-	case <-syncUpdatesReady:
-		// Time to send out the updated bitset.
-		// TODO: we need to actually observe the updated bitset for this.
+	// Now block until the acceptSyncUpdates goroutine
+	// indicates that we have to send the first status update.
+WAIT:
+	for {
+		select {
+		case <-ctx.Done():
+			i.log.Info(
+				"Context canceled while waiting for datagram termination",
+				"cause", context.Cause(ctx),
+			)
+			i.handleError(context.Cause(ctx))
+			return
+		case <-addedLeaves.Ready:
+			haveLeaves.Set(addedLeaves.Val)
+			addedLeaves = addedLeaves.Next
+		case <-syncUpdatesReady:
+			// Time to send out the updated bitset.
+			break WAIT
+		}
 	}
 
-	// TODO: loop, receiving updated bit sets and periodically sending them out.
+	// Now ensure our view of haveLeaves is up to date.
+UPDATE_HAVE_LEAVES:
+	for {
+		select {
+		case <-addedLeaves.Ready:
+			haveLeaves.Set(addedLeaves.Val)
+			addedLeaves = addedLeaves.Next
+		default:
+			break UPDATE_HAVE_LEAVES
+		}
+	}
+
+	// Now we can send the updated compressed bitset.
+	var combIdx big.Int
+	bsBuf, err := i.sendBitset(s, haveLeaves, &combIdx, nil)
+	if err != nil {
+		i.log.Info(
+			"Failed to send bitset",
+			"err", err,
+		)
+		i.handleError(err)
+		return
+	}
+
+	const updateDur = 2 * time.Millisecond // TODO: make configurable.
+	due := time.NewTimer(updateDur)
+	defer due.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			cause := context.Cause(ctx)
+			i.log.Info(
+				"Context canceled while sending bitset updates",
+				"cause", cause,
+			)
+			i.handleError(cause)
+			return
+		case <-addedLeaves.Ready:
+			haveLeaves.Set(addedLeaves.Val)
+			addedLeaves = addedLeaves.Next
+		case _ = <-due.C:
+			bsBuf, err = i.sendBitset(s, haveLeaves, &combIdx, bsBuf)
+			if err != nil {
+				i.log.Info(
+					"Failed to send bitset in update loop",
+					"err", err,
+				)
+				i.handleError(err)
+				return
+			}
+
+			due.Reset(updateDur)
+		}
+	}
+}
+
+// sendBitset writes the compressed version of bs to the stream.
+func (i *incomingBroadcast) sendBitset(
+	s quic.SendStream, bs *bitset.BitSet, combIdx *big.Int, buf []byte,
+) ([]byte, error) {
+	k := uint16(bs.Count())
+	calculateCombinationIndex(int(i.op.nChunks), bs, combIdx)
+
+	// We need buf to accommodate 4 bytes of metadata
+	// plus the size of the combination index.
+	ciByteCount := (combIdx.BitLen() + 7) / 8
+	sz := 4 + ciByteCount
+	if cap(buf) < sz {
+		buf = make([]byte, sz)
+	} else {
+		buf = buf[:sz]
+	}
+
+	// Now write the metadata.
+	binary.BigEndian.PutUint16(buf[:2], k)
+	binary.BigEndian.PutUint16(buf[2:4], uint16(ciByteCount))
+
+	// The actual combination index.
+	_ = combIdx.FillBytes(buf[4:])
+
+	const sendBitsetTimeout = 5 * time.Millisecond // TODO: make configurable.
+	if err := s.SetWriteDeadline(time.Now().Add(sendBitsetTimeout)); err != nil {
+		return nil, fmt.Errorf("failed to set write deadline: %w", err)
+	}
+
+	if _, err := s.Write(buf); err != nil {
+		return nil, fmt.Errorf("failed to write bitset: %w", err)
+	}
+
+	return buf, nil
 }
 
 func (i *incomingBroadcast) acceptSyncUpdates(

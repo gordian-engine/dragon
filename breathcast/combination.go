@@ -1,7 +1,6 @@
 package breathcast
 
 import (
-	"errors"
 	"fmt"
 	"math/big"
 
@@ -47,7 +46,8 @@ func calculateCombinationIndex(totalChunks int, bs *bitset.BitSet, out *big.Int)
 func decodeCombinationIndex(n, k int, combIndex *big.Int, out *bitset.BitSet) {
 	out.ClearAll()
 	if k == 0 {
-		panic(errors.New("BUG: never call decodeCombinationIndex with k=0"))
+		// We already cleared out, so just stop here.
+		return
 	}
 
 	var remaining, scratch big.Int

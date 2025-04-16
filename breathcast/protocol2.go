@@ -274,6 +274,8 @@ func (p *Protocol2) NewIncomingBroadcast(
 		enc: enc,
 
 		rootProof: cfg.RootProofs,
+
+		addedLeafIndices: dchan.NewMulticast[uint](),
 	}
 
 	op := &BroadcastOperation{

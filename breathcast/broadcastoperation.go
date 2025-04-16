@@ -11,7 +11,6 @@ import (
 	"github.com/gordian-engine/dragon/breathcast/internal/merkle/cbmt"
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/internal/dchan"
-	"github.com/klauspost/reedsolomon"
 	"github.com/quic-go/quic-go"
 )
 
@@ -23,7 +22,7 @@ type BroadcastOperation struct {
 	protocolID byte
 	appHeader  []byte
 
-	have      *bitset.BitSet
+	have      *bitset.BitSet // TODO: remove in favor of incoming state fields.
 	datagrams [][]byte
 
 	incoming *incomingState
@@ -55,26 +54,6 @@ type BroadcastOperation struct {
 	// we don't have a race condition while waiting for the main loop.
 	mainLoopDone chan struct{}
 	wg           sync.WaitGroup
-}
-
-type incomingState struct {
-	// The Merkle tree that we are reconstituting from peers.
-	pt *cbmt.PartialTree
-
-	// We are currently using clones for splitting PartialTree work
-	// to other goroutines.
-	//
-	// When the other goroutines finish with their clone,
-	// the clone is appended to this list
-	// so it can be reclaimed the next time we need a clone.
-	treeClones []*cbmt.PartialTree
-
-	broadcastID    []byte
-	nData, nParity uint16
-
-	enc reedsolomon.Encoder
-
-	rootProof [][]byte
 }
 
 type acceptBroadcastRequest2 struct {
@@ -378,13 +357,13 @@ func (o *BroadcastOperation) attemptToAddDatagram(
 	err := t.AddLeaf(bd.ChunkIndex, bd.Data, bd.Proofs)
 
 	req := addLeafRequest{
-		Add:  err == nil,
 		Tree: t,
 	}
 	if err == nil {
 		// Only set the field if we expect the main loop to retain it.
 		// If there was an error, we don't want the datagram,
 		// so it may be eligible for earlier GC.
+		req.Add = true
 		req.RawDatagram = raw
 		req.Parsed = bd
 	}
