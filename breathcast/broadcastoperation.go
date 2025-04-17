@@ -67,6 +67,17 @@ type acceptBroadcastRequest2 struct {
 	Resp   chan struct{}
 }
 
+// DataReady returns a channel that is closed
+// when the operation has the entire broadcast data ready.
+//
+// For an BroadcastOperation created with [*Protocol2.NewOrigination],
+// the channel is closed at initialization.
+// If the operation is created with [*Protocol2.NewIncomingBroadcast],
+// the channel is closed once the operation receives sufficient data from its peers.
+func (o *BroadcastOperation) DataReady() <-chan struct{} {
+	return o.dataReady
+}
+
 func (o *BroadcastOperation) mainLoop(
 	ctx context.Context,
 	conns map[string]dconn.Conn,
