@@ -68,31 +68,21 @@ func (o *outgoingBroadcast) Run(
 		return
 	}
 
-	// We're going to need a bit set to know which datagrams to send.
-	// Allocate it before dealing with the read deadline,
-	// so that a slow allocation during GC doesn't eat into that deadline.
-	needDatagrams := bitset.MustNew(uint(len(o.op.datagrams)))
+	// Once we've sent the application header,
+	// the peer will either send us the bitset of what they have,
+	// or they will close the stream if they already have everything.
+	peerHas := bitset.MustNew(uint(len(o.op.datagrams)))
 
-	const receiveAckTimeout = 20 * time.Millisecond // TODO: make configurable.
-	if err := s.SetReadDeadline(time.Now().Add(receiveAckTimeout)); err != nil {
+	if err := o.receiveBitset(s, peerHas); err != nil {
 		o.log.Info(
-			"Failed to set read deadline for outgoing broadcast stream",
+			"Failed to receive initial bitset acknowledgement to origination stream",
 			"err", err,
 		)
 		o.handleError(err)
-		return
 	}
 
-	if err := o.receiveInitialAck(s, needDatagrams); err != nil {
-		o.log.Info(
-			"Failed to receive initial acknowledgement to origination stream",
-			"err", err,
-		)
-		o.handleError(err)
-		return
-	}
-
-	if err := o.sendDatagrams(s.Context(), conn, needDatagrams); err != nil {
+	// Based on what they're missing, send unreliable datagrams.
+	if err := o.sendDatagrams(s.Context(), conn, peerHas); err != nil {
 		o.log.Info(
 			"Failed to send datagrams",
 			"err", err,
@@ -121,12 +111,16 @@ func (o *outgoingBroadcast) Run(
 		return
 	}
 
-	peerHas, err := o.receiveBitset(s)
-	if err != nil {
+	// Now that we've informed the peer we are done with datagrams,
+	// they respond with an update on the chunks they have.
+
+	peerUpdate := bitset.MustNew(uint(len(o.op.datagrams)))
+	if err := o.receiveBitset(s, peerUpdate); err != nil {
 		o.log.Info("Failed to receive bitset", "err", err)
 		o.handleError(err)
 		return
 	}
+	peerHas.InPlaceUnion(peerUpdate)
 
 	// For now, we are going to synchronously send every missing datagram.
 	// But with this structure, we are not able to dynamically respond to new bitset updates.
@@ -142,34 +136,9 @@ func (o *outgoingBroadcast) handleError(e error) {
 	// TODO: do something with the error here.
 }
 
-// receiveInitialAck accepts the initial acknowledgement from the peer,
-// sent immediately after our end sends the entire application header.
-func (o *outgoingBroadcast) receiveInitialAck(
-	s quic.Stream, needDatagrams *bitset.BitSet,
-) error {
-	// Read the single byte indicator first.
-	var ackType [1]byte
-	if _, err := io.ReadFull(s, ackType[:]); err != nil {
-		return fmt.Errorf("failed to read ack type byte: %w", err)
-	}
-
-	switch ackType[0] {
-	case 0:
-		// Peer has nothing.
-		// We know the bitset is all clear and is already the correct length.
-		needDatagrams.FlipRange(0, needDatagrams.Len())
-		return nil
-	default:
-		// We are going to eventually support other types.
-		panic(fmt.Errorf(
-			"TODO: handle non-zero ack type (got %x)", ackType[0],
-		))
-	}
-}
-
 func (o *outgoingBroadcast) sendDatagrams(
 	streamCtx context.Context, conn quic.Connection,
-	needDatagrams *bitset.BitSet,
+	peerHas *bitset.BitSet,
 ) error {
 	// TODO: we should be able to accept a strategy for how datagrams are sent.
 	// We should expect different throttling needs, for instance.
@@ -183,7 +152,7 @@ func (o *outgoingBroadcast) sendDatagrams(
 	var n uint
 
 	for i, dg := range o.op.datagrams {
-		if !needDatagrams.Test(uint(i)) {
+		if peerHas.Test(uint(i)) {
 			continue
 		}
 
@@ -210,24 +179,23 @@ func (o *outgoingBroadcast) sendDatagrams(
 	return nil
 }
 
-// receiveBitset waits for and receives a serialized bitset
-// from the peer, after we have notified the peer
-// that we have finished sending datagrams.
+// receiveBitset receives a serialized compressed bitset from s,
+// deserializing the bitset into out.
 func (o *outgoingBroadcast) receiveBitset(
-	s quic.Stream,
-) (*bitset.BitSet, error) {
+	s quic.Stream, out *bitset.BitSet,
+) error {
 	// The peer must send us their compressed bitset.
 	// There is a 4-byte header first:
 	// uint16 for the number of set bits,
 	// and another uint16 for the number of bytes for the combination index.
 	var meta [4]byte
 
-	const bitsetTimeout = 50 * time.Millisecond // TODO: make this configurable.
+	const bitsetTimeout = 10 * time.Millisecond // TODO: make this configurable.
 	if err := s.SetReadDeadline(time.Now().Add(bitsetTimeout)); err != nil {
-		return nil, fmt.Errorf("failed to set read deadline for compressed bitset: %w", err)
+		return fmt.Errorf("failed to set read deadline for compressed bitset: %w", err)
 	}
 	if _, err := io.ReadFull(s, meta[:]); err != nil {
-		return nil, fmt.Errorf("failed to read bitset metadata: %w", err)
+		return fmt.Errorf("failed to read bitset metadata: %w", err)
 	}
 
 	k := binary.BigEndian.Uint16(meta[:2])
@@ -235,16 +203,15 @@ func (o *outgoingBroadcast) receiveBitset(
 
 	combBytes := make([]byte, combIdxSize)
 	if _, err := io.ReadFull(s, combBytes); err != nil {
-		return nil, fmt.Errorf("failed to read bitset data: %w", err)
+		return fmt.Errorf("failed to read bitset data: %w", err)
 	}
 	var combIdx big.Int
 	combIdx.SetBytes(combBytes)
 
-	peerHas := bitset.MustNew(uint(len(o.op.datagrams)))
 	n := len(o.op.datagrams)
-	decodeCombinationIndex(n, int(k), &combIdx, peerHas)
+	decodeCombinationIndex(n, int(k), &combIdx, out)
 
-	return peerHas, nil
+	return nil
 }
 
 func (o *outgoingBroadcast) syncSendDatagrams(

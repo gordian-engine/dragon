@@ -70,23 +70,13 @@ func (i *incomingBroadcast) runBitsetUpdates(
 	defer i.op.wg.Done()
 
 	// We need to send the first update immediately.
-	// And first we send a single 0-byte to indicate we have nothing.
 	// See (*outgoingBroadcast).receiveInitialAck for the receiving side of this stream.
 
-	const initialAckTimeout = 20 * time.Millisecond // TODO: make configurable.
-	if err := s.SetWriteDeadline(time.Now().Add(initialAckTimeout)); err != nil {
+	var combIdx big.Int
+	bsBuf, err := i.sendBitset(s, haveLeaves, &combIdx, nil)
+	if err != nil {
 		i.log.Info(
-			"Failed to set initial bitset acknowledgement deadline",
-			"err", err,
-		)
-		i.handleError(err)
-		return
-	}
-
-	initialAck := [1]byte{0}
-	if _, err := s.Write(initialAck[:]); err != nil {
-		i.log.Info(
-			"Failed to write initial bitset acknowledgement header byte",
+			"Failed to send bitset",
 			"err", err,
 		)
 		i.handleError(err)
@@ -127,8 +117,7 @@ UPDATE_HAVE_LEAVES:
 	}
 
 	// Now we can send the updated compressed bitset.
-	var combIdx big.Int
-	bsBuf, err := i.sendBitset(s, haveLeaves, &combIdx, nil)
+	bsBuf, err = i.sendBitset(s, haveLeaves, &combIdx, bsBuf)
 	if err != nil {
 		i.log.Info(
 			"Failed to send bitset",
