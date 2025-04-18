@@ -26,7 +26,7 @@ func TestBroadcastOperation_origination_reader(t *testing.T) {
 	orig, err := breathcast.PrepareOrigination(data, breathcast.PrepareOriginationConfig{
 		MaxChunkSize:    1000,
 		ProtocolID:      0xFE,
-		OperationHeader: []byte("xyz"),
+		BroadcastID:     []byte("xyz"),
 		ParityRatio:     0.1,
 		HeaderProofTier: 1,
 		Hasher:          bcsha256.Hasher{},

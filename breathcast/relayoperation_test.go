@@ -24,7 +24,7 @@ func TestRelayOperation_HandleDatagram_noNetwork(t *testing.T) {
 	po, err := breathcast.PrepareOrigination(data, breathcast.PrepareOriginationConfig{
 		MaxChunkSize:    1000,
 		ProtocolID:      0xFE,
-		OperationHeader: []byte{'x'},
+		BroadcastID: []byte{'x'},
 		ParityRatio:     0.1,
 		HeaderProofTier: 1,
 		Hasher:          bcsha256.Hasher{},
@@ -119,7 +119,7 @@ func TestRelayOperation_HandleDatagram_reliableShim(t *testing.T) {
 	po, err := breathcast.PrepareOrigination(data, breathcast.PrepareOriginationConfig{
 		MaxChunkSize:    1000,
 		ProtocolID:      0xFE,
-		OperationHeader: []byte{'x'},
+		BroadcastID: []byte{'x'},
 		ParityRatio:     0.1,
 		HeaderProofTier: 1,
 		Hasher:          bcsha256.Hasher{},

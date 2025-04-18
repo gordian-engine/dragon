@@ -23,11 +23,12 @@ type PrepareOriginationConfig struct {
 	// Required for creating data for outgoing datagrams.
 	ProtocolID byte
 
-	// A unique header to identify this operation.
+	// A unique ID to identify this operation.
+	// The length must match [Protocol2.BroadcastIDLength].
 	// This contributes to the chunk size.
 	// This header will be used by all participants in this broadcast,
 	// so the application must take care to ensure its uniqueness.
-	OperationHeader []byte
+	BroadcastID []byte
 
 	// ParityRatio indicates the desired ratio of
 	// parity chunks to data chunks.
@@ -116,7 +117,7 @@ func PrepareOrigination(
 
 	// Each of these have a 1-byte length header.
 	merkleOverhead := 1 + merkleProofSize
-	operationHeaderOverhead := 1 + len(cfg.OperationHeader)
+	operationHeaderOverhead := 1 + len(cfg.BroadcastID)
 
 	const protocolOverhead = 15 // TODO: calculate this
 
@@ -219,7 +220,7 @@ func buildDatagrams(rawChunks [][]byte, chunkProofs [][][]byte, cfg PrepareOrigi
 	chunkSize := len(rawChunks[0])
 	longProofSize := len(chunkProofs[len(chunkProofs)-1]) * cfg.HashSize
 	shortProofSize := len(chunkProofs[0]) * cfg.HashSize
-	opHeaderSize := len(cfg.OperationHeader)
+	opHeaderSize := len(cfg.BroadcastID)
 
 	shortDatagramSize :=
 		// 1-byte protocol header.
@@ -262,7 +263,7 @@ func buildDatagrams(rawChunks [][]byte, chunkProofs [][][]byte, cfg PrepareOrigi
 		mem[base] = cfg.ProtocolID
 		idx := base + 1
 
-		copy(mem[idx:idx+opHeaderSize], cfg.OperationHeader)
+		copy(mem[idx:idx+opHeaderSize], cfg.BroadcastID)
 		idx += opHeaderSize
 
 		binary.BigEndian.PutUint16(mem[idx:idx+2], uint16(i))
@@ -287,7 +288,7 @@ func buildDatagrams(rawChunks [][]byte, chunkProofs [][][]byte, cfg PrepareOrigi
 		mem[base] = cfg.ProtocolID
 		idx := base + 1
 
-		copy(mem[idx:idx+opHeaderSize], cfg.OperationHeader)
+		copy(mem[idx:idx+opHeaderSize], cfg.BroadcastID)
 		idx += opHeaderSize
 
 		binary.BigEndian.PutUint16(mem[idx:idx+2], uint16(i))

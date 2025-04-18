@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/bits-and-blooms/bitset"
 	"github.com/gordian-engine/dragon/breathcast/internal/merkle/cbmt"
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/internal/dchan"
@@ -25,7 +24,6 @@ type BroadcastOperation struct {
 	protocolID byte
 	appHeader  []byte
 
-	have      *bitset.BitSet // TODO: remove in favor of incoming state fields.
 	datagrams [][]byte
 
 	// Needed for limiting the number of synchronous chunks sent.
