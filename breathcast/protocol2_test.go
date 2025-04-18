@@ -58,6 +58,9 @@ func TestProtocol2_allDatagramsDropped(t *testing.T) {
 		Datagrams:   orig.Chunks,
 
 		NData: uint16(orig.NumData),
+
+		TotalDataSize: len(data),
+		ChunkSize:     orig.ChunkSize,
 	})
 	require.NoError(t, err)
 	defer bop0.Wait()
@@ -75,8 +78,8 @@ func TestProtocol2_allDatagramsDropped(t *testing.T) {
 
 		RootProofs: orig.RootProof,
 
-		// This is definitely wrong.
-		ShardSize: uint16(len(orig.Chunks[0])),
+		TotalDataSize: len(data),
+		ChunkSize:     uint16(orig.ChunkSize),
 	})
 	require.NoError(t, err)
 	defer bop1.Wait()
@@ -109,6 +112,11 @@ func TestProtocol2_allDatagramsDropped(t *testing.T) {
 
 	// And the data becomes ready shortly thereafter.
 	_ = dtest.ReceiveSoon(t, bop1.DataReady())
+
+	// Therefore we can read it immediately.
+	all, err := io.ReadAll(bop1.Data(ctx))
+	require.NoError(t, err)
+	require.Equal(t, data, all)
 }
 
 type dropDatagramQCWrapper struct {

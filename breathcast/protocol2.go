@@ -2,6 +2,7 @@ package breathcast
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -147,12 +148,26 @@ type OriginationConfig struct {
 	Datagrams [][]byte
 
 	NData uint16
+
+	TotalDataSize int
+	ChunkSize     int
 }
 
 func (p *Protocol2) NewOrigination(
 	ctx context.Context,
 	cfg OriginationConfig,
 ) (*BroadcastOperation, error) {
+	if cfg.TotalDataSize == 0 {
+		panic(errors.New(
+			"BUG: NewOrigination requires TotalDataSize > 0 (got 0)",
+		))
+	}
+	if cfg.ChunkSize == 0 {
+		panic(errors.New(
+			"BUG: NewOrigination requires ChunkSize > 0 (got 0)",
+		))
+	}
+
 	if len(cfg.AppHeader) > (1<<16)-1 {
 		return nil, fmt.Errorf(
 			"NewOrigination: OriginationConfig.AppHeader too long: %d exceeds limit of %d",
@@ -172,7 +187,10 @@ func (p *Protocol2) NewOrigination(
 		appHeader:  cfg.AppHeader,
 
 		datagrams: cfg.Datagrams,
-		nData:     cfg.NData,
+
+		nData:         cfg.NData,
+		totalDataSize: cfg.TotalDataSize,
+		chunkSize:     cfg.ChunkSize,
 
 		dataReady: make(chan struct{}),
 
@@ -223,6 +241,9 @@ type IncomingBroadcastConfig struct {
 	// Number of data and parity chunks.
 	NData, NParity uint16
 
+	// The size in bytes of the reconstructed data.
+	TotalDataSize int
+
 	// How to verify hashes of incoming chunks.
 	Hasher    bcmerkle.Hasher
 	HashSize  int
@@ -235,17 +256,28 @@ type IncomingBroadcastConfig struct {
 
 	// The size of the underlying erasure-coded shards.
 	// Necessary for reconstituting the original application data.
-	ShardSize uint16
+	ChunkSize uint16
 }
 
 func (p *Protocol2) NewIncomingBroadcast(
 	ctx context.Context,
 	cfg IncomingBroadcastConfig,
 ) (*BroadcastOperation, error) {
+	if cfg.TotalDataSize == 0 {
+		panic(errors.New(
+			"BUG: NewIncomingBroadcast requires TotalDataSize > 0 (got 0)",
+		))
+	}
+	if cfg.ChunkSize == 0 {
+		panic(errors.New(
+			"BUG: NewIncomingBroadcast requires ChunkSize > 0 (got 0)",
+		))
+	}
+
 	// Set up the incoming state value first.
 	enc, err := reedsolomon.New(
 		int(cfg.NData), int(cfg.NParity),
-		reedsolomon.WithAutoGoroutines(int(cfg.ShardSize)),
+		reedsolomon.WithAutoGoroutines(int(cfg.ChunkSize)),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create reed solomon encoder: %w", err)
@@ -268,7 +300,7 @@ func (p *Protocol2) NewIncomingBroadcast(
 	})
 
 	shards := reedsolomon.AllocAligned(
-		int(cfg.NData)+int(cfg.NParity), int(cfg.ShardSize),
+		int(cfg.NData)+int(cfg.NParity), int(cfg.ChunkSize),
 	)
 	for i := range shards {
 		// The incoming state relies on unpopulated shards being zero-length.
@@ -302,7 +334,10 @@ func (p *Protocol2) NewIncomingBroadcast(
 		// We will save the datagrams from incoming data,
 		// so it's fine that the inner slices are all nil.
 		datagrams: make([][]byte, cfg.NData+cfg.NParity),
-		nData:     cfg.NData,
+
+		nData:         cfg.NData,
+		totalDataSize: cfg.TotalDataSize,
+		chunkSize:     int(cfg.ChunkSize),
 
 		broadcastIDLength: p.broadcastIDLength,
 		nChunks:           cfg.NData + cfg.NParity,

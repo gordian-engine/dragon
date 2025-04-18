@@ -73,6 +73,9 @@ type PreparedOrigination struct {
 	// allows the chunk proofs to be shorter.
 	RootProof [][]byte
 
+	// The size, in bytes, of each chunk.
+	ChunkSize int
+
 	// The data and parity chunks, with metadata included.
 	// These are ready to be transfered over the network.
 	// TODO: this could be unexported because it is internal to this package.
@@ -198,6 +201,12 @@ func PrepareOrigination(
 
 		ProofCutoffTier: cfg.HeaderProofTier,
 	})
+
+	// It should be impossible that the first element
+	// would differ from the chunk size, right?
+	// There is no API on the encoder to retrieve the shard size;
+	// the encoder constructor only accepts shard counts anyway.
+	po.ChunkSize = len(rawChunks[0])
 
 	po.RootProof = res.RootProof
 	po.Chunks = buildDatagrams(rawChunks, res.Proofs, cfg)

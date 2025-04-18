@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"sync"
 
@@ -29,6 +30,10 @@ type BroadcastOperation struct {
 
 	// Needed for limiting the number of synchronous chunks sent.
 	nData uint16
+
+	// Needed for reconstituting data.
+	totalDataSize int
+	chunkSize     int
 
 	incoming *incomingState
 
@@ -76,6 +81,18 @@ type acceptBroadcastRequest2 struct {
 // the channel is closed once the operation receives sufficient data from its peers.
 func (o *BroadcastOperation) DataReady() <-chan struct{} {
 	return o.dataReady
+}
+
+// Data returns an io.Reader that reads the actual data for the broadcast.
+//
+// Calls to Read will block if the data is not ready.
+// Cancel the given ctx argument to allow reads to unblock with error.
+func (o *BroadcastOperation) Data(ctx context.Context) io.Reader {
+	return &broadcastDataReader{
+		ctx:    ctx,
+		op:     o,
+		toRead: o.totalDataSize,
+	}
 }
 
 func (o *BroadcastOperation) mainLoop(
