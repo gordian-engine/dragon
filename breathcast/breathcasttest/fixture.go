@@ -17,7 +17,7 @@ import (
 // Create an instance with [NewProtocolFixture].
 type ProtocolFixture struct {
 	ConnChanges []*dchan.Multicast[dconn.Change]
-	Protocols   []*breathcast.Protocol2
+	Protocols   []*breathcast.Protocol
 
 	ListenerSet *dquictest.ListenerSet
 }
@@ -46,13 +46,13 @@ func NewProtocolFixture(
 
 	f := &ProtocolFixture{
 		ConnChanges: make([]*dchan.Multicast[dconn.Change], cfg.Nodes),
-		Protocols:   make([]*breathcast.Protocol2, cfg.Nodes),
+		Protocols:   make([]*breathcast.Protocol, cfg.Nodes),
 		ListenerSet: dquictest.NewListenerSet(t, ctx, cfg.Nodes),
 	}
 
 	for i := range cfg.Nodes {
 		cc := dchan.NewMulticast[dconn.Change]()
-		p := breathcast.NewProtocol2(ctx, log.With("idx", i), breathcast.Protocol2Config{
+		p := breathcast.NewProtocol(ctx, log.With("idx", i), breathcast.ProtocolConfig{
 			ConnectionChanges: cc,
 			ProtocolID:        cfg.ProtocolID,
 			BroadcastIDLength: cfg.BroadcastIDLength,

@@ -16,13 +16,14 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-// BroadcastOperation is a specific operation within a [Protocol2]
+// BroadcastOperation is a specific operation within a [Protocol]
 // that is responsible for all the network transfer related to a broadcast.
 type BroadcastOperation struct {
 	log *slog.Logger
 
-	protocolID byte
-	appHeader  []byte
+	protocolID  byte
+	broadcastID []byte
+	appHeader   []byte
 
 	datagrams [][]byte
 
@@ -36,16 +37,15 @@ type BroadcastOperation struct {
 	incoming *incomingState
 
 	// Fields needed to parse datagrams.
-	broadcastIDLength uint8
-	nChunks           uint16
-	hashSize          int
-	rootProofCount    int
+	nChunks        uint16
+	hashSize       int
+	rootProofCount int
 
 	// Channel that is closed when we have the entire set of datagrams
 	// and the reconstituted data.
 	dataReady chan struct{}
 
-	acceptBroadcastRequests chan acceptBroadcastRequest2
+	acceptBroadcastRequests chan acceptBroadcastRequest
 
 	// When handling an incoming datagram,
 	// there is first a low-cost quick check through this channel,
@@ -64,7 +64,7 @@ type BroadcastOperation struct {
 	wg           sync.WaitGroup
 }
 
-type acceptBroadcastRequest2 struct {
+type acceptBroadcastRequest struct {
 	Conn   dconn.Conn
 	Stream quic.Stream
 	Resp   chan struct{}
@@ -129,9 +129,9 @@ type addLeafRequest struct {
 // DataReady returns a channel that is closed
 // when the operation has the entire broadcast data ready.
 //
-// For an BroadcastOperation created with [*Protocol2.NewOrigination],
+// For an BroadcastOperation created with [*Protocol.NewOrigination],
 // the channel is closed at initialization.
-// If the operation is created with [*Protocol2.NewIncomingBroadcast],
+// If the operation is created with [*Protocol.NewIncomingBroadcast],
 // the channel is closed once the operation receives sufficient data from its peers.
 func (o *BroadcastOperation) DataReady() <-chan struct{} {
 	return o.dataReady
@@ -160,13 +160,22 @@ func (o *BroadcastOperation) mainLoop(
 
 	// We set up the protocol header once
 	// in case we need it during a connection change.
-	var protoHeader [4]byte
+	protoHeader := make([]byte, 1+len(o.broadcastID)+3)
+
+	// First byte is the protocol ID.
 	protoHeader[0] = o.protocolID
 
-	// As the broadcast originator, our "have ratio" is 100%.
-	protoHeader[1] = 0xFF
+	// Then the broadcast ID.
+	// This is fixed-length per protocol instance,
+	// but it is only known at runtime.
+	copy(protoHeader[1:1+len(o.broadcastID)], o.broadcastID)
 
-	binary.BigEndian.PutUint16(protoHeader[2:], uint16(len(o.appHeader)))
+	// Single-byte ratio hint.
+	// As the broadcast originator, our "have ratio" is 100%.
+	protoHeader[1+len(o.broadcastID)] = 0xFF
+
+	// Final two bytes are the application header size.
+	binary.BigEndian.PutUint16(protoHeader[len(protoHeader)-2:], uint16(len(o.appHeader)))
 
 	// Shortcut if we are originating.
 	var isComplete bool
@@ -178,13 +187,13 @@ func (o *BroadcastOperation) mainLoop(
 	}
 
 	if isComplete {
-		o.initOrigination(ctx, conns)
+		o.initOrigination(ctx, conns, protoHeader)
 		o.runOrigination(ctx, conns, connChanges, protoHeader)
 		return
 	}
 
 	// We aren't originating, so we must be relaying.
-	o.runRelay(ctx, conns, connChanges, protoHeader)
+	o.runRelay(ctx, conns, connChanges)
 }
 
 // runOrigination is the main loop when the operation
@@ -193,7 +202,7 @@ func (o *BroadcastOperation) runOrigination(
 	ctx context.Context,
 	conns map[string]dconn.Conn,
 	connChanges *dchan.Multicast[dconn.Change],
-	protoHeader [4]byte,
+	protoHeader []byte,
 ) {
 	for {
 		select {
@@ -216,7 +225,7 @@ func (o *BroadcastOperation) handleOriginationConnChange(
 	ctx context.Context,
 	conns map[string]dconn.Conn,
 	connChanges *dchan.Multicast[dconn.Change],
-	protoHeader [4]byte,
+	protoHeader []byte,
 ) *dchan.Multicast[dconn.Change] {
 	cc := connChanges.Val
 	if cc.Adding {
@@ -242,7 +251,6 @@ func (o *BroadcastOperation) runRelay(
 	ctx context.Context,
 	conns map[string]dconn.Conn,
 	connChanges *dchan.Multicast[dconn.Change],
-	protoHeader [4]byte,
 ) {
 	for {
 		select {
@@ -251,7 +259,7 @@ func (o *BroadcastOperation) runRelay(
 			return
 
 		case <-connChanges.Ready:
-			connChanges = o.handleRelayConnChange(ctx, conns, connChanges, protoHeader)
+			connChanges = o.handleRelayConnChange(ctx, conns, connChanges)
 
 		case req := <-o.acceptBroadcastRequests:
 			ib := &incomingBroadcast{
@@ -276,7 +284,6 @@ func (o *BroadcastOperation) handleRelayConnChange(
 	ctx context.Context,
 	conns map[string]dconn.Conn,
 	connChanges *dchan.Multicast[dconn.Change],
-	protoHeader [4]byte,
 ) *dchan.Multicast[dconn.Change] {
 	cc := connChanges.Val
 	if cc.Adding {
@@ -298,7 +305,8 @@ func (o *BroadcastOperation) handleCheckDatagramRequest(req checkDatagramRequest
 	//   - 2-byte (big-endian uint16) chunk ID
 	//   - sequence of proofs (length implied via chunk ID)
 	//   - raw chunk data
-	minLen := 1 + int(o.broadcastIDLength) + 2 + 1 // At least 1 byte of proofs and raw chunk data.
+	bidLen := len(o.broadcastID)
+	minLen := 1 + bidLen + 2 + 1 // At least 1 byte of proofs and raw chunk data.
 
 	// Initial sanity checks.
 	raw := req.Raw
@@ -316,16 +324,16 @@ func (o *BroadcastOperation) handleCheckDatagramRequest(req checkDatagramRequest
 	}
 
 	bID := o.incoming.broadcastID
-	if !bytes.Equal(bID, raw[1:o.broadcastIDLength+1]) {
+	if !bytes.Equal(bID, raw[1:bidLen+1]) {
 		panic(fmt.Errorf(
 			"BUG: received datagram with incorrect broadcast ID: expected 0x%x, got 0x%x",
-			bID, raw[1:o.broadcastIDLength+1],
+			bID, raw[1:bidLen+1],
 		))
 	}
 
 	// The response depends on whether the index was valid in the first place,
 	// and then on whether we already have the leaf for that index.
-	idx := binary.BigEndian.Uint16(raw[1+int(o.broadcastIDLength) : 1+int(o.broadcastIDLength)+2])
+	idx := binary.BigEndian.Uint16(raw[1+bidLen : 1+bidLen+2])
 	var resp checkDatagramResponse
 	if idx >= (o.nChunks) {
 		resp = checkDatagramResponse{
@@ -439,18 +447,8 @@ func (o *BroadcastOperation) Wait() {
 }
 
 func (o *BroadcastOperation) initOrigination(
-	ctx context.Context, conns map[string]dconn.Conn,
+	ctx context.Context, conns map[string]dconn.Conn, protoHeader []byte,
 ) {
-	// We will send the app header directly,
-	// but we also need a 4-byte protocol header.
-	var protoHeader [4]byte
-	protoHeader[0] = o.protocolID
-
-	// As the broadcast originator, our "have ratio" is 100%.
-	protoHeader[1] = 0xFF
-
-	binary.BigEndian.PutUint16(protoHeader[2:], uint16(len(o.appHeader)))
-
 	o.wg.Add(len(conns))
 	for _, conn := range conns {
 		ob := &outgoingBroadcast{
@@ -472,7 +470,7 @@ func (o *BroadcastOperation) AcceptBroadcast(
 	conn dconn.Conn,
 	stream quic.Stream,
 ) error {
-	req := acceptBroadcastRequest2{
+	req := acceptBroadcastRequest{
 		Conn:   conn,
 		Stream: stream,
 		Resp:   make(chan struct{}),
@@ -501,7 +499,7 @@ func (o *BroadcastOperation) AcceptBroadcast(
 
 // HandleDatagram parses the given datagram
 // (which must have already been confirmed to belong to this operation
-// by checking the broadcast ID via [*Protocol2.ExtractDatagramBroadcastID])
+// by checking the broadcast ID via [*Protocol.ExtractDatagramBroadcastID])
 // and updates the internal state of the operation.
 //
 // If the raw datagram is valid and if it is new to this operation,
@@ -584,7 +582,7 @@ func (o *BroadcastOperation) attemptToAddDatagram(
 	// TODO: we need a length check here to ensure parsing does not panic.
 	bd := parseBroadcastDatagram(
 		raw,
-		o.broadcastIDLength,
+		uint8(len(o.broadcastID)),
 		o.nChunks,
 		uint(o.rootProofCount),
 		o.hashSize,

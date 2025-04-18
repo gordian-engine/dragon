@@ -30,7 +30,7 @@ type outgoingBroadcast struct {
 func (o *outgoingBroadcast) Run(
 	ctx context.Context,
 	conn quic.Connection,
-	protoHeader [4]byte,
+	protoHeader []byte,
 ) {
 	defer o.op.wg.Done()
 
@@ -54,7 +54,9 @@ func (o *outgoingBroadcast) Run(
 		return
 	}
 
-	if _, err := s.Write(protoHeader[:]); err != nil {
+	// The protocol header includes the protocol ID byte,
+	// the broadcast ID, and metadata for the application header.
+	if _, err := s.Write(protoHeader); err != nil {
 		o.log.Info(
 			"Failed to write protocol header for outgoing broadcast stream",
 			"err", err,

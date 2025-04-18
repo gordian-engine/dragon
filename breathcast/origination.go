@@ -24,7 +24,7 @@ type PrepareOriginationConfig struct {
 	ProtocolID byte
 
 	// A unique ID to identify this operation.
-	// The length must match [Protocol2.BroadcastIDLength].
+	// The length must match [Protocol.BroadcastIDLength].
 	// This contributes to the chunk size.
 	// This header will be used by all participants in this broadcast,
 	// so the application must take care to ensure its uniqueness.

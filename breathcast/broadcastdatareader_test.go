@@ -35,7 +35,7 @@ func TestBroadcastOperation_origination_reader(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	p := breathcast.NewProtocol2(ctx, dtest.NewLogger(t), breathcast.Protocol2Config{
+	p := breathcast.NewProtocol(ctx, dtest.NewLogger(t), breathcast.ProtocolConfig{
 		ConnectionChanges: dchan.NewMulticast[dconn.Change](),
 		ProtocolID:        0xFE,
 		BroadcastIDLength: 3,

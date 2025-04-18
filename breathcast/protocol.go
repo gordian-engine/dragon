@@ -17,8 +17,30 @@ import (
 	"github.com/klauspost/reedsolomon"
 )
 
-// Protocol2 is a revised implementation of [Protocol].
-type Protocol2 struct {
+// Protocol controls all the operations of the "breathcast" broadcasting protocol.
+//
+// The primary useful methods are [*Protocol.NewOrigination]
+// to broadcast newly created data to peers in the active set,
+// and [*Protocol.NewIncomingBroadcast] to handle an incoming broadcast.
+//
+// Originating a broadcast requires using [PrepareOrigination] first
+// to split the original data into erasure-coded chunks and datagrams.
+//
+// To accept an incoming broadcast, the application layer must first
+// accept an incoming stream from a connection,
+// and then the application layer must confirm that the protocol ID matches.
+// Then, since the application layer has mapped the stream's protocol ID
+// to a particular protocol instance, it calls [*Protocol.ExtractStreamBroadcastID]
+// to confirm which [*BroadcastOperation] the stream belongs to.
+//
+// At this point, the stream either belongs to a known BroadcastOperation,
+// or it is not yet known.
+// The application layer must then use [*Protocol.ExtractStreamApplicationHeader]
+// to extract and parse the application-specific header on the stream.
+// In addition to arbitrary application-specific data,
+// that header must contain protocol-specific data
+// required to populate the [IncomingBroadcastConfig].
+type Protocol struct {
 	log *slog.Logger
 
 	// Multicast for connection changes,
@@ -52,8 +74,8 @@ type newBroadcastRequest struct {
 	Resp chan struct{}
 }
 
-// Protocol2Config is the configuration passed to [NewProtocol2].
-type Protocol2Config struct {
+// ProtocolConfig is the configuration passed to [NewProtocol].
+type ProtocolConfig struct {
 	// The initial connections to use.
 	// The protocol will own this slice,
 	// so the caller must not retain any references to it.
@@ -73,7 +95,7 @@ type Protocol2Config struct {
 	BroadcastIDLength uint8
 }
 
-func NewProtocol2(ctx context.Context, log *slog.Logger, cfg Protocol2Config) *Protocol2 {
+func NewProtocol(ctx context.Context, log *slog.Logger, cfg ProtocolConfig) *Protocol {
 	if cfg.BroadcastIDLength == 0 {
 		// It's plausible that there would be a use case
 		// for saving the space required for broadcast IDs,
@@ -83,7 +105,7 @@ func NewProtocol2(ctx context.Context, log *slog.Logger, cfg Protocol2Config) *P
 		)
 	}
 
-	p := &Protocol2{
+	p := &Protocol{
 		log: log,
 
 		connChanges: cfg.ConnectionChanges,
@@ -108,7 +130,7 @@ func NewProtocol2(ctx context.Context, log *slog.Logger, cfg Protocol2Config) *P
 	return p
 }
 
-func (p *Protocol2) mainLoop(ctx context.Context, conns map[string]dconn.Conn) {
+func (p *Protocol) mainLoop(ctx context.Context, conns map[string]dconn.Conn) {
 	defer close(p.mainLoopDone)
 
 	for {
@@ -129,12 +151,12 @@ func (p *Protocol2) mainLoop(ctx context.Context, conns map[string]dconn.Conn) {
 	}
 }
 
-func (p *Protocol2) Wait() {
+func (p *Protocol) Wait() {
 	<-p.mainLoopDone
 	p.wg.Wait()
 }
 
-func (p *Protocol2) handleNewBroadcastRequest(
+func (p *Protocol) handleNewBroadcastRequest(
 	ctx context.Context,
 	req newBroadcastRequest,
 	conns map[string]dconn.Conn,
@@ -156,7 +178,7 @@ type OriginationConfig struct {
 	ChunkSize     int
 }
 
-func (p *Protocol2) NewOrigination(
+func (p *Protocol) NewOrigination(
 	ctx context.Context,
 	cfg OriginationConfig,
 ) (*BroadcastOperation, error) {
@@ -186,8 +208,9 @@ func (p *Protocol2) NewOrigination(
 			"bid", fmt.Sprintf("%x", cfg.BroadcastID), // TODO: dlog.Hex helper?
 		),
 
-		protocolID: p.protocolID,
-		appHeader:  cfg.AppHeader,
+		protocolID:  p.protocolID,
+		broadcastID: cfg.BroadcastID,
+		appHeader:   cfg.AppHeader,
 
 		datagrams: cfg.Datagrams,
 
@@ -232,7 +255,7 @@ func (p *Protocol2) NewOrigination(
 	}
 }
 
-// IncomingBroadcastConfig is the config for [*Protocol2.NewIncomingBroadcast].
+// IncomingBroadcastConfig is the config for [*Protocol.NewIncomingBroadcast].
 type IncomingBroadcastConfig struct {
 	// How to identify this particular broadcast operation.
 	BroadcastID []byte
@@ -262,7 +285,7 @@ type IncomingBroadcastConfig struct {
 	ChunkSize uint16
 }
 
-func (p *Protocol2) NewIncomingBroadcast(
+func (p *Protocol) NewIncomingBroadcast(
 	ctx context.Context,
 	cfg IncomingBroadcastConfig,
 ) (*BroadcastOperation, error) {
@@ -331,8 +354,9 @@ func (p *Protocol2) NewIncomingBroadcast(
 			"bid", fmt.Sprintf("%x", cfg.BroadcastID), // TODO: dlog.Hex helper?
 		),
 
-		protocolID: p.protocolID,
-		appHeader:  cfg.AppHeader,
+		protocolID:  p.protocolID,
+		broadcastID: cfg.BroadcastID,
+		appHeader:   cfg.AppHeader,
 
 		// We will save the datagrams from incoming data,
 		// so it's fine that the inner slices are all nil.
@@ -342,16 +366,15 @@ func (p *Protocol2) NewIncomingBroadcast(
 		totalDataSize: cfg.TotalDataSize,
 		chunkSize:     int(cfg.ChunkSize),
 
-		broadcastIDLength: p.broadcastIDLength,
-		nChunks:           cfg.NData + cfg.NParity,
-		hashSize:          cfg.HashSize,
-		rootProofCount:    len(cfg.RootProofs),
+		nChunks:        cfg.NData + cfg.NParity,
+		hashSize:       cfg.HashSize,
+		rootProofCount: len(cfg.RootProofs),
 
 		incoming: is,
 
 		dataReady: make(chan struct{}),
 
-		acceptBroadcastRequests: make(chan acceptBroadcastRequest2),
+		acceptBroadcastRequests: make(chan acceptBroadcastRequest),
 		checkDatagramRequests:   make(chan checkDatagramRequest),
 		addDatagramRequests:     make(chan addLeafRequest),
 
@@ -402,18 +425,19 @@ func cutoffTierFromRootProofsLen(proofsLen uint16) (tier uint8, ok bool) {
 	return uint8(bits.Len16(proofsLen) - 1), true
 }
 
-// ExtractStreamBroadcastHeader extracts the application-provided header data
+// ExtractStreamApplicationHeader extracts the application-provided header data
 // from the given reader (which should be a QUIC stream).
 // The extracted data is appended to the given dst slice,
 // which is permitted to be nil.
 //
-// The stream is an origination stream created through [*Protocol.Originate].
+// The stream is an origination stream created through [*Protocol.NewOrigination].
 //
 // The caller is responsible for setting any read deadlines.
 //
-// It is assumed that the caller has already consumed
-// the protocol ID byte matching [ProtocolConfig.ProtocolID].
-func ExtractStreamBroadcastHeader(r io.Reader, dst []byte) ([]byte, error) {
+// It is assumed that the caller has already consumed both
+// the protocol ID byte matching [ProtocolConfig.ProtocolID],
+// and the broadcast ID via [*Protocol.ExtractStreamBroadcastID].
+func ExtractStreamApplicationHeader(r io.Reader, dst []byte) ([]byte, error) {
 	// First extract the have ratio and the header length.
 	var buf [3]byte
 	if _, err := io.ReadFull(r, buf[:]); err != nil {
@@ -454,6 +478,33 @@ func ExtractStreamBroadcastHeader(r io.Reader, dst []byte) ([]byte, error) {
 	return dst, nil
 }
 
+// ExtractStreamBroadcastID extracts the broadcast ID
+// from the given reader (which should be a QUIC stream).
+// The extracted data is appended to the given dst slice,
+// which is permitted to be nil.
+//
+// The stream is an origination stream created through [*Protocol.NewOrigination].
+//
+// The caller is responsible for setting any read deadlines.
+//
+// It is assumed that the caller has already consumed
+// the protocol ID byte matching [ProtocolConfig.ProtocolID].
+func (p *Protocol) ExtractStreamBroadcastID(r io.Reader, dst []byte) ([]byte, error) {
+	if cap(dst) >= int(p.broadcastIDLength) {
+		dst = dst[:p.broadcastIDLength]
+	} else {
+		dst = make([]byte, p.broadcastIDLength)
+	}
+	if _, err := io.ReadFull(r, dst); err != nil {
+		return dst, fmt.Errorf(
+			"failed to read broadcast ID from origination protocol stream: %w",
+			err,
+		)
+	}
+
+	return dst, nil
+}
+
 // ExtractDatagramBroadcastID extracts the broadcast ID
 // from the given raw datagram bytes.
 // Given the broadcast ID, the application can route the datagram
@@ -471,7 +522,7 @@ func ExtractStreamBroadcastHeader(r io.Reader, dst []byte) ([]byte, error) {
 //
 // The returned slice is a subslice of the input,
 // so retaining the return value will retain the input.
-func (p *Protocol2) ExtractDatagramBroadcastID(raw []byte) []byte {
+func (p *Protocol) ExtractDatagramBroadcastID(raw []byte) []byte {
 	if len(raw) == 0 {
 		// Caller needs to protect against this.
 		panic(errors.New(

@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestProtocol2_allDatagramsSucceed(t *testing.T) {
+func TestProtocol_allDatagramsSucceed(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -100,8 +100,12 @@ func TestProtocol2_allDatagramsSucceed(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, byte(0xFE), oneByte[0])
 
+	bid, err := fx.Protocols[1].ExtractStreamBroadcastID(s, nil)
+	require.NoError(t, err)
+	require.Equal(t, []byte("xyz"), bid)
+
 	// The incoming stream has the right application header.
-	appHeader, err := breathcast.ExtractStreamBroadcastHeader(s, nil)
+	appHeader, err := breathcast.ExtractStreamApplicationHeader(s, nil)
 	require.NoError(t, err)
 	require.Equal(t, []byte("fake app header"), appHeader)
 
@@ -155,7 +159,7 @@ func (w guaranteedDatagramQCWrapper) SendDatagram(datagram []byte) error {
 	return nil
 }
 
-func TestProtocol2_allDatagramsDropped(t *testing.T) {
+func TestProtocol_allDatagramsDropped(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -235,8 +239,12 @@ func TestProtocol2_allDatagramsDropped(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, byte(0xFE), oneByte[0])
 
+	bid, err := fx.Protocols[1].ExtractStreamBroadcastID(s, nil)
+	require.NoError(t, err)
+	require.Equal(t, []byte("xyz"), bid)
+
 	// The incoming stream has the right application header.
-	appHeader, err := breathcast.ExtractStreamBroadcastHeader(s, nil)
+	appHeader, err := breathcast.ExtractStreamApplicationHeader(s, nil)
 	require.NoError(t, err)
 	require.Equal(t, []byte("fake app header"), appHeader)
 
