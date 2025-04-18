@@ -2,9 +2,12 @@ package breathcast
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"math/bits"
 	"sync"
 
 	"github.com/gordian-engine/dragon/breathcast/bcmerkle"
@@ -379,4 +382,114 @@ func (p *Protocol2) NewIncomingBroadcast(
 	case <-req.Resp:
 		return req.Op, nil
 	}
+}
+
+func cutoffTierFromRootProofsLen(proofsLen uint16) (tier uint8, ok bool) {
+	if proofsLen == 0 {
+		return 0, false
+	}
+
+	// The length must be of form (2^n)-1.
+	// Therefore adding one makes it an even power of two.
+	// And then we can use the property of (2^n) & ((2^n)-1) == 0
+	// to check if the value is a power of two.
+	if (proofsLen & (proofsLen + 1)) != 0 {
+		return 0, false
+	}
+
+	// Otherwise, the +1 was indeed a power of two,
+	// so we just need the number of bits required for proofsLen as-is.
+	return uint8(bits.Len16(proofsLen) - 1), true
+}
+
+// ExtractStreamBroadcastHeader extracts the application-provided header data
+// from the given reader (which should be a QUIC stream).
+// The extracted data is appended to the given dst slice,
+// which is permitted to be nil.
+//
+// The stream is an origination stream created through [*Protocol.Originate].
+//
+// The caller is responsible for setting any read deadlines.
+//
+// It is assumed that the caller has already consumed
+// the protocol ID byte matching [ProtocolConfig.ProtocolID].
+func ExtractStreamBroadcastHeader(r io.Reader, dst []byte) ([]byte, error) {
+	// First extract the have ratio and the header length.
+	var buf [3]byte
+	if _, err := io.ReadFull(r, buf[:]); err != nil {
+		return nil, fmt.Errorf(
+			"failed to read ratio and header length from origination protocol stream: %w",
+			err,
+		)
+	}
+
+	if buf[0] != 0xff {
+		// At the moment we are only accepting broadcast streams
+		// from peers who have 100% of the data.
+		// The 100% case is handled specially,
+		// and anything else is a relay-to-relay operation
+		// which has a bit more complexity.
+		panic(fmt.Errorf(
+			"TODO: handle relayed broadcast (got ratio byte 0x%x)", buf[0],
+		))
+	}
+
+	sz := binary.BigEndian.Uint16(buf[1:])
+
+	if cap(dst) >= int(sz) {
+		dst = dst[:sz]
+	} else {
+		dst = make([]byte, sz)
+	}
+
+	if n, err := io.ReadFull(r, dst); err != nil {
+		// Seems unlikely that dst would be useful to the caller on error,
+		// but returning what we've read so far seems more proper anyway.
+		return dst[:n], fmt.Errorf(
+			"failed to read header from origination protocol stream: %w",
+			err,
+		)
+	}
+
+	return dst, nil
+}
+
+// ExtractDatagramBroadcastID extracts the broadcast ID
+// from the given raw datagram bytes.
+// Given the broadcast ID, the application can route the datagram
+// to the correct [RelayOperation].
+//
+// The caller must have already read the first byte of the input stream,
+// confirming that the datagram belongs to this protocol instance.
+// The input must include that protocol identifier byte,
+// so that the entire byte slice for the datagram
+// can be forwarded to other peers, if necessary,
+// without rebuilding and reallocating the slice.
+//
+// If the datagram is too short to contain a full broadcast ID,
+// the returned slice will be nil.
+//
+// The returned slice is a subslice of the input,
+// so retaining the return value will retain the input.
+func (p *Protocol2) ExtractDatagramBroadcastID(raw []byte) []byte {
+	if len(raw) == 0 {
+		// Caller needs to protect against this.
+		panic(errors.New(
+			"BUG: input to ExtractDatagramBroadcastID must not be empty",
+		))
+	}
+
+	if raw[0] != p.protocolID {
+		// Caller did not route message correctly.
+		panic(fmt.Errorf(
+			"BUG: first byte of datagram was 0x%x, but it should have been the configured protocol ID 0x%x",
+			raw[0], p.protocolID,
+		))
+	}
+
+	if len(raw) < 1+int(p.broadcastIDLength) {
+		return nil
+	}
+
+	return raw[1 : 1+p.broadcastIDLength]
 }

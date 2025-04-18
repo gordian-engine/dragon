@@ -13,6 +13,12 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
+// After sending all the datagrams of chunks,
+// this byte is sent over the reliable channel
+// to notify the receiver that they must
+// send another update of what chunks they have.
+const originationCompletion byte = 0xff
+
 // outgoingBroadcast manages a broadcast to a peer,
 // where we have the full data and the peer doesn't.
 type outgoingBroadcast struct {

@@ -70,6 +70,62 @@ type acceptBroadcastRequest2 struct {
 	Resp   chan struct{}
 }
 
+type checkDatagramRequest struct {
+	Raw  []byte
+	Resp chan checkDatagramResponse
+}
+
+type checkDatagramResponse struct {
+	Code checkDatagramResponseCode
+
+	// If the caller needs to add a leaf,
+	// this tree value will be non-nil.
+	Tree *cbmt.PartialTree
+}
+
+// checkDatagramResponseCode is the information that the operation main loop
+// sends to the datagram receiver,
+// indicating what work needs to be offloaded from the main loop
+// to the receiver's goroutine.
+type checkDatagramResponseCode uint8
+
+const (
+	// Nothing for zero.
+	_ checkDatagramResponseCode = iota
+
+	// The index was out of bounds.
+	checkDatagramInvalidIndex
+
+	// We already have the chunk ID.
+	// The caller could choose whether to verify the proof anyway,
+	// depending on the level of peer trust.
+	checkDatagramAlreadyHaveChunk
+
+	// The chunk ID is in bounds and we don't have the chunk.
+	checkDatagramNeed
+)
+
+// addLeafRequest is an internal request occurring after
+// attempting to add a leaf to a cloned partial tree.
+// There is no response back from the main loop for this.
+type addLeafRequest struct {
+	// Whether to attempt to merge the provided tree.
+	Add bool
+
+	// The cloned tree we populated.
+	// If Add is true, then any new hashes in Tree
+	// will get copied to the main partial tree instance.
+	Tree *cbmt.PartialTree
+
+	// The relay operation will retain a reference to this slice,
+	// so that it can be directly sent to other peers.
+	RawDatagram []byte
+
+	// The parsed datagram,
+	// which contains the leaf index and the raw data content.
+	Parsed broadcastDatagram
+}
+
 // DataReady returns a channel that is closed
 // when the operation has the entire broadcast data ready.
 //
