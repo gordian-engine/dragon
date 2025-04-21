@@ -29,18 +29,16 @@ type incomingBroadcast struct {
 	state *incomingState
 }
 
-// RunBackground starts two background goroutines
+// RunBackground starts background goroutines
 // to handle the outgoing bitset updates and the incoming synchronous data.
 func (i *incomingBroadcast) RunBackground(ctx context.Context, s quic.Stream) {
 	i.op.wg.Add(2)
 
-	syncUpdatesReady := make(chan struct{})
-
 	haveLeaves := i.state.pt.HaveLeaves()
 	addedLeaves := i.state.addedLeafIndices
 
-	go i.runBitsetUpdates(ctx, s, syncUpdatesReady, haveLeaves.Clone(), addedLeaves)
-	go i.acceptSyncUpdates(ctx, s, syncUpdatesReady, haveLeaves.Clone(), addedLeaves)
+	go i.runBitsetUpdates(ctx, s, haveLeaves.Clone(), addedLeaves)
+	go i.acceptSyncUpdates(ctx, s, haveLeaves.Clone(), addedLeaves)
 
 	// TODO: refactor this into a proper method.
 	// Canceling the stream read here will immediately unblock
@@ -64,13 +62,16 @@ func (i *incomingBroadcast) RunBackground(ctx context.Context, s quic.Stream) {
 }
 
 func (i *incomingBroadcast) runBitsetUpdates(
-	ctx context.Context, s quic.SendStream, syncUpdatesReady <-chan struct{},
+	ctx context.Context, s quic.SendStream,
 	haveLeaves *bitset.BitSet, addedLeaves *dchan.Multicast[uint],
 ) {
 	defer i.op.wg.Done()
 
 	// We need to send the first update immediately.
-	// See (*outgoingBroadcast).receiveInitialAck for the receiving side of this stream.
+	// This is the only time we send the entire bitset.
+	// Subsequent updates are just a delta from the last update.
+	// Most updates should be small,
+	// which means they can be encoded in fewer bytes across the wire.
 
 	var combIdx big.Int
 	bsBuf, err := i.sendBitset(s, haveLeaves, &combIdx, nil)
@@ -83,49 +84,11 @@ func (i *incomingBroadcast) runBitsetUpdates(
 		return
 	}
 
-	// Now block until the acceptSyncUpdates goroutine
-	// indicates that we have to send the first status update.
-WAIT:
-	for {
-		select {
-		case <-ctx.Done():
-			i.log.Info(
-				"Context canceled while waiting for datagram termination",
-				"cause", context.Cause(ctx),
-			)
-			i.handleError(context.Cause(ctx))
-			return
-		case <-addedLeaves.Ready:
-			haveLeaves.Set(addedLeaves.Val)
-			addedLeaves = addedLeaves.Next
-		case <-syncUpdatesReady:
-			// Time to send out the updated bitset.
-			break WAIT
-		}
-	}
-
-	// Now ensure our view of haveLeaves is up to date.
-UPDATE_HAVE_LEAVES:
-	for {
-		select {
-		case <-addedLeaves.Ready:
-			haveLeaves.Set(addedLeaves.Val)
-			addedLeaves = addedLeaves.Next
-		default:
-			break UPDATE_HAVE_LEAVES
-		}
-	}
-
-	// Now we can send the updated compressed bitset.
-	bsBuf, err = i.sendBitset(s, haveLeaves, &combIdx, bsBuf)
-	if err != nil {
-		i.log.Info(
-			"Failed to send bitset",
-			"err", err,
-		)
-		i.handleError(err)
-		return
-	}
+	// We own the haveLeaves bitset already.
+	// Since we've sent the initial set,
+	// we can now clear it out and rename it as delta.
+	delta := haveLeaves
+	delta.ClearAll()
 
 	const updateDur = 2 * time.Millisecond // TODO: make configurable.
 	due := time.NewTimer(updateDur)
@@ -146,10 +109,10 @@ UPDATE_HAVE_LEAVES:
 			// or does that happen somewhere else?
 			return
 		case <-addedLeaves.Ready:
-			haveLeaves.Set(addedLeaves.Val)
+			delta.Set(addedLeaves.Val)
 			addedLeaves = addedLeaves.Next
 		case _ = <-due.C:
-			bsBuf, err = i.sendBitset(s, haveLeaves, &combIdx, bsBuf)
+			bsBuf, err = i.sendBitset(s, delta, &combIdx, bsBuf)
 			if err != nil {
 				i.log.Info(
 					"Failed to send bitset in update loop",
@@ -158,6 +121,8 @@ UPDATE_HAVE_LEAVES:
 				i.handleError(err)
 				return
 			}
+
+			delta.ClearAll()
 
 			due.Reset(updateDur)
 		}
@@ -201,7 +166,7 @@ func (i *incomingBroadcast) sendBitset(
 }
 
 func (i *incomingBroadcast) acceptSyncUpdates(
-	ctx context.Context, s quic.ReceiveStream, syncUpdatesReady chan<- struct{},
+	ctx context.Context, s quic.ReceiveStream,
 	haveLeaves *bitset.BitSet, addedLeaves *dchan.Multicast[uint],
 ) {
 	defer i.op.wg.Done()
@@ -237,13 +202,7 @@ func (i *incomingBroadcast) acceptSyncUpdates(
 		return
 	}
 
-	// Now that we have received the termination byte,
-	// we need to send the compressed bitset of what we have so far.
-	// But we rely on the runBitsetUpdates goroutine to do that,
-	// so send that signal now.
-	close(syncUpdatesReady)
-
-	// Now we read as many datagram messages as we need.
+	// Now we read as many synchronous datagram messages as we need.
 	var meta [4]byte
 	for {
 		// Check whether we're done.

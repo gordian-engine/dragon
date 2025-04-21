@@ -27,10 +27,36 @@ type outgoingBroadcast struct {
 	op *BroadcastOperation
 }
 
-func (o *outgoingBroadcast) Run(
+// RunBackground starts background goroutines
+// to handle the outgoing datagrams and synchronous data,
+// and also to handle the incoming bitset updates.
+func (o *outgoingBroadcast) RunBackground(
+	ctx context.Context, conn quic.Connection, protoHeader []byte,
+) {
+	o.op.wg.Add(2)
+
+	streamReady := make(chan quic.ReceiveStream)
+	bitsetUpdates := make(chan *bitset.BitSet)
+
+	go o.writeUpdates(ctx, conn, protoHeader, streamReady, bitsetUpdates)
+	go o.receiveBitsetUpdates(ctx, streamReady, bitsetUpdates)
+}
+
+// writeUpdates opens a new stream on the given connection
+// in order to broadcast data to the peer.
+// After the initial handshake for the stream,
+// it sends unreliable datagrams for everything the peer is missing.
+// Then it falls back to synchronous updates
+// for any remaining missing data.
+//
+// writeUpdates runs in its own goroutine
+// created from [*outgoingBroadcast.RunBackground].
+func (o *outgoingBroadcast) writeUpdates(
 	ctx context.Context,
 	conn quic.Connection,
 	protoHeader []byte,
+	streamReady chan<- quic.ReceiveStream,
+	bitsetUpdates <-chan *bitset.BitSet,
 ) {
 	defer o.op.wg.Done()
 
@@ -76,21 +102,30 @@ func (o *outgoingBroadcast) Run(
 		return
 	}
 
-	// Once we've sent the application header,
-	// the peer will either send us the bitset of what they have,
-	// or they will close the stream if they already have everything.
+	// We could let the receiving goroutine accept the first bit set,
+	// but this goroutine is blocked on that work anyway,
+	// so just receive it here.
 	peerHas := bitset.MustNew(uint(len(o.op.datagrams)))
-
 	if err := o.receiveBitset(s, peerHas); err != nil {
 		o.log.Info(
 			"Failed to receive initial bitset acknowledgement to origination stream",
 			"err", err,
 		)
 		o.handleError(err)
+		return
 	}
 
-	// Based on what they're missing, send unreliable datagrams.
-	if err := o.sendDatagrams(s.Context(), conn, peerHas); err != nil {
+	// Now we can unblock the other goroutine.
+	select {
+	case <-ctx.Done():
+		return
+	case streamReady <- s:
+		// Okay.
+	}
+
+	// We have the initial bitset from the peer,
+	// so now we can start sending datagrams.
+	if err := o.sendUnreliableDatagrams(s.Context(), conn, peerHas, bitsetUpdates); err != nil {
 		o.log.Info(
 			"Failed to send datagrams",
 			"err", err,
@@ -120,23 +155,91 @@ func (o *outgoingBroadcast) Run(
 	}
 
 	// Now that we've informed the peer we are done with datagrams,
-	// they respond with an update on the chunks they have.
-
-	peerUpdate := bitset.MustNew(uint(len(o.op.datagrams)))
-	if err := o.receiveBitset(s, peerUpdate); err != nil {
-		o.log.Info("Failed to receive bitset", "err", err)
-		o.handleError(err)
+	// we expect one more update before we fall back to a synchronous update.
+	// It is possible that the update we read was sent before
+	// the peer received our origination terminator byte, but that's fine;
+	// syncSendDatagrams respects further live updates.
+	select {
+	case <-ctx.Done():
 		return
+	case upd := <-bitsetUpdates:
+		peerHas.InPlaceUnion(upd)
 	}
-	peerHas.InPlaceUnion(peerUpdate)
 
-	// For now, we are going to synchronously send every missing datagram.
-	// But with this structure, we are not able to dynamically respond to new bitset updates.
-	// TODO: split this method into two goroutines, similar to how incomingBroadcast works.
-	if err := o.syncSendDatagrams(ctx, s, peerHas); err != nil {
+	// Send the remaining datagrams synchronously.
+	if err := o.syncSendDatagrams(s, peerHas, bitsetUpdates); err != nil {
 		o.log.Info("Failed to send missing chunks over synchronous channel", "err", err)
 		o.handleError(err)
 		return
+	}
+}
+
+// receiveBitsetUpdates reads bitsets sent by the peer,
+// and sends those updates over the bitsetUpdates channel
+// to be consumed by the [*outgoingBroadcast.writeUpdates] goroutine.
+//
+// receiveBitsetUpdates runs in its own goroutine
+// created from [*outgoingBroadcast.RunBackground].
+func (o *outgoingBroadcast) receiveBitsetUpdates(
+	ctx context.Context,
+	streamReady <-chan quic.ReceiveStream,
+	bitsetUpdates chan<- *bitset.BitSet,
+) {
+	defer o.op.wg.Done()
+
+	// Block until the stream is ready.
+	var s quic.ReceiveStream
+	select {
+	case <-ctx.Done():
+		return
+	case s = <-streamReady:
+		// Okay.
+	}
+
+	// Now, the peer is going to send bitset updates intermittently.
+	// First allocate a destination bitset.
+	// This is the bitset that we are writing to.
+	wbs := bitset.MustNew(uint(len(o.op.datagrams)))
+	if err := o.receiveBitset(s, wbs); err != nil {
+		o.log.Info(
+			"Failed to receive first bitset update",
+			"err", err,
+		)
+		o.handleError(err)
+		return
+	}
+
+	// Now the readable bitset is just a clone of the first update.
+	// Hand it off to the other goroutine.
+	// The channel is unbuffered so we know the other goroutine
+	// has ownership once the send completes.
+	rbs := wbs.Clone()
+	select {
+	case <-ctx.Done():
+		return
+	case bitsetUpdates <- rbs:
+		// Okay.
+	}
+
+	// Now that the read and write bitsets are both initialized,
+	// we can handle alternating them as we receive updates.
+	for {
+		if err := o.receiveBitset(s, wbs); err != nil {
+			o.log.Info(
+				"Failed to receive bitset update",
+				"err", err,
+			)
+			o.handleError(err)
+			return
+		}
+
+		wbs, rbs = rbs, wbs
+		select {
+		case <-ctx.Done():
+			return
+		case bitsetUpdates <- rbs:
+			// Okay.
+		}
 	}
 }
 
@@ -144,9 +247,12 @@ func (o *outgoingBroadcast) handleError(e error) {
 	// TODO: do something with the error here.
 }
 
-func (o *outgoingBroadcast) sendDatagrams(
+// sendUnreliableDatagrams sends the missing datagrams to the peer,
+// using unreliable QUIC datagrams.
+func (o *outgoingBroadcast) sendUnreliableDatagrams(
 	streamCtx context.Context, conn quic.Connection,
 	peerHas *bitset.BitSet,
+	updates <-chan *bitset.BitSet,
 ) error {
 	// TODO: we should be able to accept a strategy for how datagrams are sent.
 	// We should expect different throttling needs, for instance.
@@ -166,14 +272,24 @@ func (o *outgoingBroadcast) sendDatagrams(
 
 		if (n & 7) == 7 {
 			// Short sleep for a chance outgoing network buffer to catch up.
-			select {
-			case <-streamCtx.Done():
-				return fmt.Errorf(
-					"stream context canceled while sending datagrams: %w",
-					context.Cause(streamCtx),
-				)
-			case <-time.After(time.Microsecond):
-				// Okay.
+			// Not totally sure if this is necessary at this point,
+			// but it seems reasonable that we would not want to completely flood
+			// the outgoing datagram buffer, whatever it looks like.
+			sleepCh := time.After(time.Microsecond)
+		CATCHUP:
+			for {
+				select {
+				case <-streamCtx.Done():
+					return fmt.Errorf(
+						"stream context canceled while sending datagrams: %w",
+						context.Cause(streamCtx),
+					)
+				case upd := <-updates:
+					// Consume as many updates as we can during this sleep.
+					peerHas.InPlaceUnion(upd)
+				case <-sleepCh:
+					break CATCHUP
+				}
 			}
 		}
 
@@ -190,7 +306,7 @@ func (o *outgoingBroadcast) sendDatagrams(
 // receiveBitset receives a serialized compressed bitset from s,
 // deserializing the bitset into out.
 func (o *outgoingBroadcast) receiveBitset(
-	s quic.Stream, out *bitset.BitSet,
+	s quic.ReceiveStream, out *bitset.BitSet,
 ) error {
 	// The peer must send us their compressed bitset.
 	// There is a 4-byte header first:
@@ -223,9 +339,9 @@ func (o *outgoingBroadcast) receiveBitset(
 }
 
 func (o *outgoingBroadcast) syncSendDatagrams(
-	ctx context.Context,
 	s quic.SendStream,
 	peerHas *bitset.BitSet,
+	updates <-chan *bitset.BitSet,
 ) error {
 	// For now we are just iterating the cleared bits in order,
 	// but this would be very wasteful if multiple broadcasters were doing this.
@@ -269,6 +385,24 @@ func (o *outgoingBroadcast) syncSendDatagrams(
 		have++
 		if have >= uint(o.op.nData) {
 			return nil
+		}
+
+		// Didn't have enough to quit, so mark the chunk as sent.
+		peerHas.Set(u)
+
+		// Non-blocking check for remote bitset updates.
+		select {
+		case upd := <-updates:
+			if upd.Any() {
+				// Only union and re-set the have count if any bit is set.
+				peerHas.InPlaceUnion(upd)
+				have = peerHas.Count()
+				if have >= uint(o.op.nData) {
+					return nil
+				}
+			}
+		default:
+			// Nothing.
 		}
 	}
 

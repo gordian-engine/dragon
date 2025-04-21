@@ -230,13 +230,12 @@ func (o *BroadcastOperation) handleOriginationConnChange(
 	cc := connChanges.Val
 	if cc.Adding {
 		conns[string(cc.Conn.Chain.Leaf.RawSubjectPublicKeyInfo)] = cc.Conn
-		o.wg.Add(1)
 
 		ob := &outgoingBroadcast{
 			log: o.log.With("remote", cc.Conn.QUIC.RemoteAddr()),
 			op:  o,
 		}
-		go ob.Run(ctx, cc.Conn.QUIC, protoHeader)
+		ob.RunBackground(ctx, cc.Conn.QUIC, protoHeader)
 	} else {
 		delete(conns, string(cc.Conn.Chain.Leaf.RawSubjectPublicKeyInfo))
 		// TODO: do we need to stop the in-progress operations in this case?
@@ -449,13 +448,12 @@ func (o *BroadcastOperation) Wait() {
 func (o *BroadcastOperation) initOrigination(
 	ctx context.Context, conns map[string]dconn.Conn, protoHeader []byte,
 ) {
-	o.wg.Add(len(conns))
 	for _, conn := range conns {
 		ob := &outgoingBroadcast{
 			log: o.log.With("remote", conn.QUIC.RemoteAddr()),
 			op:  o,
 		}
-		go ob.Run(ctx, conn.QUIC, protoHeader)
+		ob.RunBackground(ctx, conn.QUIC, protoHeader)
 	}
 }
 
