@@ -790,7 +790,7 @@ func (t *PartialTree) Complete(missedLeaves [][]byte) CompleteResult {
 
 		// If we already had the hash for this leaf by way of a proof,
 		// confirm the new calculated value matches what the proof had.
-		checkLeafHash := t.haveNodes.Test(u)
+		checkLeafHash := t.haveNodes.Test(uint(nodeIdxForLeaf))
 		if checkLeafHash {
 			copy(tmpHash, t.nodes[nodeIdxForLeaf])
 		}
@@ -802,8 +802,8 @@ func (t *PartialTree) Complete(missedLeaves [][]byte) CompleteResult {
 
 		if checkLeafHash && !bytes.Equal(tmpHash, t.nodes[nodeIdxForLeaf]) {
 			panic(fmt.Errorf(
-				"FATAL: calculated leaf hash %x differed from hash used for earlier calculated proof %x\nleaf content: %x",
-				t.nodes[nodeIdxForLeaf], tmpHash, missedLeaves[mi],
+				"FATAL: calculated leaf hash %x (leaf index %d) differed from hash (index %d) used for earlier calculated proof %x\nleaf content: %x",
+				t.nodes[nodeIdxForLeaf], u, nodeIdxForLeaf, tmpHash, missedLeaves[mi],
 			))
 		}
 
@@ -1000,8 +1000,10 @@ func (t *PartialTree) complete(n int) CompleteResult {
 		var allLeafProofs, leafProofs [][]byte
 		var curLayerOffset uint
 		if u < uint(firstSpilloverLeafIdx) {
-			allLeafProofs = make([][]byte, normalProofLen)
-			leafProofs = allLeafProofs
+			if normalProofLen > 0 {
+				allLeafProofs = make([][]byte, normalProofLen)
+				leafProofs = allLeafProofs
+			}
 			curLayerOffset = u
 		} else {
 			allLeafProofs = make([][]byte, normalProofLen+1)

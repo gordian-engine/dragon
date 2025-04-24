@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/bits"
 	"math/rand/v2"
+	"slices"
 	"testing"
 
 	"github.com/gordian-engine/dragon/breathcast/bcmerkle/bcsha256"
@@ -389,22 +390,61 @@ func TestPartialTree_AddLeaf_sequence(t *testing.T) {
 	}
 }
 
-func TestPartialTree_Complete_4_1(t *testing.T) {
+func TestPartialTree_Complete(t *testing.T) {
 	t.Parallel()
-	leafData := fixtureLeafData[:4]
-	pt, res := NewTestPartialTree(t, leafData, 0)
 
-	for i := range uint16(3) {
-		require.NoError(t, pt.AddLeaf(i, leafData[i], res.Proofs[i]))
+	var seed [32]byte
+	copy(seed[:], t.Name())
+	rng := rand.New(rand.NewChaCha8(seed))
+
+	for dataSize := 6; dataSize < 20; dataSize++ {
+		leafData := fixtureLeafData[:dataSize]
+
+		t.Run(fmt.Sprintf("dataSize=%d", dataSize), func(t *testing.T) {
+			for cutoffTier := range uint8(3) {
+				t.Run(fmt.Sprintf("cutoffTier=%d", cutoffTier), func(t *testing.T) {
+					for skipCount := 1; skipCount < 4; skipCount++ {
+						// Use the rng from the beginning to pick a random set of values to skip.
+						// We haven't nested any t.Parallel calls,
+						// so this should be a sychronous call to rng.Shuffle,
+						// which also has the benefit of using the same skip order
+						// if using go test -run to focus a specific test case.
+						shuffledIdxs := make([]int, len(leafData))
+						for i := range shuffledIdxs {
+							shuffledIdxs[i] = i
+						}
+						rng.Shuffle(len(shuffledIdxs), func(i, j int) {
+							shuffledIdxs[i], shuffledIdxs[j] = shuffledIdxs[j], shuffledIdxs[i]
+						})
+						keepIdxs := shuffledIdxs[skipCount:]
+						shuffledIdxs = shuffledIdxs[:skipCount]
+
+						t.Run(fmt.Sprintf("skipCount=%d", skipCount), func(t *testing.T) {
+							t.Parallel()
+							pt, res := NewTestPartialTree(t, leafData, cutoffTier)
+
+							for _, i := range keepIdxs {
+								require.NoError(t, pt.AddLeaf(uint16(i), leafData[i], res.Proofs[i]))
+							}
+
+							// Now need the skipped indices in order.
+							slices.Sort(shuffledIdxs)
+
+							missed := make([][]byte, len(shuffledIdxs))
+							for i, skipIdx := range shuffledIdxs {
+								missed[i] = leafData[skipIdx]
+							}
+
+							c := pt.Complete(missed)
+							for i, p := range c.Proofs {
+								require.Equal(t, res.Proofs[shuffledIdxs[i]], p)
+							}
+						})
+					}
+				})
+			}
+		})
 	}
-
-	c := pt.Complete([][]byte{
-		leafData[3],
-	})
-
-	require.Equal(t, c.Proofs, [][][]byte{
-		res.Proofs[3],
-	})
 }
 
 func NewTestPartialTree(t *testing.T, leafData [][]byte, cutoffTier uint8) (*cbmt.PartialTree, cbmt.PopulateResult) {
@@ -455,4 +495,7 @@ var fixtureLeafData = [][]byte{
 	[]byte("fifteen"),
 	[]byte("sixteen"),
 	[]byte("seventeen"),
+	[]byte("eighteen"),
+	[]byte("nineteen"),
+	[]byte("twenty"),
 }
