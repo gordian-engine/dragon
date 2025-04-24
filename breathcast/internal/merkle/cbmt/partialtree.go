@@ -37,6 +37,8 @@ type PartialTree struct {
 	hashSize int
 
 	nonce []byte
+
+	proofCutoffTier uint8
 }
 
 // PartialTreeConfig contains all the details for [NewPartialTree].
@@ -81,6 +83,8 @@ func NewPartialTree(
 		hashSize: hashSize,
 
 		nonce: cfg.Nonce,
+
+		proofCutoffTier: cfg.ProofCutoffTier,
 	}
 
 	// Now we are going to copy the root proofs into their respective slots in the nodes.
@@ -309,7 +313,7 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 	//   x x x x x x 3 4
 	//
 	// Leaves 3 and 4 are "spillover" leaves because they didn't fit into
-	// the power-of-four width layer.
+	// the width-four, power-of-two layer.
 	// The 34 node is an "overflow node".
 	// The expected layout of the nodes slice goes:
 	//
@@ -711,4 +715,335 @@ func expectedRootProofLength(nLeaves uint16, cutoffTier uint8) int {
 
 	// It's only a subset of the tree.
 	return (1 << (cutoffTier + 1)) - 1
+}
+
+// CompleteResult is the return value from [*PartialTree.Complete].
+//
+// The input to Complete is a slice of the leaf data
+// that has not been added, in the correct order.
+// The Proofs field on CompleteResult match that same order.
+type CompleteResult struct {
+	Proofs [][][]byte
+}
+
+// Complete uses the slice of missed leaves
+// to fill in all missing hashes in the partial tree.
+//
+// Normally callers would use [*PartialTree.AddLeaf],
+// providing proofs with each leaf;
+// but in this code path, we have received enough chunks
+// to reconstitute the original data without corresponding proofs.
+//
+// The missedLeaves input must be preconfirmed to be correct.
+// Hashes are calculated up until encountering already-confirmed hashes.
+// Upon mismatch, Complete panics.
+func (t *PartialTree) Complete(missedLeaves [][]byte) CompleteResult {
+	// Confirm the input is the right count.
+	expMissedCount := int(t.nLeaves) - int(t.haveLeaves.Count())
+	if len(missedLeaves) != expMissedCount {
+		panic(fmt.Errorf(
+			"BUG: have %d missed leaves but provided %d",
+			expMissedCount, len(missedLeaves),
+		))
+	}
+
+	if len(missedLeaves) == 0 {
+		panic(errors.New(
+			"BUG: Complete called with zero missed leaves",
+		))
+	}
+
+	// Similar to [*Tree.Populate], we want to fill in the bottom row first.
+	// So we have to determine whether we are dealing with spillover nodes.
+	firstSpilloverLeafIdx := t.nLeaves
+	var spilloverLeafCount, overflowNodeCount uint16
+	var fullLayerWidth uint16
+	if t.nLeaves&(t.nLeaves-1) == 0 {
+		// The leaves are a power of two.
+		fullLayerWidth = t.nLeaves
+	} else {
+		// We have overflow.
+		fullLayerWidth = uint16(1 << (bits.Len16(t.nLeaves) - 1))
+		overflowNodeCount = t.nLeaves - fullLayerWidth
+		spilloverLeafCount = 2 * overflowNodeCount
+		firstSpilloverLeafIdx = t.nLeaves - spilloverLeafCount
+	}
+
+	// When we already have a hash, but we have to confirm it,
+	// write to this temporary value.
+	tmpHash := make([]byte, t.hashSize)
+
+	lc := bcmerkle.LeafContext{
+		Nonce: t.nonce,
+	}
+	var mi int
+	// Traverse the missing leaves through the bitset.
+	for u, ok := t.haveLeaves.NextClear(0); ok; u, ok = t.haveLeaves.NextClear(u + 1) {
+		var nodeIdxForLeaf int
+		leafIdx := uint16(u)
+		if leafIdx < firstSpilloverLeafIdx {
+			nodeIdxForLeaf = int(leafIdx) + int(spilloverLeafCount)
+		} else {
+			nNormalLeaves := int(fullLayerWidth) - int(overflowNodeCount)
+			nodeIdxForLeaf = int(leafIdx) - nNormalLeaves
+		}
+
+		// If we already had the hash for this leaf by way of a proof,
+		// confirm the new calculated value matches what the proof had.
+		checkLeafHash := t.haveNodes.Test(u)
+		if checkLeafHash {
+			copy(tmpHash, t.nodes[nodeIdxForLeaf])
+		}
+
+		// Hash the leaf and store it directly in t.nodes,
+		// which was fully allocated at initialization.
+		binary.BigEndian.PutUint16(lc.LeafIndex[:], uint16(u))
+		t.hasher.Leaf(missedLeaves[mi], lc, t.nodes[nodeIdxForLeaf][:0])
+
+		if checkLeafHash && !bytes.Equal(tmpHash, t.nodes[nodeIdxForLeaf]) {
+			panic(fmt.Errorf(
+				"FATAL: calculated leaf hash %x differed from hash used for earlier calculated proof %x\nleaf content: %x",
+				t.nodes[nodeIdxForLeaf], tmpHash, missedLeaves[mi],
+			))
+		}
+
+		mi++
+	}
+
+	// We're going to hash nodes from here on out.
+	nc := bcmerkle.NodeContext{
+		Nonce: t.nonce,
+	}
+
+	// Now the leaves are filled in.
+	// We need one special treatment for any overflow nodes.
+	for i := range overflowNodeCount {
+		// If we are in this loop then we do have overflow nodes.
+
+		// First, were we missing either leaf for the overflow node?
+		// (Overflow nodes always have two spillover children.)
+		leftLeafIdx := firstSpilloverLeafIdx + (i * 2)
+		rightLeafIdx := leftLeafIdx + 1
+
+		if t.haveLeaves.Test(uint(leftLeafIdx)) && t.haveLeaves.Test(uint(rightLeafIdx)) {
+			// We already had the leaves, so we had to already have the overflow node.
+			// Nothing to do for this overflow node.
+			continue
+		}
+
+		overflowNodeIdx := i + t.nLeaves
+
+		alreadyHadNode := t.haveNodes.Test(uint(overflowNodeIdx))
+		if alreadyHadNode {
+			copy(tmpHash, t.nodes[overflowNodeIdx])
+		}
+
+		// We were missing at least one leaf,
+		// so calculate the expected hash now.
+		binary.BigEndian.PutUint16(nc.FirstLeafIndex[:], leftLeafIdx)
+		binary.BigEndian.PutUint16(nc.LastLeafIndex[:], rightLeafIdx)
+
+		// The overflow nodes are right at the beginning of the node slice.
+		leftChildNodeIdx := i * 2
+		rightChildNodeIdx := leftChildNodeIdx + 1
+
+		t.hasher.Node(
+			t.nodes[leftChildNodeIdx], t.nodes[rightChildNodeIdx],
+			nc,
+			t.nodes[overflowNodeIdx][:0],
+		)
+
+		if alreadyHadNode && !bytes.Equal(tmpHash, t.nodes[overflowNodeIdx]) {
+			panic(fmt.Errorf(
+				"FATAL: calculated overflow node hash %x differed from hash used for earlier calculated proof %x",
+				t.nodes[overflowNodeIdx], tmpHash,
+			))
+		}
+	}
+
+	// At this point we have fully populated the bottom full layer.
+	// It is fully correct based on the information we have:
+	// existing leaves already had confirmed proofs,
+	// and new spillover leaves have calculated overflow nodes.
+	// If we already had proof of those particular overflow nodes,
+	// the new hash matched the one we saw before.
+	//
+	// From here, we are going to iterate from that full layer towards the root.
+	// On the current layer, we have already confirmed the node
+	// with the information we have.
+	// We are going to inspect the t.haveNodes bitset on the current layer.
+	// Based on which nodes we were missing prior to entering t.Complete,
+	// we will fill in the parent nodes.
+	// If we already had the parent node, we simply confirm it matches.
+	// If we didn't have the parent node, we fill it in.
+	//
+	// Iteration ends when we reach a current row where every element
+	// already had a set bit in t.haveNodes.
+
+	layerStart := uint(t.nLeaves) + uint(overflowNodeCount)
+	layerWidth := uint(fullLayerWidth)
+	parentLayerStart := layerStart + layerWidth
+	nodeSpan := uint(2) // Each non-overflow node in the current row is worth this many nodes in the bottom layer.
+	for layerWidth > 1 {
+		if t.haveNodes.OnesBetween(layerStart, layerWidth+1) == layerWidth {
+			// We already had all the nodes in the current row.
+			// Nothing left to do in this loop.
+			break
+		}
+
+		// First we need to identify which nodes in the current row we missed.
+		for u, ok := t.haveNodes.NextClear(layerStart); ok && u < layerStart+layerWidth; u, ok = t.haveLeaves.NextClear(u + 1) {
+			left := u - uint(layerStart)
+			if (left & 1) == 1 {
+				// Force the left node to be even.
+				left--
+			} else {
+				// We did match the left even node,
+				// but make sure the next loop iteration doesn't match the sibling.
+				u++
+			}
+
+			// Calculate the start leaf coverage for the node context.
+			normalLeavesRemaining := int(t.nLeaves) - int(overflowNodeCount)
+			wantNodes := int(nodeSpan) * int(left)
+			var leafStart uint16
+
+			if wantNodes <= normalLeavesRemaining {
+				normalLeavesRemaining -= wantNodes
+				leafStart = uint16(wantNodes) * uint16(nodeSpan)
+			} else {
+				leafStart = uint16(normalLeavesRemaining) * uint16(nodeSpan)
+
+				wantNodes -= normalLeavesRemaining
+				normalLeavesRemaining = 0
+
+				leafStart += uint16(wantNodes) * 2 * uint16(nodeSpan)
+			}
+			binary.BigEndian.PutUint16(nc.FirstLeafIndex[:], leafStart)
+
+			// Now account for the end leaf.
+			wantNodes = int(nodeSpan) * 2
+			leafEnd := leafStart
+			if wantNodes <= normalLeavesRemaining {
+				leafEnd += uint16(wantNodes) * uint16(nodeSpan)
+			} else {
+				leafEnd += uint16(normalLeavesRemaining) * uint16(nodeSpan)
+
+				wantNodes -= normalLeavesRemaining
+
+				leafEnd += uint16(wantNodes) * 2 * uint16(nodeSpan)
+			}
+			binary.BigEndian.PutUint16(nc.LastLeafIndex[:], leafEnd)
+
+			parentNodeIdx := parentLayerStart + (left >> 1)
+			haveParent := t.haveNodes.Test(parentNodeIdx)
+			if haveParent {
+				copy(tmpHash, t.nodes[parentNodeIdx])
+			}
+
+			t.hasher.Node(
+				t.nodes[left], t.nodes[left+1],
+				nc,
+				t.nodes[parentNodeIdx][:0],
+			)
+
+			if haveParent && !bytes.Equal(tmpHash, t.nodes[parentNodeIdx]) {
+				panic(fmt.Errorf(
+					"FATAL: calculated node hash %x covering leaves [%d, %d] differed from earlier proof %x",
+					t.nodes[parentNodeIdx],
+					// Use the node context so we don't continue referencing
+					// the two uint16 literals.
+					binary.BigEndian.Uint16(nc.FirstLeafIndex[:]),
+					binary.BigEndian.Uint16(nc.LastLeafIndex[:]),
+					tmpHash,
+				))
+			}
+		}
+
+		// We have filled in everything in the parent row,
+		// so now bookkeeping for the next iteration.
+		layerStart += layerWidth
+		layerWidth >>= 1
+		parentLayerStart += layerWidth
+		nodeSpan <<= 1
+	}
+
+	return t.complete(len(missedLeaves))
+}
+
+// complete returns the actual CompleteResult,
+// based on a fully populated set of nodes from [*PartialTree.Complete].
+func (t *PartialTree) complete(n int) CompleteResult {
+	proofs := make([][][]byte, n)
+
+	treeHeight := uint8(bits.Len16(t.nLeaves))
+	normalProofLen := treeHeight - t.proofCutoffTier - 1
+
+	firstSpilloverLeafIdx := t.nLeaves
+	var fullLayerWidth uint16
+	var fullLayerStart uint
+	if t.nLeaves&(t.nLeaves-1) == 0 {
+		// The leaves are a power of two.
+		fullLayerWidth = t.nLeaves
+	} else {
+		// We have overflow, so the first spillover index
+		// will actually be somewhere in the leaves.
+		fullLayerWidth = uint16(1 << (bits.Len16(t.nLeaves) - 1))
+		overflowNodeCount := t.nLeaves - fullLayerWidth
+		spilloverLeafCount := 2 * overflowNodeCount
+		firstSpilloverLeafIdx = t.nLeaves - spilloverLeafCount
+		fullLayerStart = uint(spilloverLeafCount)
+	}
+
+	resIdx := 0
+	for u, ok := t.haveLeaves.NextClear(0); ok; u, ok = t.haveLeaves.NextClear(u + 1) {
+		var allLeafProofs, leafProofs [][]byte
+		var curLayerOffset uint
+		if u < uint(firstSpilloverLeafIdx) {
+			allLeafProofs = make([][]byte, normalProofLen)
+			leafProofs = allLeafProofs
+			curLayerOffset = u
+		} else {
+			allLeafProofs = make([][]byte, normalProofLen+1)
+			leafProofs = allLeafProofs[1:]
+
+			// Since this is a spillover leaf,
+			// we will fill in allLeafProofs first.
+			nodeIdx := u - uint(firstSpilloverLeafIdx)
+			if (nodeIdx & 1) == 1 {
+				// Odd leaf, use left sibling.
+				allLeafProofs[0] = t.nodes[nodeIdx-1]
+			} else {
+				// Even leaf, use right sibling.
+				allLeafProofs[0] = t.nodes[nodeIdx+1]
+			}
+
+			curLayerOffset = uint(firstSpilloverLeafIdx) + (uint(nodeIdx) >> 1)
+		}
+
+		width := fullLayerWidth
+		layerStart := fullLayerStart
+		for i := range leafProofs {
+			nodeIdx := layerStart + curLayerOffset
+
+			if (nodeIdx & 1) == 1 {
+				leafProofs[i] = t.nodes[nodeIdx-1]
+			} else {
+				leafProofs[i] = t.nodes[nodeIdx+1]
+			}
+
+			// Bookkeeping.
+			layerStart += uint(width)
+			width >>= 1
+			curLayerOffset >>= 1
+		}
+
+		// Bookkeeping.
+		proofs[resIdx] = allLeafProofs
+		resIdx++
+	}
+
+	return CompleteResult{
+		Proofs: proofs,
+	}
 }

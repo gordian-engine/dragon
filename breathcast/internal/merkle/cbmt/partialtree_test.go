@@ -389,6 +389,24 @@ func TestPartialTree_AddLeaf_sequence(t *testing.T) {
 	}
 }
 
+func TestPartialTree_Complete_4_1(t *testing.T) {
+	t.Parallel()
+	leafData := fixtureLeafData[:4]
+	pt, res := NewTestPartialTree(t, leafData, 0)
+
+	for i := range uint16(3) {
+		require.NoError(t, pt.AddLeaf(i, leafData[i], res.Proofs[i]))
+	}
+
+	c := pt.Complete([][]byte{
+		leafData[3],
+	})
+
+	require.Equal(t, c.Proofs, [][][]byte{
+		res.Proofs[3],
+	})
+}
+
 func NewTestPartialTree(t *testing.T, leafData [][]byte, cutoffTier uint8) (*cbmt.PartialTree, cbmt.PopulateResult) {
 	t.Helper()
 
