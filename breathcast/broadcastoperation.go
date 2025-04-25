@@ -34,6 +34,12 @@ type BroadcastOperation struct {
 	totalDataSize int
 	chunkSize     int
 
+	// The incoming state is required to reconstruct the original data.
+	// This field must be treated as volatile,
+	// as it is set to nil once the data is reconstructed.
+	// It is fine to retain a reference to the value,
+	// so long as you are not accessing the field directly
+	// outside of this type's methods.
 	incoming *incomingState
 
 	// Fields needed to parse datagrams.
@@ -405,21 +411,13 @@ func (o *BroadcastOperation) handleAddDatagramRequest(
 			// TODO: need to check that we haven't reconstructed already.
 			// If we get an extra shard concurrently with the last one,
 			// we currently would double-close o.dataReady.
-			if err := i.enc.Reconstruct(i.shards); err != nil {
-				// Something is extremely wrong if reconstruction fails.
-				// We verified every Merkle proof along the way.
-				// The panic message needs to be very detailed.
-				var buf bytes.Buffer
-				fmt.Fprintf(&buf, "IMPOSSIBLE: reconstruction failed")
-				for j, shard := range i.shards {
-					fmt.Fprintf(&buf, "\n% 5d: %x", j, shard)
-				}
-				panic(errors.New(buf.String()))
-			}
 
-			// Data has been reconstructed.
-			// Notify any watchers.
-			close(o.dataReady)
+			// Possible earlier GC.
+			i.treeClones = nil
+
+			o.finishReconstruction()
+
+			return
 		}
 	}
 
@@ -443,6 +441,98 @@ func (o *BroadcastOperation) handleAddDatagramRequest(
 func (o *BroadcastOperation) Wait() {
 	<-o.mainLoopDone
 	o.wg.Wait()
+}
+
+func (o *BroadcastOperation) finishReconstruction() {
+	i := o.incoming
+	if err := i.enc.Reconstruct(i.shards); err != nil {
+		// Something is extremely wrong if reconstruction fails.
+		// We verified every Merkle proof along the way.
+		// The panic message needs to be very detailed.
+		var buf bytes.Buffer
+		fmt.Fprintf(&buf, "IMPOSSIBLE: reconstruction failed")
+		for j, shard := range i.shards {
+			fmt.Fprintf(&buf, "\n% 5d: %x", j, shard)
+		}
+		panic(errors.New(buf.String()))
+	}
+
+	// We have the raw data reconstructed now,
+	// which means we have to complete the partial tree.
+	haveLeaves := i.pt.HaveLeaves()
+	missedCount := uint(i.nData) + uint(i.nParity) - haveLeaves.Count()
+
+	missedLeaves := make([][]byte, 0, missedCount)
+	for u, ok := haveLeaves.NextClear(0); ok; u, ok = haveLeaves.NextClear(u + 1) {
+		missedLeaves = append(missedLeaves, i.shards[u])
+	}
+
+	c := i.pt.Complete(missedLeaves)
+	o.restoreDatagrams(c)
+
+	// Data has been reconstructed.
+	// Notify any watchers.
+	close(o.dataReady)
+}
+
+func (o *BroadcastOperation) restoreDatagrams(c cbmt.CompleteResult) {
+
+	// All shards are the same size.
+	// The last chunk likely includes padding.
+	// In the future we may remove padding from the datagram,
+	// although that will add complexity in a few places.
+	// But it would be a slightly smaller allocation,
+	// and fewer bytes across the network.
+	shardSize := len(o.incoming.shards[0])
+
+	// The base size of a datagram, excluding proofs.
+	// Recall that proofs may be different lengths,
+	// if the leaves are not a power of two
+	// and if the missed leaves encounter both length classes.
+	baseDatagramSize :=
+		// 1-byte protocol header.
+		1 +
+			// Broadcast ID.
+			len(o.broadcastID) +
+			// uint16 for chunk index.
+			2 +
+			// Raw chunk data.
+			shardSize
+
+	var nHashes int
+	for _, p := range c.Proofs {
+		nHashes += len(p)
+	}
+
+	// One single backing allocation for all the new datagrams.
+	// A single root object simplifies GC,
+	// and the lifecycle of all datagrams is coupled together anyway.
+	memSize := (baseDatagramSize * len(c.Proofs)) + (nHashes * o.hashSize)
+	mem := make([]byte, memSize)
+
+	haveLeaves := o.incoming.pt.HaveLeaves()
+	var proofIdx, memIdx int
+	for u, ok := haveLeaves.NextClear(0); ok; u, ok = haveLeaves.NextClear(u + 1) {
+		dgStart := memIdx
+
+		mem[memIdx] = o.protocolID
+		memIdx++
+
+		memIdx += copy(mem[memIdx:], o.broadcastID)
+
+		binary.BigEndian.PutUint16(mem[memIdx:], uint16(u))
+		memIdx += 2
+
+		for _, p := range c.Proofs[proofIdx] {
+			memIdx += copy(mem[memIdx:], p)
+		}
+		proofIdx++
+
+		shardData := o.incoming.shards[u]
+		memIdx += copy(mem[memIdx:], shardData)
+
+		o.datagrams[u] = mem[dgStart:memIdx]
+	}
 }
 
 func (o *BroadcastOperation) initOrigination(

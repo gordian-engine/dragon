@@ -670,13 +670,24 @@ func (t *PartialTree) AddLeaf(leafIdx uint16, leafData []byte, proofs [][]byte) 
 		}
 
 		hashOffset := i * t.hashSize
-		copy(t.nodes[discoveredNodeIdx], discoveredHashes[hashOffset:hashOffset+t.hashSize])
-		t.haveNodes.Set(uint(discoveredNodeIdx))
+		if !t.haveNodes.Test(uint(discoveredNodeIdx)) {
+			// It is possible we are working from a clone.
+			// In cloned partial trees, we must not write to nodes we already "have",
+			// as those slices are still referenced by the original,
+			// and another goroutine may be reading that slice at any time.
+			copy(t.nodes[discoveredNodeIdx], discoveredHashes[hashOffset:hashOffset+t.hashSize])
+
+			// But we do still have to mark the node in our bitset,
+			// because the bitset difference determines how nodes are merged.
+			t.haveNodes.Set(uint(discoveredNodeIdx))
+		}
 
 		// Then also set the sibling's node details.
-
-		copy(t.nodes[sib.NodeIdx], sib.Hash)
-		t.haveNodes.Set(uint(sib.NodeIdx))
+		if !t.haveNodes.Test(uint(sib.NodeIdx)) {
+			// Same rationale as above.
+			copy(t.nodes[sib.NodeIdx], sib.Hash)
+			t.haveNodes.Set(uint(sib.NodeIdx))
+		}
 	}
 
 	return nil
@@ -833,11 +844,6 @@ func (t *PartialTree) Complete(missedLeaves [][]byte) CompleteResult {
 
 		overflowNodeIdx := i + t.nLeaves
 
-		alreadyHadNode := t.haveNodes.Test(uint(overflowNodeIdx))
-		if alreadyHadNode {
-			copy(tmpHash, t.nodes[overflowNodeIdx])
-		}
-
 		// We were missing at least one leaf,
 		// so calculate the expected hash now.
 		binary.BigEndian.PutUint16(nc.FirstLeafIndex[:], leftLeafIdx)
@@ -847,10 +853,21 @@ func (t *PartialTree) Complete(missedLeaves [][]byte) CompleteResult {
 		leftChildNodeIdx := i * 2
 		rightChildNodeIdx := leftChildNodeIdx + 1
 
+		// If we already had the node,
+		// we must not overwrite the node,
+		// as a clone on another goroutine could be reading it.
+		alreadyHadNode := t.haveNodes.Test(uint(overflowNodeIdx))
+		var dst []byte
+		if alreadyHadNode {
+			dst = tmpHash[:0]
+		} else {
+			dst = t.nodes[overflowNodeIdx][:0]
+		}
+
 		t.hasher.Node(
 			t.nodes[leftChildNodeIdx], t.nodes[rightChildNodeIdx],
 			nc,
-			t.nodes[overflowNodeIdx][:0],
+			dst,
 		)
 
 		if alreadyHadNode && !bytes.Equal(tmpHash, t.nodes[overflowNodeIdx]) {

@@ -220,13 +220,13 @@ func buildDatagrams(rawChunks [][]byte, chunkProofs [][][]byte, cfg PrepareOrigi
 	chunkSize := len(rawChunks[0])
 	longProofSize := len(chunkProofs[len(chunkProofs)-1]) * cfg.HashSize
 	shortProofSize := len(chunkProofs[0]) * cfg.HashSize
-	opHeaderSize := len(cfg.BroadcastID)
+	bidSize := len(cfg.BroadcastID)
 
 	shortDatagramSize :=
 		// 1-byte protocol header.
 		1 +
-			// Operation header.
-			opHeaderSize +
+			// Broadcast ID.
+			bidSize +
 			// uint16 for chunk index.
 			2 +
 			shortProofSize +
@@ -263,8 +263,8 @@ func buildDatagrams(rawChunks [][]byte, chunkProofs [][][]byte, cfg PrepareOrigi
 		mem[base] = cfg.ProtocolID
 		idx := base + 1
 
-		copy(mem[idx:idx+opHeaderSize], cfg.BroadcastID)
-		idx += opHeaderSize
+		copy(mem[idx:idx+bidSize], cfg.BroadcastID)
+		idx += bidSize
 
 		binary.BigEndian.PutUint16(mem[idx:idx+2], uint16(i))
 		idx += 2
@@ -288,8 +288,8 @@ func buildDatagrams(rawChunks [][]byte, chunkProofs [][][]byte, cfg PrepareOrigi
 		mem[base] = cfg.ProtocolID
 		idx := base + 1
 
-		copy(mem[idx:idx+opHeaderSize], cfg.BroadcastID)
-		idx += opHeaderSize
+		copy(mem[idx:idx+bidSize], cfg.BroadcastID)
+		idx += bidSize
 
 		binary.BigEndian.PutUint16(mem[idx:idx+2], uint16(i))
 		idx += 2
