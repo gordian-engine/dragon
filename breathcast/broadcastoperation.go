@@ -377,6 +377,7 @@ func (o *BroadcastOperation) handleCheckDatagramRequest(req checkDatagramRequest
 	req.Resp <- resp
 }
 
+// handleAddDatagramRequest is called from the main loop.
 func (o *BroadcastOperation) handleAddDatagramRequest(
 	req addLeafRequest,
 ) {

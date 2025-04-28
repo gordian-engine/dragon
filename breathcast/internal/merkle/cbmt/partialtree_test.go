@@ -445,6 +445,35 @@ func TestPartialTree_Complete(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("regressions", func(t *testing.T) {
+		// The big difference in this test, compared to the randomized tests above,
+		// is that we are missing a wide chunk of leaves,
+		// instead of a small number of sparse leaves.
+		t.Run("20_28", func(t *testing.T) {
+			t.Parallel()
+
+			rawData := dtest.RandomDataForTest(t, 28*128)
+			// Split rawData into 28 subslices.
+			data := slices.Collect(slices.Chunk(rawData, 128))
+
+			pt, res := NewTestPartialTree(t, data, 0)
+
+			// Add the first 19 leaves.
+			for i := range uint16(20) {
+				pt.AddLeaf(i, data[i], res.Proofs[i])
+			}
+
+			// Then all the remaining leaves are included in the Completion input.
+			missing := data[20:]
+
+			c := pt.Complete(missing)
+
+			for i, p := range c.Proofs {
+				require.Equal(t, res.Proofs[i+20], p)
+			}
+		})
+	})
 }
 
 func NewTestPartialTree(t *testing.T, leafData [][]byte, cutoffTier uint8) (*cbmt.PartialTree, cbmt.PopulateResult) {

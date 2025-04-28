@@ -897,23 +897,26 @@ func (t *PartialTree) Complete(missedLeaves [][]byte) CompleteResult {
 	// Iteration ends when we reach a current row where every element
 	// already had a set bit in t.haveNodes.
 
-	layerStart := uint(t.nLeaves) + uint(overflowNodeCount)
+	layerStart := uint(spilloverLeafCount)
 	layerWidth := uint(fullLayerWidth)
 	parentLayerStart := layerStart + layerWidth
-	nodeSpan := uint(2) // Each non-overflow node in the current row is worth this many nodes in the bottom layer.
+	nodeSpan := uint(1) // Each non-overflow node in the current row is worth this many nodes in the bottom layer.
 	for layerWidth > 1 {
-		if t.haveNodes.OnesBetween(layerStart, layerWidth+1) == layerWidth {
+		if t.haveNodes.OnesBetween(layerStart, layerStart+layerWidth+1) == layerWidth {
 			// We already had all the nodes in the current row.
 			// Nothing left to do in this loop.
 			break
 		}
 
 		// First we need to identify which nodes in the current row we missed.
-		for u, ok := t.haveNodes.NextClear(layerStart); ok && u < layerStart+layerWidth; u, ok = t.haveLeaves.NextClear(u + 1) {
-			left := u - uint(layerStart)
-			if (left & 1) == 1 {
+		for u, ok := t.haveNodes.NextClear(layerStart); ok && u < layerStart+layerWidth; u, ok = t.haveNodes.NextClear(u + 1) {
+			// We are going to pair nodes together and fill in or verify
+			// the corresponding parent node.
+			// Ensure that we have the left-right relationship set up correctly.
+			leftNodeOffset := u - uint(layerStart)
+			if (leftNodeOffset & 1) == 1 {
 				// Force the left node to be even.
-				left--
+				leftNodeOffset--
 			} else {
 				// We did match the left even node,
 				// but make sure the next loop iteration doesn't match the sibling.
@@ -921,58 +924,69 @@ func (t *PartialTree) Complete(missedLeaves [][]byte) CompleteResult {
 			}
 
 			// Calculate the start leaf coverage for the node context.
-			normalLeavesRemaining := int(t.nLeaves) - int(overflowNodeCount)
-			wantNodes := int(nodeSpan) * int(left)
+			// We know the number of covered nodes based on our tree layer,
+			// but we need to normalize that against the leaf count.
+			skipNodes := int(nodeSpan) * int(leftNodeOffset)
+			normalLeavesRemaining := int(t.nLeaves) - int(spilloverLeafCount)
 			var leafStart uint16
 
-			if wantNodes <= normalLeavesRemaining {
-				normalLeavesRemaining -= wantNodes
-				leafStart = uint16(wantNodes) * uint16(nodeSpan)
+			if skipNodes <= normalLeavesRemaining {
+				normalLeavesRemaining -= skipNodes
+				leafStart = uint16(skipNodes)
 			} else {
-				leafStart = uint16(normalLeavesRemaining) * uint16(nodeSpan)
+				leafStart = uint16(normalLeavesRemaining)
 
-				wantNodes -= normalLeavesRemaining
+				skipNodes -= normalLeavesRemaining
 				normalLeavesRemaining = 0
 
-				leafStart += uint16(wantNodes) * 2 * uint16(nodeSpan)
+				leafStart += uint16(skipNodes) * 2
 			}
 			binary.BigEndian.PutUint16(nc.FirstLeafIndex[:], leafStart)
 
 			// Now account for the end leaf.
-			wantNodes = int(nodeSpan) * 2
+			skipNodes = int(nodeSpan) * 2
 			leafEnd := leafStart
-			if wantNodes <= normalLeavesRemaining {
-				leafEnd += uint16(wantNodes) * uint16(nodeSpan)
+			if skipNodes <= normalLeavesRemaining {
+				leafEnd += uint16(skipNodes)
 			} else {
-				leafEnd += uint16(normalLeavesRemaining) * uint16(nodeSpan)
+				leafEnd += uint16(normalLeavesRemaining)
 
-				wantNodes -= normalLeavesRemaining
+				skipNodes -= normalLeavesRemaining
 
-				leafEnd += uint16(wantNodes) * 2 * uint16(nodeSpan)
+				leafEnd += uint16(skipNodes) * 2
 			}
+			// The leaf end we calculated is actually the start of the subsequent node,
+			// so decrement it to capture the correct inclusive endpoint.
+			leafEnd--
 			binary.BigEndian.PutUint16(nc.LastLeafIndex[:], leafEnd)
 
-			parentNodeIdx := parentLayerStart + (left >> 1)
+			parentNodeIdx := parentLayerStart + (leftNodeOffset >> 1)
 			haveParent := t.haveNodes.Test(parentNodeIdx)
+			var dst []byte
 			if haveParent {
-				copy(tmpHash, t.nodes[parentNodeIdx])
+				dst = tmpHash[:0]
+			} else {
+				dst = t.nodes[parentNodeIdx][:0]
 			}
 
+			leftNodeIdx := layerStart + leftNodeOffset
+
 			t.hasher.Node(
-				t.nodes[left], t.nodes[left+1],
+				t.nodes[leftNodeIdx], t.nodes[leftNodeIdx+1],
 				nc,
-				t.nodes[parentNodeIdx][:0],
+				dst,
 			)
 
 			if haveParent && !bytes.Equal(tmpHash, t.nodes[parentNodeIdx]) {
 				panic(fmt.Errorf(
-					"FATAL: calculated node hash %x covering leaves [%d, %d] differed from earlier proof %x",
-					t.nodes[parentNodeIdx],
+					"FATAL: calculated node hash %x at node index %d covering leaves [%d, %d] differed from earlier proof %x",
+					tmpHash,
+					parentNodeIdx,
 					// Use the node context so we don't continue referencing
 					// the two uint16 literals.
 					binary.BigEndian.Uint16(nc.FirstLeafIndex[:]),
 					binary.BigEndian.Uint16(nc.LastLeafIndex[:]),
-					tmpHash,
+					t.nodes[parentNodeIdx],
 				))
 			}
 		}

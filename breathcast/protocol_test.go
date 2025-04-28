@@ -309,7 +309,7 @@ func (w *dropFirstDatagramQCWrapper) SendDatagram(datagram []byte) error {
 		sent = atomic.AddInt64(&w.sentSoFar, 1)
 	}
 
-	if sent > 0 {
+	if sent > 1 {
 		go w.IncomingBroadcast.HandleDatagram(w.Ctx, datagram)
 	}
 
