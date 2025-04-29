@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/gordian-engine/dragon/breathcast/internal/bci"
 	"github.com/gordian-engine/dragon/breathcast/internal/merkle/cbmt"
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/internal/dchan"
@@ -40,6 +41,7 @@ type BroadcastOperation struct {
 	// It is fine to retain a reference to the value,
 	// so long as you are not accessing the field directly
 	// outside of this type's methods.
+	// TODO: just pass this as parameters instead of using a "volatile" field.
 	incoming *incomingState
 
 	// Fields needed to parse datagrams.
@@ -164,24 +166,12 @@ func (o *BroadcastOperation) mainLoop(
 	defer close(o.mainLoopDone)
 	defer wg.Done()
 
-	// We set up the protocol header once
-	// in case we need it during a connection change.
-	protoHeader := make([]byte, 1+len(o.broadcastID)+3)
-
-	// First byte is the protocol ID.
-	protoHeader[0] = o.protocolID
-
-	// Then the broadcast ID.
-	// This is fixed-length per protocol instance,
-	// but it is only known at runtime.
-	copy(protoHeader[1:1+len(o.broadcastID)], o.broadcastID)
-
-	// Single-byte ratio hint.
-	// As the broadcast originator, our "have ratio" is 100%.
-	protoHeader[1+len(o.broadcastID)] = 0xFF
-
-	// Final two bytes are the application header size.
-	binary.BigEndian.PutUint16(protoHeader[len(protoHeader)-2:], uint16(len(o.appHeader)))
+	protoHeader := bci.NewProtocolHeader(
+		o.protocolID,
+		o.broadcastID,
+		0xFF, // TODO: this shouldn't be hardcoded, as it will change during relaying.
+		o.appHeader,
+	)
 
 	// Shortcut if we are originating.
 	var isComplete bool
@@ -208,7 +198,7 @@ func (o *BroadcastOperation) runOrigination(
 	ctx context.Context,
 	conns map[string]dconn.Conn,
 	connChanges *dchan.Multicast[dconn.Change],
-	protoHeader []byte,
+	protoHeader bci.ProtocolHeader,
 ) {
 	for {
 		select {
@@ -231,7 +221,7 @@ func (o *BroadcastOperation) handleOriginationConnChange(
 	ctx context.Context,
 	conns map[string]dconn.Conn,
 	connChanges *dchan.Multicast[dconn.Change],
-	protoHeader []byte,
+	protoHeader bci.ProtocolHeader,
 ) *dchan.Multicast[dconn.Change] {
 	cc := connChanges.Val
 	if cc.Adding {
@@ -268,8 +258,11 @@ func (o *BroadcastOperation) runRelay(
 
 		case req := <-o.acceptBroadcastRequests:
 			ib := &incomingBroadcast{
-				log: o.log.With("remote", req.Conn.QUIC.RemoteAddr()),
-				op:  o,
+				log: o.log.With(
+					"btype", "incoming",
+					"remote", req.Conn.QUIC.RemoteAddr(),
+				),
+				op: o,
 
 				state: o.incoming,
 			}
@@ -537,7 +530,7 @@ func (o *BroadcastOperation) restoreDatagrams(c cbmt.CompleteResult) {
 }
 
 func (o *BroadcastOperation) initOrigination(
-	ctx context.Context, conns map[string]dconn.Conn, protoHeader []byte,
+	ctx context.Context, conns map[string]dconn.Conn, protoHeader bci.ProtocolHeader,
 ) {
 	for _, conn := range conns {
 		ob := &outgoingBroadcast{

@@ -4,12 +4,11 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"io"
 	"log/slog"
-	"math/big"
 	"time"
 
 	"github.com/bits-and-blooms/bitset"
+	"github.com/gordian-engine/dragon/breathcast/internal/bci"
 	"github.com/quic-go/quic-go"
 )
 
@@ -31,7 +30,7 @@ type outgoingBroadcast struct {
 // to handle the outgoing datagrams and synchronous data,
 // and also to handle the incoming bitset updates.
 func (o *outgoingBroadcast) RunBackground(
-	ctx context.Context, conn quic.Connection, protoHeader []byte,
+	ctx context.Context, conn quic.Connection, protoHeader bci.ProtocolHeader,
 ) {
 	o.op.wg.Add(2)
 
@@ -54,48 +53,23 @@ func (o *outgoingBroadcast) RunBackground(
 func (o *outgoingBroadcast) writeUpdates(
 	ctx context.Context,
 	conn quic.Connection,
-	protoHeader []byte,
+	protoHeader bci.ProtocolHeader,
 	streamReady chan<- quic.ReceiveStream,
 	bitsetUpdates <-chan *bitset.BitSet,
 ) {
 	defer o.op.wg.Done()
 
-	const openStreamTimeout = 20 * time.Millisecond // TODO: make configurable.
-	openCtx, cancel := context.WithTimeout(ctx, openStreamTimeout)
-	s, err := conn.OpenStreamSync(openCtx)
-	cancel()
+	s, err := bci.OpenStream(ctx, conn, bci.OpenStreamConfig{
+		// TODO: make these configurable.
+		OpenStreamTimeout: 20 * time.Millisecond,
+		SendHeaderTimeout: 20 * time.Millisecond,
+
+		ProtocolHeader: protoHeader,
+		AppHeader:      o.op.appHeader,
+	})
 	if err != nil {
-		o.log.Info("Failed to open stream", "err", err)
-		o.handleError(err)
-		return
-	}
-
-	const sendHeaderTimeout = 20 * time.Millisecond // TODO: make configurable.
-	if err := s.SetWriteDeadline(time.Now().Add(sendHeaderTimeout)); err != nil {
 		o.log.Info(
-			"Failed to set write deadline for outgoing broadcast stream",
-			"err", err,
-		)
-		o.handleError(err)
-		return
-	}
-
-	// The protocol header includes the protocol ID byte,
-	// the broadcast ID, and metadata for the application header.
-	if _, err := s.Write(protoHeader); err != nil {
-		o.log.Info(
-			"Failed to write protocol header for outgoing broadcast stream",
-			"err", err,
-		)
-		o.handleError(err)
-		return
-	}
-
-	// Then the actual application header data.
-	// Still using the previous write deadline.
-	if _, err := s.Write(o.op.appHeader); err != nil {
-		o.log.Info(
-			"Failed to write application header for outgoing broadcast stream",
+			"Failed to open outgoing stream",
 			"err", err,
 		)
 		o.handleError(err)
@@ -106,7 +80,13 @@ func (o *outgoingBroadcast) writeUpdates(
 	// but this goroutine is blocked on that work anyway,
 	// so just receive it here.
 	peerHas := bitset.MustNew(uint(len(o.op.datagrams)))
-	if err := o.receiveBitset(s, peerHas); err != nil {
+
+	if err := bci.ReceiveBitset(
+		s,
+		10*time.Millisecond,
+		len(o.op.datagrams),
+		peerHas,
+	); err != nil {
 		o.log.Info(
 			"Failed to receive initial bitset acknowledgement to origination stream",
 			"err", err,
@@ -200,7 +180,13 @@ func (o *outgoingBroadcast) receiveBitsetUpdates(
 	// First allocate a destination bitset.
 	// This is the bitset that we are writing to.
 	wbs := bitset.MustNew(uint(len(o.op.datagrams)))
-	if err := o.receiveBitset(s, wbs); err != nil {
+
+	if err := bci.ReceiveBitset(
+		s,
+		10*time.Millisecond,
+		len(o.op.datagrams),
+		wbs,
+	); err != nil {
 		o.log.Info(
 			"Failed to receive first bitset update",
 			"err", err,
@@ -224,7 +210,12 @@ func (o *outgoingBroadcast) receiveBitsetUpdates(
 	// Now that the read and write bitsets are both initialized,
 	// we can handle alternating them as we receive updates.
 	for {
-		if err := o.receiveBitset(s, wbs); err != nil {
+		if err := bci.ReceiveBitset(
+			s,
+			10*time.Millisecond,
+			len(o.op.datagrams),
+			wbs,
+		); err != nil {
 			o.log.Info(
 				"Failed to receive bitset update",
 				"err", err,
@@ -299,41 +290,6 @@ func (o *outgoingBroadcast) sendUnreliableDatagrams(
 
 		n++
 	}
-
-	return nil
-}
-
-// receiveBitset receives a serialized compressed bitset from s,
-// deserializing the bitset into out.
-func (o *outgoingBroadcast) receiveBitset(
-	s quic.ReceiveStream, out *bitset.BitSet,
-) error {
-	// The peer must send us their compressed bitset.
-	// There is a 4-byte header first:
-	// uint16 for the number of set bits,
-	// and another uint16 for the number of bytes for the combination index.
-	var meta [4]byte
-
-	const bitsetTimeout = 10 * time.Millisecond // TODO: make this configurable.
-	if err := s.SetReadDeadline(time.Now().Add(bitsetTimeout)); err != nil {
-		return fmt.Errorf("failed to set read deadline for compressed bitset: %w", err)
-	}
-	if _, err := io.ReadFull(s, meta[:]); err != nil {
-		return fmt.Errorf("failed to read bitset metadata: %w", err)
-	}
-
-	k := binary.BigEndian.Uint16(meta[:2])
-	combIdxSize := binary.BigEndian.Uint16(meta[2:])
-
-	combBytes := make([]byte, combIdxSize)
-	if _, err := io.ReadFull(s, combBytes); err != nil {
-		return fmt.Errorf("failed to read bitset data: %w", err)
-	}
-	var combIdx big.Int
-	combIdx.SetBytes(combBytes)
-
-	n := len(o.op.datagrams)
-	decodeCombinationIndex(n, int(k), &combIdx, out)
 
 	return nil
 }

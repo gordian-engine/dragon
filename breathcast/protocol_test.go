@@ -80,7 +80,7 @@ func TestProtocol_allDatagramsSucceed(t *testing.T) {
 	// Node 0 is going to originate a broadcast to 1.
 	c0, c1 := fx.ListenerSet.Dial(t, 0, 1)
 
-	// Ensure that each datagram arrives
+	// Ensure that each datagram arrives.
 	continueCh := make(chan struct{})
 	c0 = guaranteedDatagramQCWrapper{
 		Ctx:               ctx,

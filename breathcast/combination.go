@@ -40,44 +40,6 @@ func calculateCombinationIndex(totalChunks int, bs *bitset.BitSet, out *big.Int)
 	}
 }
 
-// decodeCombinationIndex accepts n, k, and the combination index,
-// and writes to the out bit set,
-// setting the bits of the indices that the combination index represents.
-func decodeCombinationIndex(n, k int, combIndex *big.Int, out *bitset.BitSet) {
-	out.ClearAll()
-	if k == 0 {
-		// We already cleared out, so just stop here.
-		return
-	}
-
-	var remaining, scratch big.Int
-	remaining.Set(combIndex)
-
-	curr := 0
-	remainingPositions := k
-
-	for remainingPositions > 0 {
-		binomialCoefficient(n-curr-1, remainingPositions-1, &scratch)
-
-		// While the remaining value is >= possible combinations, increment curr.
-		for curr < n && remaining.Cmp(&scratch) >= 0 {
-			remaining.Sub(&remaining, &scratch)
-			curr++
-			if curr < n {
-				binomialCoefficient(n-curr-1, remainingPositions-1, &scratch)
-			}
-		}
-
-		// We've found the next position that would give us this combination index.
-		if curr < n {
-			out.Set(uint(curr))
-
-			curr++
-			remainingPositions--
-		}
-	}
-}
-
 // The binomial coefficient ("n choose k")
 // is the number of ways to choose k elements from a set of n elements,
 // where selection order does not matter.
