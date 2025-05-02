@@ -67,6 +67,59 @@ func TestRunOutgoingRelay_handshake(t *testing.T) {
 	require.Equal(t, fx.Cfg.Datagrams[0], dg)
 }
 
+func TestRunOutgoingRelay_redundantDatagramNotSent(t *testing.T) {
+	t.Parallel()
+
+	var wg sync.WaitGroup
+	defer wg.Wait()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const protocolID byte = 0xAA
+	broadcastID := []byte("test")
+	appHeader := []byte("dummy app header")
+
+	protoHeader := bci.NewProtocolHeader(protocolID, broadcastID, 0x01, appHeader)
+
+	fx := NewOutgoingRelayFixture(
+		t, ctx,
+		2,
+		protoHeader, appHeader,
+		3, 1,
+	)
+	fx.Cfg.Datagrams[0] = []byte("\xAAtestdatagram 0")
+	fx.Cfg.InitialHaveDatagrams.Set(0)
+
+	cHost, cClient := fx.ListenerSet.Dial(t, 0, 1)
+
+	fx.Run(t, ctx, nil, cHost)
+
+	s, err := cClient.AcceptStream(ctx)
+	require.NoError(t, err)
+
+	pid, bid, gotAH, _ := parseHeader(t, s, len(broadcastID))
+	require.Equal(t, protocolID, pid)
+	require.Equal(t, broadcastID, bid)
+	require.Equal(t, appHeader, gotAH)
+
+	// For the client side of the handshake,
+	// indicate that we already have the zeroth datagram.
+	var ce bci.CombinationEncoder
+	cbs := bitset.MustNew(4)
+	cbs.Set(0)
+	require.NoError(t, ce.SendBitset(s, 50*time.Millisecond, cbs))
+
+	// Short timeout to receive a datagram.
+	// We expect to not receive one, because we advertised
+	// that we have the same bits as the sender.
+	dgCtx, dgCancel := context.WithTimeout(ctx, 25*time.Millisecond)
+	defer dgCancel()
+	_, err = cClient.ReceiveDatagram(dgCtx)
+	require.Error(t, err)
+	require.ErrorIs(t, err, dgCtx.Err())
+}
+
 func parseHeader(
 	t *testing.T,
 	s quic.ReceiveStream,

@@ -1,11 +1,91 @@
 package bci
 
 import (
+	"encoding/binary"
 	"fmt"
 	"math/big"
+	"time"
 
 	"github.com/bits-and-blooms/bitset"
+	"github.com/quic-go/quic-go"
 )
+
+// CombinationEncoder maintains internal state for encoding compressed bitsets.
+// This internal state reduces allocations as bitsets are encoded.
+//
+// The zero value of CombinationEncoder is ready to use.
+//
+// CombinationEncoder is not safe for concurrent use.
+type CombinationEncoder struct {
+	// Buffer for bytes to write to wire.
+	outBuf []byte
+
+	// Temporary variables for calculating binomial coefficient.
+	combIdx, scratch big.Int
+}
+
+// SendBitset writes the compressed form of bs to the given stream.
+// The bitset's length (as reported by [*bitset.BitSet.Len])
+// must be the same value the remote expects,
+// or else the remote will decode a different value from what we encode here.
+func (e *CombinationEncoder) SendBitset(
+	s quic.SendStream,
+	timeout time.Duration,
+	bs *bitset.BitSet,
+) error {
+	k := e.calculateCombIdx(bs)
+
+	// We need the out buffer to accommodate 4 bytes of metadata
+	// plus the size of the combination index.
+	ciByteCount := (e.combIdx.BitLen() + 7) / 8
+	sz := 4 + ciByteCount
+	if cap(e.outBuf) < sz {
+		e.outBuf = make([]byte, sz)
+	} else {
+		e.outBuf = e.outBuf[:sz]
+	}
+
+	binary.BigEndian.PutUint16(e.outBuf[:2], k)
+	binary.BigEndian.PutUint16(e.outBuf[2:4], uint16(ciByteCount))
+
+	_ = e.combIdx.FillBytes(e.outBuf[4:])
+
+	if err := s.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
+		return fmt.Errorf("failed to set write deadline: %w", err)
+	}
+
+	if _, err := s.Write(e.outBuf); err != nil {
+		return fmt.Errorf("failed to write bitset: %w", err)
+	}
+
+	return nil
+}
+
+func (e *CombinationEncoder) calculateCombIdx(bs *bitset.BitSet) uint16 {
+	kk := int(bs.Count())
+	k := uint16(kk)
+
+	e.combIdx.SetUint64(0)
+
+	prev := -1
+	n := int(bs.Len())
+	for u, ok := bs.NextSet(0); ok && int(u) < n; u, ok = bs.NextSet(u + 1) {
+		i := int(u)
+		remainingPositions := kk - 1
+
+		for j := prev + 1; j < i; j++ {
+			remainingNumbers := n - j - 1
+
+			binomialCoefficient(remainingNumbers, remainingPositions, &e.scratch)
+			e.combIdx.Add(&e.combIdx, &e.scratch)
+		}
+
+		prev = i
+		kk--
+	}
+
+	return k
+}
 
 // decodeCombinationIndex accepts n, k, and the combination index,
 // and writes to the out bit set,
