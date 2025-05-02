@@ -97,7 +97,7 @@ func DefaultConfig() *quic.Config {
 
 		// How many streams allowed on a single connection.
 		// Just an estimate for now.
-		MaxIncomingStreams:    6, // Bidirectional.
+		MaxIncomingStreams:    12, // Bidirectional.
 		MaxIncomingUniStreams: 6,
 
 		// Skip: KeepAlivePeriod: for now assuming we don't need keepalives,

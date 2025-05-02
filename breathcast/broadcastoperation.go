@@ -189,7 +189,7 @@ func (o *BroadcastOperation) mainLoop(
 	}
 
 	// We aren't originating, so we must be relaying.
-	o.runRelay(ctx, conns, connChanges)
+	o.runRelay(ctx, conns, connChanges, protoHeader)
 }
 
 // runOrigination is the main loop when the operation
@@ -228,8 +228,11 @@ func (o *BroadcastOperation) handleOriginationConnChange(
 		conns[string(cc.Conn.Chain.Leaf.RawSubjectPublicKeyInfo)] = cc.Conn
 
 		ob := &outgoingBroadcast{
-			log: o.log.With("remote", cc.Conn.QUIC.RemoteAddr()),
-			op:  o,
+			log: o.log.With(
+				"btype", "outgoing_broadcast",
+				"remote", cc.Conn.QUIC.RemoteAddr(),
+			),
+			op: o,
 		}
 		ob.RunBackground(ctx, cc.Conn.QUIC, protoHeader)
 	} else {
@@ -246,6 +249,7 @@ func (o *BroadcastOperation) runRelay(
 	ctx context.Context,
 	conns map[string]dconn.Conn,
 	connChanges *dchan.Multicast[dconn.Change],
+	protoHeader bci.ProtocolHeader,
 ) {
 	for {
 		select {
@@ -254,7 +258,7 @@ func (o *BroadcastOperation) runRelay(
 			return
 
 		case <-connChanges.Ready:
-			connChanges = o.handleRelayConnChange(ctx, conns, connChanges)
+			connChanges = o.handleRelayConnChange(ctx, conns, connChanges, protoHeader)
 
 		case req := <-o.acceptBroadcastRequests:
 			ib := &incomingBroadcast{
