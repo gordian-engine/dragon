@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"io"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/gordian-engine/dragon/internal/dchan"
 	"github.com/gordian-engine/dragon/internal/dquic/dquictest"
 	"github.com/gordian-engine/dragon/internal/dtest"
+	"github.com/quic-go/quic-go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -31,71 +33,26 @@ func TestRunOutgoingRelay_handshake(t *testing.T) {
 
 	protoHeader := bci.NewProtocolHeader(protocolID, broadcastID, 0x01, appHeader)
 
-	datagrams := make([][]byte, 4)
+	fx := NewOutgoingRelayFixture(
+		t, ctx,
+		2,
+		protoHeader, appHeader,
+		3, 1,
+	)
+	fx.Cfg.Datagrams[0] = []byte("\xAAtestdatagram 0")
+	fx.Cfg.InitialHaveDatagrams.Set(0)
 
-	// Kind of a fake datagram.
-	// It must have the protocol ID and broadcast ID first,
-	// and everything that follows is treated opaquely,
-	// at least until HandleDatagram is called.
-	datagrams[0] = []byte("\xAAtestdatagram 0")
-	initialHave := bitset.MustNew(4)
-	initialHave.Set(0)
+	cHost, cClient := fx.ListenerSet.Dial(t, 0, 1)
 
-	ls := dquictest.NewListenerSet(t, ctx, 2)
-	cHost, cClient := ls.Dial(t, 0, 1)
-
-	bci.RunOutgoingRelay(ctx, dtest.NewLogger(t), bci.OutgoingRelayConfig{
-		WG: &wg,
-
-		Conn: cHost,
-
-		ProtocolHeader: protoHeader,
-
-		AppHeader: appHeader,
-
-		Datagrams: datagrams,
-
-		InitialHaveDatagrams: initialHave,
-
-		NewAvailableDatagrams: dchan.NewMulticast[uint](),
-
-		// DataReady omitted.
-
-		NData:   3,
-		NParity: 1,
-	})
+	fx.Run(t, ctx, nil, cHost)
 
 	s, err := cClient.AcceptStream(ctx)
 	require.NoError(t, err)
 
-	// First confirm the header looks correct.
-	var pid [1]byte
-	_, err = io.ReadFull(s, pid[:])
-	require.NoError(t, err)
-	require.Equal(t, protocolID, pid[0])
-
-	var bid [4]byte
-	_, err = io.ReadFull(s, bid[:])
-	require.NoError(t, err)
-	require.Equal(t, broadcastID, bid[:])
-
-	// Ignore the ratio byte for now.
-	// That needs some different handling.
-	// Reuse the 1-byte array.
-	_, err = io.ReadFull(s, pid[:])
-	require.NoError(t, err)
-
-	// Length of app header.
-	var sz [2]byte
-	_, err = io.ReadFull(s, sz[:])
-	require.NoError(t, err)
-	gotSize := binary.BigEndian.Uint16(sz[:])
-	require.Equal(t, uint16(len(appHeader)), gotSize)
-
-	receivedAppHeader := make([]byte, gotSize)
-	_, err = io.ReadFull(s, receivedAppHeader)
-	require.NoError(t, err)
-	require.Equal(t, appHeader, receivedAppHeader)
+	pid, bid, gotAH, _ := parseHeader(t, s, len(broadcastID))
+	require.Equal(t, protocolID, pid)
+	require.Equal(t, broadcastID, bid)
+	require.Equal(t, appHeader, gotAH)
 
 	// For the client side of the handshake,
 	// just send 4 zero bytes to indicate that we have no datagrams.
@@ -107,5 +64,123 @@ func TestRunOutgoingRelay_handshake(t *testing.T) {
 	defer dgCancel()
 	dg, err := cClient.ReceiveDatagram(dgCtx)
 	require.NoError(t, err)
-	require.Equal(t, datagrams[0], dg)
+	require.Equal(t, fx.Cfg.Datagrams[0], dg)
+}
+
+func parseHeader(
+	t *testing.T,
+	s quic.ReceiveStream,
+	bidLen int,
+) (
+	protocolID byte,
+	broadcastID []byte,
+	appHeader []byte,
+	ratio byte,
+) {
+	t.Helper()
+
+	require.NoError(t, s.SetReadDeadline(time.Now().Add(50*time.Millisecond)))
+
+	var pid [1]byte
+	_, err := io.ReadFull(s, pid[:])
+	require.NoError(t, err)
+
+	bid := make([]byte, bidLen)
+	_, err = io.ReadFull(s, bid)
+	require.NoError(t, err)
+
+	var rat [1]byte
+	_, err = io.ReadFull(s, rat[:])
+	require.NoError(t, err)
+
+	var sz [2]byte
+	_, err = io.ReadFull(s, sz[:])
+	require.NoError(t, err)
+	gotSize := binary.BigEndian.Uint16(sz[:])
+
+	ah := make([]byte, gotSize)
+	_, err = io.ReadFull(s, ah)
+	require.NoError(t, err)
+
+	return pid[0], bid, ah, rat[0]
+}
+
+// OutgoingRelayFixture is a fixture providing most of the configuration
+// for calling [bci.RunOutgoingRelay].
+//
+// Use [NewOutgoingRelayFixture] to prepare the fixture;
+// make adjustments to values on the config if necessary;
+// then call [*OutgoingRelayFixture.Run].
+//
+// The most common config adjustments would be
+// modifying the initial datagrams and the corresponding bitset,
+type OutgoingRelayFixture struct {
+	Cfg bci.OutgoingRelayConfig
+
+	ListenerSet *dquictest.ListenerSet
+
+	DataReady chan struct{}
+}
+
+// NewOutgoingRelayFixture returns a fixture reflecting
+// the given arguments.
+func NewOutgoingRelayFixture(
+	t *testing.T,
+	ctx context.Context,
+	nListeners int,
+	protocolHeader bci.ProtocolHeader,
+	appHeader []byte,
+	nData, nParity uint16,
+) *OutgoingRelayFixture {
+	t.Helper()
+
+	dataReady := make(chan struct{})
+
+	cfg := bci.OutgoingRelayConfig{
+		WG: new(sync.WaitGroup),
+
+		// Conn injected in Run call.
+
+		ProtocolHeader: protocolHeader,
+		AppHeader:      appHeader,
+
+		Datagrams: make([][]byte, nData+nParity),
+
+		InitialHaveDatagrams: bitset.MustNew(uint(nData + nParity)),
+
+		NewAvailableDatagrams: dchan.NewMulticast[uint](),
+
+		DataReady: dataReady,
+
+		NData:   nData,
+		NParity: nParity,
+	}
+
+	return &OutgoingRelayFixture{
+		Cfg: cfg,
+
+		ListenerSet: dquictest.NewListenerSet(t, ctx, nListeners),
+
+		DataReady: dataReady,
+	}
+}
+
+// Run calls [bci.RunOutgoingRelay].
+//
+// If the log parameter is nil, a reasonable default is used.
+// The conn argument is required.
+func (f *OutgoingRelayFixture) Run(
+	t *testing.T,
+	ctx context.Context,
+	log *slog.Logger,
+	conn quic.Connection,
+) {
+	t.Helper()
+
+	if log == nil {
+		log = dtest.NewLogger(t)
+	}
+
+	f.Cfg.Conn = conn
+	bci.RunOutgoingRelay(ctx, log, f.Cfg)
 }
