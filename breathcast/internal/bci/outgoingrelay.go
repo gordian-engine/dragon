@@ -46,6 +46,11 @@ type OutgoingRelayConfig struct {
 	NData, NParity uint16
 }
 
+type orDecState struct {
+	RS  quic.ReceiveStream
+	Dec *CombinationDecoder
+}
+
 // RunOutgoingRelay starts several background goroutines
 // to manage an outgoing breathcast relay.
 func RunOutgoingRelay(
@@ -54,7 +59,7 @@ func RunOutgoingRelay(
 	cfg OutgoingRelayConfig,
 ) {
 	// Buffered so that writes in openOutgoingRelayStream don't block.
-	rsCh := make(chan quic.ReceiveStream, 1)
+	dsCh := make(chan orDecState, 1)
 	ssCh := make(chan quic.SendStream, 1)
 	initialPeerHas := make(chan *bitset.BitSet, 1)
 
@@ -71,13 +76,13 @@ func RunOutgoingRelay(
 		ctx,
 		log.With("step", "open_stream"),
 		cfg,
-		rsCh, ssCh, initialPeerHas,
+		dsCh, ssCh, initialPeerHas,
 	)
 	go receiveRelayBitsetUpdates(
 		ctx,
 		log.With("step", "receive_bitset_updates"),
 		cfg.WG,
-		rsCh,
+		dsCh,
 		peerBitsetUpdates,
 		uint(cfg.NData+cfg.NParity),
 	)
@@ -108,7 +113,7 @@ func openOutgoingRelayStream(
 	ctx context.Context,
 	log *slog.Logger,
 	cfg OutgoingRelayConfig,
-	rsCh chan<- quic.ReceiveStream,
+	dsCh chan<- orDecState,
 	ssCh chan<- quic.SendStream,
 	initialPeerHas chan<- *bitset.BitSet,
 ) {
@@ -119,7 +124,7 @@ func openOutgoingRelayStream(
 	// If things go right, it's fine because the other goroutines
 	// only attempt to read one value, and they correctly handle
 	// the case of the channel being closed.
-	defer close(rsCh)
+	defer close(dsCh)
 	defer close(ssCh)
 	defer close(initialPeerHas)
 
@@ -141,9 +146,9 @@ func openOutgoingRelayStream(
 	// so capture that here before signaling the other goroutines.
 	const receiveBitsetTimeout = 10 * time.Millisecond
 	peerHas := bitset.MustNew(uint(cfg.NData + cfg.NParity))
-	if err := ReceiveBitset(
-		s, receiveBitsetTimeout, int(cfg.NData+cfg.NParity), peerHas,
-	); err != nil {
+
+	dec := new(CombinationDecoder)
+	if err := dec.ReceiveBitset(s, receiveBitsetTimeout, peerHas); err != nil {
 		log.Info(
 			"Failed to receive initial bitset acknowledgement to relay stream",
 			"err", err,
@@ -156,7 +161,10 @@ func openOutgoingRelayStream(
 	}
 
 	// These channels are buffered, so we don't need to select against them.
-	rsCh <- s
+	dsCh <- orDecState{
+		RS:  s,
+		Dec: dec,
+	}
 	ssCh <- s
 	initialPeerHas <- peerHas
 }
@@ -169,7 +177,7 @@ func receiveRelayBitsetUpdates(
 	ctx context.Context,
 	log *slog.Logger,
 	wg *sync.WaitGroup,
-	rsCh <-chan quic.ReceiveStream,
+	dsCh <-chan orDecState,
 	peerBitsetUpdates chan<- *bitset.BitSet,
 	bsSize uint,
 ) {
@@ -177,15 +185,17 @@ func receiveRelayBitsetUpdates(
 
 	// Block until the stream is ready.
 	var s quic.ReceiveStream
+	var dec *CombinationDecoder
 	select {
 	case <-ctx.Done():
 		return
-	case x, ok := <-rsCh:
+	case x, ok := <-dsCh:
 		if !ok {
 			// Channel was closed, so just quit.
 			return
 		}
-		s = x
+		s = x.RS
+		dec = x.Dec
 	}
 
 	// Now, the peer is going to send bitset updates intermittently.
@@ -198,10 +208,9 @@ func receiveRelayBitsetUpdates(
 	// Nonetheless this be made configurable.
 	const receiveTimeout = 10 * time.Millisecond
 
-	if err := ReceiveBitset(
+	if err := dec.ReceiveBitset(
 		s,
 		receiveTimeout,
-		int(bsSize),
 		wbs,
 	); err != nil {
 		log.Info(
@@ -228,10 +237,9 @@ func receiveRelayBitsetUpdates(
 	// Now that the read and write bitsets are both initialized,
 	// we can handle alternating them as we receive updates.
 	for {
-		if err := ReceiveBitset(
+		if err := dec.ReceiveBitset(
 			s,
 			receiveTimeout,
-			int(bsSize),
 			wbs,
 		); err != nil {
 			log.Info(

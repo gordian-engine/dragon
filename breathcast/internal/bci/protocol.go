@@ -4,11 +4,8 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"io"
-	"math/big"
 	"time"
 
-	"github.com/bits-and-blooms/bitset"
 	"github.com/quic-go/quic-go"
 )
 
@@ -90,39 +87,4 @@ func OpenStream(
 	// At this point of the protocol, we've done our announcement to the peer.
 	// The peer must send us their "have" bitset before we can send anything else.
 	return s, nil
-}
-
-// ReceiveBitset waits for a compressed bitset from the peer.
-func ReceiveBitset(
-	s quic.ReceiveStream,
-	timeout time.Duration,
-	n int,
-	out *bitset.BitSet,
-) error {
-	// The peer must send us their compressed bitset.
-	// There is a 4-byte header first:
-	// uint16 for the number of set bits,
-	// and another uint16 for the number of bytes for the combination index.
-	var meta [4]byte
-
-	if err := s.SetReadDeadline(time.Now().Add(timeout)); err != nil {
-		return fmt.Errorf("failed to set read deadline for compressed bitset: %w", err)
-	}
-	if _, err := io.ReadFull(s, meta[:]); err != nil {
-		return fmt.Errorf("failed to read bitset metadata: %w", err)
-	}
-
-	k := binary.BigEndian.Uint16(meta[:2])
-	combIdxSize := binary.BigEndian.Uint16(meta[2:])
-
-	combBytes := make([]byte, combIdxSize)
-	if _, err := io.ReadFull(s, combBytes); err != nil {
-		return fmt.Errorf("failed to read bitset data: %w", err)
-	}
-	var combIdx big.Int
-	combIdx.SetBytes(combBytes)
-
-	decodeCombinationIndex(n, int(k), &combIdx, out)
-
-	return nil
 }

@@ -80,11 +80,11 @@ func (o *outgoingBroadcast) writeUpdates(
 	// but this goroutine is blocked on that work anyway,
 	// so just receive it here.
 	peerHas := bitset.MustNew(uint(len(o.op.datagrams)))
+	dec := new(bci.CombinationDecoder)
 
-	if err := bci.ReceiveBitset(
+	if err := dec.ReceiveBitset(
 		s,
 		10*time.Millisecond,
-		len(o.op.datagrams),
 		peerHas,
 	); err != nil {
 		o.log.Info(
@@ -176,15 +176,21 @@ func (o *outgoingBroadcast) receiveBitsetUpdates(
 		// Okay.
 	}
 
+	// TODO: the decoder should not be newly allocated,
+	// but rather should be the one used in writeUpdates.
+	// However, this outgoingBroadcast type overall needs
+	// further refactoring to make use of the newer bci package,
+	// so we can probably cover more changes
+	dec := new(bci.CombinationDecoder)
+
 	// Now, the peer is going to send bitset updates intermittently.
 	// First allocate a destination bitset.
 	// This is the bitset that we are writing to.
 	wbs := bitset.MustNew(uint(len(o.op.datagrams)))
 
-	if err := bci.ReceiveBitset(
+	if err := dec.ReceiveBitset(
 		s,
 		10*time.Millisecond,
-		len(o.op.datagrams),
 		wbs,
 	); err != nil {
 		o.log.Info(
@@ -210,10 +216,9 @@ func (o *outgoingBroadcast) receiveBitsetUpdates(
 	// Now that the read and write bitsets are both initialized,
 	// we can handle alternating them as we receive updates.
 	for {
-		if err := bci.ReceiveBitset(
+		if err := dec.ReceiveBitset(
 			s,
 			10*time.Millisecond,
-			len(o.op.datagrams),
 			wbs,
 		); err != nil {
 			o.log.Info(

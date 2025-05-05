@@ -3,6 +3,7 @@ package bci
 import (
 	"encoding/binary"
 	"fmt"
+	"io"
 	"math/big"
 	"time"
 
@@ -87,37 +88,97 @@ func (e *CombinationEncoder) calculateCombIdx(bs *bitset.BitSet) uint16 {
 	return k
 }
 
-// decodeCombinationIndex accepts n, k, and the combination index,
-// and writes to the out bit set,
-// setting the bits of the indices that the combination index represents.
-func decodeCombinationIndex(n, k int, combIndex *big.Int, out *bitset.BitSet) {
-	out.ClearAll()
+// CombinationDecoder maintains internal state for decoding compressed bitsets.
+// This internal state reduces allocations as bitsets are decoded.
+//
+// The zero value of CombinationDecoder is ready to use.
+//
+// CombinationDecoder is not safe for concurrent use.
+type CombinationDecoder struct {
+	inBuf []byte
+
+	combIdx, remaining, scratch big.Int
+}
+
+// ReceiveBitset reads a compressed bitset from the given stream,
+// and sets the bs input argument to match that value.
+//
+// The bitset's length (as reported by [*bitset.BitSet.Len])
+// must be the same value the remote expects,
+// or else the remote will decode a different value from what we encode here.
+func (d *CombinationDecoder) ReceiveBitset(
+	s quic.ReceiveStream,
+	timeout time.Duration,
+	bs *bitset.BitSet,
+) error {
+	var meta []byte
+	if cap(d.inBuf) < 4 {
+		// Should only hit this case when d is not yet initialized.
+		d.inBuf = make([]byte, 4)
+		meta = d.inBuf
+	} else {
+		meta = d.inBuf[:4]
+	}
+
+	if err := s.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return fmt.Errorf("failed to set read deadline for compressed bitset: %w", err)
+	}
+	if _, err := io.ReadFull(s, meta[:]); err != nil {
+		return fmt.Errorf("failed to read bitset metadata: %w", err)
+	}
+
+	k := binary.BigEndian.Uint16(meta[:2])
+	combIdxSize := binary.BigEndian.Uint16(meta[2:])
+
+	// TODO: there is probably some reasonable limit on combIdxSize
+	// that we should enforce here.
+	// I haven't crunched the numbers to figure out what that limit is.
+
+	var combBytes []byte
+	if cap(d.inBuf) < int(combIdxSize) {
+		d.inBuf = make([]byte, combIdxSize)
+		combBytes = d.inBuf
+	} else {
+		combBytes = d.inBuf[:combIdxSize]
+	}
+	if _, err := io.ReadFull(s, combBytes); err != nil {
+		return fmt.Errorf("failed to read bitset data: %w", err)
+	}
+
+	d.combIdx.SetBytes(combBytes)
+	d.decodeCombIdx(int(k), bs)
+
+	return nil
+}
+
+func (d *CombinationDecoder) decodeCombIdx(k int, bs *bitset.BitSet) {
+	bs.ClearAll()
 	if k == 0 {
 		// We already cleared out, so just stop here.
 		return
 	}
 
-	var remaining, scratch big.Int
-	remaining.Set(combIndex)
+	remaining := &d.combIdx
+	scratch := &d.scratch
 
+	n := int(bs.Len())
 	curr := 0
 	remainingPositions := k
 
 	for remainingPositions > 0 {
-		binomialCoefficient(n-curr-1, remainingPositions-1, &scratch)
+		binomialCoefficient(n-curr-1, remainingPositions-1, &d.scratch)
 
-		// While the remaining value is >= possible combinations, increment curr.
-		for curr < n && remaining.Cmp(&scratch) >= 0 {
-			remaining.Sub(&remaining, &scratch)
+		for curr < n && remaining.Cmp(scratch) >= 0 {
+			remaining.Sub(remaining, scratch)
 			curr++
 			if curr < n {
-				binomialCoefficient(n-curr-1, remainingPositions-1, &scratch)
+				binomialCoefficient(n-curr-1, remainingPositions-1, scratch)
 			}
 		}
 
 		// We've found the next position that would give us this combination index.
 		if curr < n {
-			out.Set(uint(curr))
+			bs.Set(uint(curr))
 
 			curr++
 			remainingPositions--
