@@ -60,6 +60,8 @@ func TestRunOutgoingRelay_handshake(t *testing.T) {
 	_, err = s.Write(make([]byte, 4))
 	require.NoError(t, err)
 
+	// Have the client connection receive a datagram,
+	// which should only work after the handshake (I think?).
 	dgCtx, dgCancel := context.WithTimeout(ctx, 50*time.Millisecond)
 	defer dgCancel()
 	dg, err := cClient.ReceiveDatagram(dgCtx)
@@ -118,6 +120,76 @@ func TestRunOutgoingRelay_redundantDatagramNotSent(t *testing.T) {
 	_, err = cClient.ReceiveDatagram(dgCtx)
 	require.Error(t, err)
 	require.ErrorIs(t, err, dgCtx.Err())
+}
+
+func TestRunOutgoingRelay_forwardNewDatagram(t *testing.T) {
+	t.Parallel()
+
+	var wg sync.WaitGroup
+	defer wg.Wait()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const protocolID byte = 0xAA
+	broadcastID := []byte("test")
+	appHeader := []byte("dummy app header")
+
+	protoHeader := bci.NewProtocolHeader(protocolID, broadcastID, 0x01, appHeader)
+
+	fx := NewOutgoingRelayFixture(
+		t, ctx,
+		2,
+		protoHeader, appHeader,
+		3, 1,
+	)
+
+	// Mark the first datagram as present,
+	// so we can synchronize on sending that out first.
+	fx.Cfg.Datagrams[0] = []byte("\xAAtestdatagram 0")
+	fx.Cfg.InitialHaveDatagrams.Set(0)
+
+	// The operation is running on the "host" side of the connection.
+	cHost, cClient := fx.ListenerSet.Dial(t, 0, 1)
+	cWH := &blockingSendDatagram{
+		Connection: cHost,
+		Ctx:        ctx,
+		Continue:   make(chan struct{}),
+	}
+	fx.Run(t, ctx, nil, cWH)
+
+	s, err := cClient.AcceptStream(ctx)
+	require.NoError(t, err)
+
+	pid, bid, gotAH, _ := parseHeader(t, s, len(broadcastID))
+	require.Equal(t, protocolID, pid)
+	require.Equal(t, broadcastID, bid)
+	require.Equal(t, appHeader, gotAH)
+
+	// For the client side of the handshake,
+	// indicate we don't have any data yet.
+	var ce bci.CombinationEncoder
+	cbs := bitset.MustNew(4)
+	require.NoError(t, ce.SendBitset(s, 50*time.Millisecond, cbs))
+
+	// If we are able to force a datagram continue,
+	// then we are synchronized with the host's main loop.
+	dtest.SendSoon(t, cWH.Continue, struct{}{})
+
+	// Now we indicate that the next datagram is available to the host.
+	// It would have arrived from a separate peer somehow.
+	ad := fx.Cfg.NewAvailableDatagrams
+	ad.Set(1)
+	ad = ad.Next
+
+	// Then if we are able to send another continue signal,
+	// the host tried to send the datagram.
+	dtest.SendSoon(t, cWH.Continue, struct{}{})
+
+	require.Equal(t, [][]byte{
+		fx.Cfg.Datagrams[0],
+		fx.Cfg.Datagrams[1],
+	}, cWH.Sent)
 }
 
 func parseHeader(
@@ -236,4 +308,25 @@ func (f *OutgoingRelayFixture) Run(
 
 	f.Cfg.Conn = conn
 	bci.RunOutgoingRelay(ctx, log, f.Cfg)
+}
+
+type blockingSendDatagram struct {
+	quic.Connection
+
+	Ctx      context.Context
+	Continue chan struct{}
+
+	Sent [][]byte
+}
+
+func (b *blockingSendDatagram) SendDatagram(d []byte) error {
+	select {
+	case <-b.Ctx.Done():
+		return b.Ctx.Err()
+	case <-b.Continue:
+		// Okay.
+	}
+
+	b.Sent = append(b.Sent, d)
+	return nil
 }

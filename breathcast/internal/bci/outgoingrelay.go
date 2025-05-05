@@ -382,6 +382,24 @@ AWAIT_PEER_HAS:
 				needsSync = true
 			}
 
+		case <-newAvailableDatagrams.Ready:
+			idx := newAvailableDatagrams.Val
+			newAvailableDatagrams = newAvailableDatagrams.Next
+
+			if !peerHas.Test(idx) {
+				// Assuming that sending the datagram won't block here.
+				// If that assumption is wrong,
+				// we can offload sends to a separate worker goroutine.
+				if err := conn.SendDatagram(datagrams[idx]); err != nil {
+					log.Info(
+						"Failed to send new datagram",
+						"idx", idx,
+						"err", err,
+					)
+				}
+				sent.Set(idx)
+			}
+
 		case syncOut <- syncing:
 			// If we needed a sync, we give up the syncing bitset for a moment.
 			syncing = nil
@@ -417,7 +435,7 @@ func sendExistingDatagrams(
 			// There are a few reasons why sending the datagram could fail.
 			// TODO: inspect this error and quit if the connection is closed.
 			log.Info(
-				"Failed to send datagram",
+				"Failed to send existing datagram",
 				"idx", u,
 				"err", err,
 			)
