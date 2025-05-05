@@ -131,7 +131,7 @@ type addLeafRequest struct {
 
 	// The parsed datagram,
 	// which contains the leaf index and the raw data content.
-	Parsed broadcastDatagram
+	Parsed bci.BroadcastDatagram
 }
 
 // DataReady returns a channel that is closed
@@ -286,12 +286,31 @@ func (o *BroadcastOperation) handleRelayConnChange(
 	ctx context.Context,
 	conns map[string]dconn.Conn,
 	connChanges *dchan.Multicast[dconn.Change],
+	protoHeader bci.ProtocolHeader,
 ) *dchan.Multicast[dconn.Change] {
 	cc := connChanges.Val
 	if cc.Adding {
 		conns[string(cc.Conn.Chain.Leaf.RawSubjectPublicKeyInfo)] = cc.Conn
-		// TODO: if we are actively relaying,
-		// we need to open an outbound relay to the new connection.
+
+		bci.RunOutgoingRelay(
+			ctx,
+			o.log.With(
+				"btype", "outgoing_relay",
+				"remote", cc.Conn.QUIC.RemoteAddr(),
+			),
+			bci.OutgoingRelayConfig{
+				WG:                    &o.wg,
+				Conn:                  cc.Conn.QUIC,
+				ProtocolHeader:        protoHeader,
+				AppHeader:             o.appHeader,
+				Datagrams:             o.datagrams,
+				InitialHaveDatagrams:  o.incoming.pt.HaveLeaves().Clone(),
+				NewAvailableDatagrams: o.incoming.addedLeafIndices,
+				DataReady:             o.dataReady,
+				NData:                 o.nData,
+				NParity:               o.nChunks - o.nData,
+			},
+		)
 	} else {
 		delete(conns, string(cc.Conn.Chain.Leaf.RawSubjectPublicKeyInfo))
 		// TODO: do we need to stop the in-progress operations in this case?
@@ -474,7 +493,6 @@ func (o *BroadcastOperation) finishReconstruction() {
 }
 
 func (o *BroadcastOperation) restoreDatagrams(c cbmt.CompleteResult) {
-
 	// All shards are the same size.
 	// The last chunk likely includes padding.
 	// In the future we may remove padding from the datagram,
@@ -666,7 +684,7 @@ func (o *BroadcastOperation) attemptToAddDatagram(
 	// so it can be reused.
 
 	// TODO: we need a length check here to ensure parsing does not panic.
-	bd := parseBroadcastDatagram(
+	bd := bci.ParseBroadcastDatagram(
 		raw,
 		uint8(len(o.broadcastID)),
 		o.nChunks,

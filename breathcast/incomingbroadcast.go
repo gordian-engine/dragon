@@ -51,6 +51,10 @@ func (i *incomingBroadcast) RunBackground(ctx context.Context, s quic.Stream) {
 
 		select {
 		case <-ctx.Done():
+			// Unblock any blocked reads.
+			// TODO: use a proper constant for this code.
+			s.CancelRead(987)
+
 			return
 		case <-s.Context().Done():
 			return

@@ -299,7 +299,6 @@ AWAIT_PEER_HAS:
 			break AWAIT_PEER_HAS
 
 		case <-newAvailableDatagrams.Ready:
-			log.Info("Setting new availalbe datagramd index", "didx", newAvailableDatagrams.Val)
 			// Keep our view of the available datagrams updated.
 			haveDatagrams.Set(newAvailableDatagrams.Val)
 			newAvailableDatagrams = newAvailableDatagrams.Next
