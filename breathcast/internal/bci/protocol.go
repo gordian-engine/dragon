@@ -9,6 +9,21 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
+const (
+	// Byte indicating that this is a re-sync of a missed datagram.
+	datagramSyncMessageID byte = 0x01
+
+	// Byte indicating that all datagrams have been sent.
+	datagramsFinishedMessageID byte = 0xFF
+)
+
+// Constants for stream cancellation error codes.
+const (
+	GotFullDataErrorCode quic.StreamErrorCode = 0x607
+
+	InterruptedErrorCode quic.StreamErrorCode = 0x1117
+)
+
 // ProtocolHeader is a byte sequence containing:
 //   - the protocol ID byte
 //   - the broadcast ID, which is specific to the broadcast operation
@@ -87,4 +102,81 @@ func OpenStream(
 	// At this point of the protocol, we've done our announcement to the peer.
 	// The peer must send us their "have" bitset before we can send anything else.
 	return s, nil
+}
+
+func SendSyncDatagram(
+	s quic.SendStream,
+	sendTimeout time.Duration,
+	chunkIdx uint16,
+	raw []byte,
+) error {
+	if len(raw) > (1<<16)-1 {
+		panic(fmt.Errorf(
+			"BUG: datagram size must fit in uint16 (got length %d)",
+			len(raw),
+		))
+	}
+
+	if err := s.SetWriteDeadline(time.Now().Add(sendTimeout)); err != nil {
+		return fmt.Errorf(
+			"failed to set write deadline for synchronous datagram: %w", err,
+		)
+	}
+
+	var meta [4]byte
+	binary.BigEndian.PutUint16(meta[:2], chunkIdx)
+	binary.BigEndian.PutUint16(meta[2:], uint16(len(raw)))
+
+	if _, err := s.Write(meta[:]); err != nil {
+		return fmt.Errorf(
+			"failed to write synchronous datagram metadata: %w", err,
+		)
+	}
+
+	if _, err := s.Write(raw); err != nil {
+		return fmt.Errorf(
+			"failed to write synchronous datagram data: %w", err,
+		)
+	}
+
+	return nil
+}
+
+func SendSyncMissedDatagram(
+	s quic.SendStream,
+	sendTimeout time.Duration,
+	chunkIdx uint16,
+	raw []byte,
+) error {
+	if len(raw) > (1<<16)-1 {
+		panic(fmt.Errorf(
+			"BUG: datagram size must fit in uint16 (got length %d)",
+			len(raw),
+		))
+	}
+
+	if err := s.SetWriteDeadline(time.Now().Add(sendTimeout)); err != nil {
+		return fmt.Errorf(
+			"failed to set write deadline for synchronous datagram: %w", err,
+		)
+	}
+
+	var meta [5]byte
+	meta[0] = datagramSyncMessageID
+	binary.BigEndian.PutUint16(meta[1:3], chunkIdx)
+	binary.BigEndian.PutUint16(meta[3:], uint16(len(raw)))
+
+	if _, err := s.Write(meta[:]); err != nil {
+		return fmt.Errorf(
+			"failed to write synchronous missed datagram metadata: %w", err,
+		)
+	}
+
+	if _, err := s.Write(raw); err != nil {
+		return fmt.Errorf(
+			"failed to write synchronous missed datagram data: %w", err,
+		)
+	}
+
+	return nil
 }
