@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/gordian-engine/dragon/breathcast/internal/bci"
 	"github.com/gordian-engine/dragon/breathcast/internal/merkle/cbmt"
@@ -184,17 +185,17 @@ func (o *BroadcastOperation) mainLoop(
 
 	if isComplete {
 		o.initOrigination(ctx, conns, protoHeader)
-		o.runOrigination(ctx, conns, connChanges, protoHeader)
+		o.originationMainLoop(ctx, conns, connChanges, protoHeader)
 		return
 	}
 
 	// We aren't originating, so we must be relaying.
-	o.runRelay(ctx, conns, connChanges, protoHeader)
+	o.relayMainLoop(ctx, conns, connChanges, protoHeader)
 }
 
-// runOrigination is the main loop when the operation
+// originationMainLoop is the main loop when the operation
 // has the full set of data.
-func (o *BroadcastOperation) runOrigination(
+func (o *BroadcastOperation) originationMainLoop(
 	ctx context.Context,
 	conns map[string]dconn.Conn,
 	connChanges *dchan.Multicast[dconn.Change],
@@ -217,6 +218,27 @@ func (o *BroadcastOperation) runOrigination(
 	}
 }
 
+// runOrigination starts background routines to handle
+// an outgoing broadcast while o has the full set of data.
+func (o *BroadcastOperation) runOrigination(
+	ctx context.Context,
+	log *slog.Logger,
+	conn quic.Connection,
+	protoHeader bci.ProtocolHeader,
+) {
+	bci.RunOrigination(
+		ctx,
+		log,
+		bci.OriginationConfig{
+			WG:             &o.wg,
+			Conn:           conn,
+			ProtocolHeader: protoHeader,
+			AppHeader:      o.appHeader,
+			Datagrams:      o.datagrams,
+		},
+	)
+}
+
 func (o *BroadcastOperation) handleOriginationConnChange(
 	ctx context.Context,
 	conns map[string]dconn.Conn,
@@ -227,14 +249,15 @@ func (o *BroadcastOperation) handleOriginationConnChange(
 	if cc.Adding {
 		conns[string(cc.Conn.Chain.Leaf.RawSubjectPublicKeyInfo)] = cc.Conn
 
-		ob := &outgoingBroadcast{
-			log: o.log.With(
+		o.runOrigination(
+			ctx,
+			o.log.With(
 				"btype", "outgoing_broadcast",
 				"remote", cc.Conn.QUIC.RemoteAddr(),
 			),
-			op: o,
-		}
-		ob.RunBackground(ctx, cc.Conn.QUIC, protoHeader)
+			cc.Conn.QUIC,
+			protoHeader,
+		)
 	} else {
 		delete(conns, string(cc.Conn.Chain.Leaf.RawSubjectPublicKeyInfo))
 		// TODO: do we need to stop the in-progress operations in this case?
@@ -243,9 +266,36 @@ func (o *BroadcastOperation) handleOriginationConnChange(
 	return connChanges.Next
 }
 
-// runRelay is the main loop when the operation
+// runAcceptBroadcast starts background goroutines to handle
+// accepting an incoming broadcast while o has less than full data.
+func (o *BroadcastOperation) runAcceptBroadcast(
+	ctx context.Context,
+	log *slog.Logger,
+	s quic.Stream,
+) {
+	bci.RunAcceptBroadcast(
+		ctx,
+		log,
+		bci.AcceptBroadcastConfig{
+			WG: &o.wg,
+
+			Stream:          s,
+			DatagramHandler: o,
+
+			InitialHaveLeaves: o.incoming.pt.HaveLeaves().Clone(),
+			AddedLeaves:       o.incoming.addedLeafIndices,
+
+			// TODO: should be configurable.
+			BitsetSendPeriod: 2 * time.Millisecond,
+
+			DataReady: o.dataReady,
+		},
+	)
+}
+
+// relayMainLoop is the main loop when the operation
 // does not have the full set of data.
-func (o *BroadcastOperation) runRelay(
+func (o *BroadcastOperation) relayMainLoop(
 	ctx context.Context,
 	conns map[string]dconn.Conn,
 	connChanges *dchan.Multicast[dconn.Change],
@@ -261,16 +311,14 @@ func (o *BroadcastOperation) runRelay(
 			connChanges = o.handleRelayConnChange(ctx, conns, connChanges, protoHeader)
 
 		case req := <-o.acceptBroadcastRequests:
-			ib := &incomingBroadcast{
-				log: o.log.With(
+			o.runAcceptBroadcast(
+				ctx,
+				o.log.With(
 					"btype", "incoming",
 					"remote", req.Conn.QUIC.RemoteAddr(),
 				),
-				op: o,
-
-				state: o.incoming,
-			}
-			ib.RunBackground(ctx, req.Stream)
+				req.Stream,
+			)
 			close(req.Resp)
 
 		case req := <-o.checkDatagramRequests:
@@ -555,11 +603,15 @@ func (o *BroadcastOperation) initOrigination(
 	ctx context.Context, conns map[string]dconn.Conn, protoHeader bci.ProtocolHeader,
 ) {
 	for _, conn := range conns {
-		ob := &outgoingBroadcast{
-			log: o.log.With("remote", conn.QUIC.RemoteAddr()),
-			op:  o,
-		}
-		ob.RunBackground(ctx, conn.QUIC, protoHeader)
+		o.runOrigination(
+			ctx,
+			o.log.With(
+				"btype", "outgoing_broadcast",
+				"remote", conn.QUIC.RemoteAddr(),
+			),
+			conn.QUIC,
+			protoHeader,
+		)
 	}
 }
 
