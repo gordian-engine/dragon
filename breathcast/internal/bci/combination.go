@@ -103,6 +103,12 @@ type CombinationDecoder struct {
 // ReceiveBitset reads a compressed bitset from the given stream,
 // and sets the bs input argument to match that value.
 //
+// The read deadline for the bitset is determined by the timeout argument.
+// If timeout is positive, that duration is used for the deadline.
+// Otherwise, the read deadline is cleared
+// and the read will block until the data is received
+// or the read is canceled.
+//
 // The bitset's length (as reported by [*bitset.BitSet.Len])
 // must be the same value the remote expects,
 // or else the remote will decode a different value from what we encode here.
@@ -120,7 +126,11 @@ func (d *CombinationDecoder) ReceiveBitset(
 		meta = d.inBuf[:4]
 	}
 
-	if err := s.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+	var deadline time.Time
+	if timeout > 0 {
+		deadline = time.Now().Add(timeout)
+	}
+	if err := s.SetReadDeadline(deadline); err != nil {
 		return fmt.Errorf("failed to set read deadline for compressed bitset: %w", err)
 	}
 	if _, err := io.ReadFull(s, meta[:]); err != nil {

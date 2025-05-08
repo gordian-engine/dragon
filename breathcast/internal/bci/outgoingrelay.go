@@ -46,6 +46,10 @@ type OutgoingRelayConfig struct {
 	NData, NParity uint16
 }
 
+// orDecState is the decoder state for an outgoing relay.
+// It is simply the pair of a receive stream and a CombinationDecoder.
+//
+// TODO: it should be possible to replace this with bsdState.
 type orDecState struct {
 	RS  quic.ReceiveStream
 	Dec *CombinationDecoder
@@ -205,7 +209,7 @@ func receiveRelayBitsetUpdates(
 
 	// The protocol is designed to send bitset updates
 	// at a significantly higher frequency than every 10ms.
-	// Nonetheless this be made configurable.
+	// Nonetheless this should be made configurable.
 	const receiveTimeout = 10 * time.Millisecond
 
 	if err := dec.ReceiveBitset(

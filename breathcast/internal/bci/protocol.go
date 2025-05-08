@@ -21,7 +21,7 @@ const (
 const (
 	GotFullDataErrorCode quic.StreamErrorCode = 0x607
 
-	InterruptedErrorCode quic.StreamErrorCode = 0x1117
+	InterruptedErrorCode quic.StreamErrorCode = 0x11117
 )
 
 // ProtocolHeader is a byte sequence containing:
