@@ -154,7 +154,7 @@ func TestRunOutgoingRelay_forwardNewDatagram(t *testing.T) {
 	cWH := &blockingSendDatagram{
 		Connection: cHost,
 		Ctx:        ctx,
-		Continue:   make(chan struct{}),
+		Out:        make(chan []byte),
 	}
 	fx.Run(t, ctx, nil, cWH)
 
@@ -174,7 +174,8 @@ func TestRunOutgoingRelay_forwardNewDatagram(t *testing.T) {
 
 	// If we are able to force a datagram continue,
 	// then we are synchronized with the host's main loop.
-	dtest.SendSoon(t, cWH.Continue, struct{}{})
+	d0 := dtest.ReceiveSoon(t, cWH.Out)
+	require.Equal(t, fx.Cfg.Datagrams[0], d0)
 
 	// Now we indicate that the next datagram is available to the host.
 	// It would have arrived from a separate peer somehow.
@@ -184,12 +185,8 @@ func TestRunOutgoingRelay_forwardNewDatagram(t *testing.T) {
 
 	// Then if we are able to send another continue signal,
 	// the host tried to send the datagram.
-	dtest.SendSoon(t, cWH.Continue, struct{}{})
-
-	require.Equal(t, [][]byte{
-		fx.Cfg.Datagrams[0],
-		fx.Cfg.Datagrams[1],
-	}, cWH.Sent)
+	d1 := dtest.ReceiveSoon(t, cWH.Out)
+	require.Equal(t, fx.Cfg.Datagrams[1], d1)
 }
 
 func parseHeader(
@@ -313,20 +310,15 @@ func (f *OutgoingRelayFixture) Run(
 type blockingSendDatagram struct {
 	quic.Connection
 
-	Ctx      context.Context
-	Continue chan struct{}
-
-	Sent [][]byte
+	Ctx context.Context
+	Out chan []byte
 }
 
 func (b *blockingSendDatagram) SendDatagram(d []byte) error {
 	select {
 	case <-b.Ctx.Done():
 		return b.Ctx.Err()
-	case <-b.Continue:
-		// Okay.
+	case b.Out <- d:
+		return nil
 	}
-
-	b.Sent = append(b.Sent, d)
-	return nil
 }
