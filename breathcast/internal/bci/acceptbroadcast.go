@@ -112,7 +112,7 @@ func runPeriodicBitsetUpdates(
 	delta := bitset.MustNew(haveLeaves.Len())
 	leavesChanged := false
 
-	// Splite haveLeaves into read and write copies for simpler bookkeeping.
+	// Split haveLeaves into read and write copies for simpler bookkeeping.
 	haveLeavesR := haveLeaves.Clone()
 	haveLeavesW := haveLeaves
 
@@ -206,6 +206,9 @@ func acceptSyncUpdates(
 ) {
 	defer wg.Done()
 
+	// haveLeaves is an independent copy of which leaves we have.
+	// The send-side of the newHaveLeaves channel gives us read-only views
+	// of a bitset, and we have to copy them over our local copy.
 	var haveLeaves *bitset.BitSet
 	select {
 	case <-ctx.Done():
@@ -218,12 +221,21 @@ func acceptSyncUpdates(
 	case <-dataReady:
 		return
 
-	case haveLeaves = <-newHaveLeaves:
-		// Okay.
+	case n := <-newHaveLeaves:
+		// On the first instance, we actually create the haveLeaves instance.
+		// Later receives on newHaveLeaves will copy the new value into the existing one.
+		haveLeaves = n.Clone()
 	}
 
 	var oneByte [1]byte
 
+	// This loop covers waiting for a synchronous update.
+	// If the remote is a full broadcast,
+	// we will only receive a "datagrams finished" indicator.
+	// If the remote is relaying,
+	// they will send datagrams and observe our reports of what we received,
+	// and occasionally they may send a "missed datagram" indicator,
+	// synchronously sending the single message to ensure we have it.
 UNFINISHED:
 	for {
 		// We don't know when the next synchronous update will arrive,
@@ -287,7 +299,8 @@ UNFINISHED:
 		case <-dataReady:
 			return
 
-		case haveLeaves = <-newHaveLeaves:
+		case n := <-newHaveLeaves:
+			n.CopyFull(haveLeaves)
 			// Updated leaves may influence future datagrams we read.
 
 		default:
@@ -358,9 +371,9 @@ func readSingleSyncDatagram(
 		// All done.
 		return nil
 
-	case u := <-newHaveLeaves:
+	case n := <-newHaveLeaves:
 		// Newer than what we had before.
-		u.CopyFull(haveLeaves)
+		n.CopyFull(haveLeaves)
 
 	default:
 		// Keep going.

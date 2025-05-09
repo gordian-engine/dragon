@@ -40,6 +40,8 @@ func TestBroadcastOperation_origination_reader(t *testing.T) {
 		ProtocolID:        0xFE,
 		BroadcastIDLength: 3,
 	})
+	defer p.Wait()
+	defer cancel()
 
 	bop, err := p.NewOrigination(ctx, breathcast.OriginationConfig{
 		BroadcastID: []byte("xyz"),
