@@ -19,10 +19,9 @@ type incomingState struct {
 	// so it can be reclaimed the next time we need a clone.
 	treeClones []*cbmt.PartialTree
 
-	broadcastID    []byte
 	nData, nParity uint16
 
-	enc reedsolomon.Encoder
+	enc    reedsolomon.Encoder
 	shards [][]byte
 
 	rootProof [][]byte

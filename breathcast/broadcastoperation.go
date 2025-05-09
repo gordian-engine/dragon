@@ -392,7 +392,7 @@ func (o *BroadcastOperation) handleCheckDatagramRequest(req checkDatagramRequest
 		))
 	}
 
-	bID := o.incoming.broadcastID
+	bID := o.broadcastID
 	if !bytes.Equal(bID, raw[1:bidLen+1]) {
 		panic(fmt.Errorf(
 			"BUG: received datagram with incorrect broadcast ID: expected 0x%x, got 0x%x",

@@ -336,7 +336,6 @@ func (p *Protocol) NewIncomingBroadcast(
 	is := &incomingState{
 		pt: pt,
 
-		broadcastID: cfg.BroadcastID,
 		nData:       cfg.NData,
 		nParity:     cfg.NParity,
 
