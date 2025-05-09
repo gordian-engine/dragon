@@ -36,15 +36,6 @@ type BroadcastOperation struct {
 	totalDataSize int
 	chunkSize     int
 
-	// The incoming state is required to reconstruct the original data.
-	// This field must be treated as volatile,
-	// as it is set to nil once the data is reconstructed.
-	// It is fine to retain a reference to the value,
-	// so long as you are not accessing the field directly
-	// outside of this type's methods.
-	// TODO: just pass this as parameters instead of using a "volatile" field.
-	incoming *incomingState
-
 	// Fields needed to parse datagrams.
 	nChunks        uint16
 	hashSize       int
@@ -163,6 +154,7 @@ func (o *BroadcastOperation) mainLoop(
 	conns map[string]dconn.Conn,
 	connChanges *dchan.Multicast[dconn.Change],
 	wg *sync.WaitGroup,
+	is *incomingState,
 ) {
 	defer close(o.mainLoopDone)
 	defer wg.Done()
@@ -190,7 +182,7 @@ func (o *BroadcastOperation) mainLoop(
 	}
 
 	// We aren't originating, so we must be relaying.
-	o.relayMainLoop(ctx, conns, connChanges, protoHeader)
+	o.relayMainLoop(ctx, conns, connChanges, protoHeader, is)
 }
 
 // originationMainLoop is the main loop when the operation
@@ -272,6 +264,7 @@ func (o *BroadcastOperation) runAcceptBroadcast(
 	ctx context.Context,
 	log *slog.Logger,
 	s quic.Stream,
+	is *incomingState,
 ) {
 	bci.RunAcceptBroadcast(
 		ctx,
@@ -282,8 +275,8 @@ func (o *BroadcastOperation) runAcceptBroadcast(
 			Stream:          s,
 			DatagramHandler: o,
 
-			InitialHaveLeaves: o.incoming.pt.HaveLeaves().Clone(),
-			AddedLeaves:       o.incoming.addedLeafIndices,
+			InitialHaveLeaves: is.pt.HaveLeaves().Clone(),
+			AddedLeaves:       is.addedLeafIndices,
 
 			// TODO: should be configurable.
 			BitsetSendPeriod: 2 * time.Millisecond,
@@ -300,6 +293,7 @@ func (o *BroadcastOperation) relayMainLoop(
 	conns map[string]dconn.Conn,
 	connChanges *dchan.Multicast[dconn.Change],
 	protoHeader bci.ProtocolHeader,
+	is *incomingState,
 ) {
 	for {
 		select {
@@ -308,7 +302,7 @@ func (o *BroadcastOperation) relayMainLoop(
 			return
 
 		case <-connChanges.Ready:
-			connChanges = o.handleRelayConnChange(ctx, conns, connChanges, protoHeader)
+			connChanges = o.handleRelayConnChange(ctx, conns, connChanges, protoHeader, is)
 
 		case req := <-o.acceptBroadcastRequests:
 			o.runAcceptBroadcast(
@@ -318,14 +312,15 @@ func (o *BroadcastOperation) relayMainLoop(
 					"remote", req.Conn.QUIC.RemoteAddr(),
 				),
 				req.Stream,
+				is,
 			)
 			close(req.Resp)
 
 		case req := <-o.checkDatagramRequests:
-			o.handleCheckDatagramRequest(req)
+			o.handleCheckDatagramRequest(req, is)
 
 		case req := <-o.addDatagramRequests:
-			o.handleAddDatagramRequest(req)
+			o.handleAddDatagramRequest(req, is)
 		}
 	}
 }
@@ -335,6 +330,7 @@ func (o *BroadcastOperation) handleRelayConnChange(
 	conns map[string]dconn.Conn,
 	connChanges *dchan.Multicast[dconn.Change],
 	protoHeader bci.ProtocolHeader,
+	is *incomingState,
 ) *dchan.Multicast[dconn.Change] {
 	cc := connChanges.Val
 	if cc.Adding {
@@ -352,8 +348,8 @@ func (o *BroadcastOperation) handleRelayConnChange(
 				ProtocolHeader:        protoHeader,
 				AppHeader:             o.appHeader,
 				Datagrams:             o.datagrams,
-				InitialHaveDatagrams:  o.incoming.pt.HaveLeaves().Clone(),
-				NewAvailableDatagrams: o.incoming.addedLeafIndices,
+				InitialHaveDatagrams:  is.pt.HaveLeaves().Clone(),
+				NewAvailableDatagrams: is.addedLeafIndices,
 				DataReady:             o.dataReady,
 				NData:                 o.nData,
 				NParity:               o.nChunks - o.nData,
@@ -367,7 +363,10 @@ func (o *BroadcastOperation) handleRelayConnChange(
 	return connChanges.Next
 }
 
-func (o *BroadcastOperation) handleCheckDatagramRequest(req checkDatagramRequest) {
+func (o *BroadcastOperation) handleCheckDatagramRequest(
+	req checkDatagramRequest,
+	is *incomingState,
+) {
 	// The datagram layout is:
 	//   - 1 byte, protocol ID
 	//   - fixed-length broadcast ID
@@ -409,7 +408,7 @@ func (o *BroadcastOperation) handleCheckDatagramRequest(req checkDatagramRequest
 			Code: checkDatagramInvalidIndex,
 			// No tree necessary.
 		}
-	} else if o.incoming.pt.HasLeaf(idx) {
+	} else if is.pt.HasLeaf(idx) {
 		resp = checkDatagramResponse{
 			Code: checkDatagramAlreadyHaveChunk,
 			// Not sending a tree value back here,
@@ -422,17 +421,17 @@ func (o *BroadcastOperation) handleCheckDatagramRequest(req checkDatagramRequest
 		}
 
 		// TODO: extract to (*incomingState).GetTreeClone().
-		if len(o.incoming.treeClones) == 0 {
+		if len(is.treeClones) == 0 {
 			// No restored clones available, so allocate a new one.
-			resp.Tree = o.incoming.pt.Clone()
+			resp.Tree = is.pt.Clone()
 		} else {
 			// We have at least one old clone available for reuse.
-			treeIdx := len(o.incoming.treeClones) - 1
-			resp.Tree = o.incoming.treeClones[treeIdx]
-			o.incoming.treeClones[treeIdx] = nil
-			o.incoming.treeClones = o.incoming.treeClones[:treeIdx]
+			treeIdx := len(is.treeClones) - 1
+			resp.Tree = is.treeClones[treeIdx]
+			is.treeClones[treeIdx] = nil
+			is.treeClones = is.treeClones[:treeIdx]
 
-			o.incoming.pt.ResetClone(resp.Tree)
+			is.pt.ResetClone(resp.Tree)
 		}
 	}
 
@@ -444,12 +443,12 @@ func (o *BroadcastOperation) handleCheckDatagramRequest(req checkDatagramRequest
 // handleAddDatagramRequest is called from the main loop.
 func (o *BroadcastOperation) handleAddDatagramRequest(
 	req addLeafRequest,
+	is *incomingState,
 ) {
 	idx := req.Parsed.ChunkIndex
-	i := o.incoming
-	pt := i.pt
+	pt := is.pt
 	leavesSoFar := pt.HaveLeaves().Count()
-	if req.Add && leavesSoFar < uint(i.nData) && !pt.HaveLeaves().Test(uint(idx)) {
+	if req.Add && leavesSoFar < uint(is.nData) && !pt.HaveLeaves().Test(uint(idx)) {
 		// If there were two concurrent requests for the same index,
 		// we don't need to go through merging the duplicate.
 		pt.MergeFrom(req.Tree)
@@ -461,26 +460,26 @@ func (o *BroadcastOperation) handleAddDatagramRequest(
 		// but the encoder is supposed to see a significant throughput increase
 		// when working with correctly memory-aligned shards,
 		// so we assume for now that it's worth the tradeoff.
-		i.shards[idx] = append(i.shards[idx], req.Parsed.Data...)
+		is.shards[idx] = append(is.shards[idx], req.Parsed.Data...)
 
 		// Also we have the raw datagram data that we can now retain.
 		o.datagrams[idx] = req.RawDatagram
 
 		// Now that the datagrams have been updated,
 		// we can notify any observers that we have the datagram.
-		i.addedLeafIndices.Set(uint(idx))
-		i.addedLeafIndices = i.addedLeafIndices.Next
+		is.addedLeafIndices.Set(uint(idx))
+		is.addedLeafIndices = is.addedLeafIndices.Next
 
 		leavesSoFar++
-		if leavesSoFar >= uint(i.nData) {
+		if leavesSoFar >= uint(is.nData) {
 			// TODO: need to check that we haven't reconstructed already.
 			// If we get an extra shard concurrently with the last one,
 			// we currently would double-close o.dataReady.
 
 			// Possible earlier GC.
-			i.treeClones = nil
+			is.treeClones = nil
 
-			o.finishReconstruction()
+			o.finishReconstruction(is)
 
 			return
 		}
@@ -488,18 +487,18 @@ func (o *BroadcastOperation) handleAddDatagramRequest(
 
 	// And hold on to the clone in case we can reuse it,
 	// regardless of whether the datagram was addable.
-	if leavesSoFar < uint(i.nData) {
+	if leavesSoFar < uint(is.nData) {
 		// TODO: we could discard the tree
 		// if there would be more clones than missing chunks,
 		// but that also risks re-allocating a new clone
 		// if we are concurrently receiving datagrams.
 		// Maybe we could allow the slice to be twice the size of the gap.
-		i.treeClones = append(i.treeClones, req.Tree)
+		is.treeClones = append(is.treeClones, req.Tree)
 	} else {
 		// We won't be using the tree clones anymore
 		// now that we've reconstructed the data.
 		// Drop the whole slice for earlier GC.
-		i.treeClones = nil
+		is.treeClones = nil
 	}
 }
 
@@ -508,15 +507,14 @@ func (o *BroadcastOperation) Wait() {
 	o.wg.Wait()
 }
 
-func (o *BroadcastOperation) finishReconstruction() {
-	i := o.incoming
-	if err := i.enc.Reconstruct(i.shards); err != nil {
+func (o *BroadcastOperation) finishReconstruction(is *incomingState) {
+	if err := is.enc.Reconstruct(is.shards); err != nil {
 		// Something is extremely wrong if reconstruction fails.
 		// We verified every Merkle proof along the way.
 		// The panic message needs to be very detailed.
 		var buf bytes.Buffer
 		fmt.Fprintf(&buf, "IMPOSSIBLE: reconstruction failed")
-		for j, shard := range i.shards {
+		for j, shard := range is.shards {
 			fmt.Fprintf(&buf, "\n% 5d: %x", j, shard)
 		}
 		panic(errors.New(buf.String()))
@@ -524,30 +522,33 @@ func (o *BroadcastOperation) finishReconstruction() {
 
 	// We have the raw data reconstructed now,
 	// which means we have to complete the partial tree.
-	haveLeaves := i.pt.HaveLeaves()
-	missedCount := uint(i.nData) + uint(i.nParity) - haveLeaves.Count()
+	haveLeaves := is.pt.HaveLeaves()
+	missedCount := uint(is.nData) + uint(is.nParity) - haveLeaves.Count()
 
 	missedLeaves := make([][]byte, 0, missedCount)
 	for u, ok := haveLeaves.NextClear(0); ok; u, ok = haveLeaves.NextClear(u + 1) {
-		missedLeaves = append(missedLeaves, i.shards[u])
+		missedLeaves = append(missedLeaves, is.shards[u])
 	}
 
-	c := i.pt.Complete(missedLeaves)
-	o.restoreDatagrams(c)
+	c := is.pt.Complete(missedLeaves)
+	o.restoreDatagrams(c, is)
 
 	// Data has been reconstructed.
 	// Notify any watchers.
 	close(o.dataReady)
 }
 
-func (o *BroadcastOperation) restoreDatagrams(c cbmt.CompleteResult) {
+func (o *BroadcastOperation) restoreDatagrams(
+	c cbmt.CompleteResult,
+	is *incomingState,
+) {
 	// All shards are the same size.
 	// The last chunk likely includes padding.
 	// In the future we may remove padding from the datagram,
 	// although that will add complexity in a few places.
 	// But it would be a slightly smaller allocation,
 	// and fewer bytes across the network.
-	shardSize := len(o.incoming.shards[0])
+	shardSize := len(is.shards[0])
 
 	// The base size of a datagram, excluding proofs.
 	// Recall that proofs may be different lengths,
@@ -574,7 +575,7 @@ func (o *BroadcastOperation) restoreDatagrams(c cbmt.CompleteResult) {
 	memSize := (baseDatagramSize * len(c.Proofs)) + (nHashes * o.hashSize)
 	mem := make([]byte, memSize)
 
-	haveLeaves := o.incoming.pt.HaveLeaves()
+	haveLeaves := is.pt.HaveLeaves()
 	var proofIdx, memIdx int
 	for u, ok := haveLeaves.NextClear(0); ok; u, ok = haveLeaves.NextClear(u + 1) {
 		dgStart := memIdx
@@ -592,7 +593,7 @@ func (o *BroadcastOperation) restoreDatagrams(c cbmt.CompleteResult) {
 		}
 		proofIdx++
 
-		shardData := o.incoming.shards[u]
+		shardData := is.shards[u]
 		memIdx += copy(mem[memIdx:], shardData)
 
 		o.datagrams[u] = mem[dgStart:memIdx]

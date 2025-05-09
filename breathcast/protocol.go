@@ -71,6 +71,7 @@ type Protocol struct {
 
 type newBroadcastRequest struct {
 	Op   *BroadcastOperation
+	IS   *incomingState
 	Resp chan struct{}
 }
 
@@ -162,7 +163,7 @@ func (p *Protocol) handleNewBroadcastRequest(
 	conns map[string]dconn.Conn,
 ) {
 	p.wg.Add(1)
-	go req.Op.mainLoop(ctx, conns, p.connChanges, &p.wg)
+	go req.Op.mainLoop(ctx, conns, p.connChanges, &p.wg, req.IS)
 	close(req.Resp)
 }
 
@@ -230,7 +231,8 @@ func (p *Protocol) NewOrigination(
 	close(op.dataReady)
 
 	req := newBroadcastRequest{
-		Op:   op,
+		Op: op,
+		// No incoming state value when we already have the data.
 		Resp: make(chan struct{}),
 	}
 
@@ -336,8 +338,8 @@ func (p *Protocol) NewIncomingBroadcast(
 	is := &incomingState{
 		pt: pt,
 
-		nData:       cfg.NData,
-		nParity:     cfg.NParity,
+		nData:   cfg.NData,
+		nParity: cfg.NParity,
 
 		enc:    enc,
 		shards: shards,
@@ -369,8 +371,6 @@ func (p *Protocol) NewIncomingBroadcast(
 		hashSize:       cfg.HashSize,
 		rootProofCount: len(cfg.RootProofs),
 
-		incoming: is,
-
 		dataReady: make(chan struct{}),
 
 		acceptBroadcastRequests: make(chan acceptBroadcastRequest),
@@ -382,6 +382,7 @@ func (p *Protocol) NewIncomingBroadcast(
 
 	req := newBroadcastRequest{
 		Op:   op,
+		IS:   is,
 		Resp: make(chan struct{}),
 	}
 
