@@ -92,6 +92,10 @@ func (c *StubConnection) ReceiveDatagram(ctx context.Context) ([]byte, error) {
 	panic("stub does not support ReceiveDatagram")
 }
 
+func (c *StubConnection) AddPath(t *quic.Transport) (*quic.Path, error) {
+	panic("stub does not support AddPath")
+}
+
 type StubNetAddr struct {
 	NetworkValue string
 	StringValue  string

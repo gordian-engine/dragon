@@ -129,3 +129,8 @@ func (c *Conn) SendDatagram(p []byte) error {
 func (c *Conn) ReceiveDatagram(ctx context.Context) ([]byte, error) {
 	return c.q.ReceiveDatagram(ctx)
 }
+
+// AddPath implements [quic.Connection].
+func (c *Conn) AddPath(t *quic.Transport) (*quic.Path, error) {
+	return c.q.AddPath(t)
+}
