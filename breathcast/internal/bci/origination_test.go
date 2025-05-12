@@ -244,5 +244,11 @@ func (f *OriginationFixture) Run(
 	}
 
 	f.Cfg.Conn = conn
-	bci.RunOrigination(ctx, log, f.Cfg)
+
+	// Ensure context is canceled at end of test,
+	// so caller doesn't need to defer cancel.
+	tCtx, cancel := context.WithCancel(ctx)
+	t.Cleanup(cancel)
+
+	bci.RunOrigination(tCtx, log, f.Cfg)
 }
