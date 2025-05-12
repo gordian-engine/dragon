@@ -2,6 +2,7 @@ package bci
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -26,6 +27,9 @@ type OriginationConfig struct {
 
 	// Read-only view of the full set of datagrams.
 	Datagrams [][]byte
+
+	// Required to limit number of reliable chunks sent.
+	NData uint16
 }
 
 // sendDatagramState is the set of initial values required for [sendDatagrams],
@@ -42,6 +46,10 @@ func RunOrigination(
 	log *slog.Logger,
 	cfg OriginationConfig,
 ) {
+	if cfg.NData == 0 {
+		panic(errors.New("BUG: OriginationConfig.NData must not be zero"))
+	}
+
 	// Buffered so the openOriginationStream work does not block.
 	bsdCh := make(chan bsdState, 1)
 	sdsCh := make(chan sendDatagramState, 1)
@@ -67,6 +75,7 @@ func RunOrigination(
 		cfg.WG,
 		cfg.Conn,
 		cfg.Datagrams,
+		cfg.NData,
 		sdsCh,
 		peerHasDeltaCh,
 		clearDeltaTimeout,
@@ -157,6 +166,7 @@ func sendDatagrams(
 	wg *sync.WaitGroup,
 	conn quic.Connection,
 	datagrams [][]byte,
+	nData uint16,
 	initialStateCh <-chan sendDatagramState,
 	peerHasDeltaCh <-chan *bitset.BitSet,
 	clearDeltaTimeout chan<- struct{},
@@ -231,7 +241,7 @@ func sendDatagrams(
 	close(clearDeltaTimeout)
 
 	if err := sendSyncDatagrams(
-		s, datagrams, peerHas, peerHasDeltaCh,
+		s, datagrams, nData, peerHas, peerHasDeltaCh,
 	); err != nil {
 		log.Info(
 			"Failure when sending synchronous datagrams",
@@ -318,9 +328,18 @@ func sendUnreliableDatagrams(
 func sendSyncDatagrams(
 	s quic.SendStream,
 	datagrams [][]byte,
+	nData uint16,
 	peerHas *bitset.BitSet,
 	peerHasDeltaCh <-chan *bitset.BitSet,
 ) error {
+	// Track how many datagrams the peer is missing
+	// to be able to reconstruct the data.
+	haveCount := peerHas.Count()
+	if haveCount >= uint(nData) {
+		return nil
+	}
+	need := nData - uint16(haveCount)
+
 	const sendSyncDatagramTimeout = time.Millisecond // TODO: make configurable.
 	for cb := range RandomClearBitIterator(peerHas) {
 		// Each iteration, check if there is an updated delta.
@@ -328,6 +347,13 @@ func sendSyncDatagrams(
 		case d := <-peerHasDeltaCh:
 			cb.InPlaceUnion(d)
 			peerHas.InPlaceUnion(d)
+
+			// Recalculate the minimum required count.
+			haveCount = peerHas.Count()
+			if haveCount >= uint(nData) {
+				return nil
+			}
+			need = nData - uint16(haveCount)
 
 			// It is possible that we just got the bit we were about to send.
 			if peerHas.Test(cb.Idx) {
@@ -343,9 +369,10 @@ func sendSyncDatagrams(
 			return fmt.Errorf("failed to send synchronous datagram: %w", err)
 		}
 
-		// TODO: we should do some counting in here
-		// to avoid sending more datagrams than necessary for the remote
-		// to reconstruct the full data.
+		need--
+		if need == 0 {
+			return nil
+		}
 	}
 
 	return nil

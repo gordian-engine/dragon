@@ -227,6 +227,7 @@ func (o *BroadcastOperation) runOrigination(
 			ProtocolHeader: protoHeader,
 			AppHeader:      o.appHeader,
 			Datagrams:      o.datagrams,
+			NData:          o.nData,
 		},
 	)
 }

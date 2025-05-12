@@ -44,6 +44,7 @@ func TestRunOrigination_handshake(t *testing.T) {
 		2,
 		protoHeader, appHeader,
 		dgs,
+		3,
 	)
 
 	cOrig, cClient := fx.ListenerSet.Dial(t, 0, 1)
@@ -89,6 +90,7 @@ func TestRunOrigination_cleanShutdownIfRejected(t *testing.T) {
 		2,
 		protoHeader, appHeader,
 		dgs,
+		3,
 	)
 
 	cOrig, cClient := fx.ListenerSet.Dial(t, 0, 1)
@@ -132,6 +134,7 @@ func TestRunOrigination_missedAllUnreliableDatagrams(t *testing.T) {
 		2,
 		protoHeader, appHeader,
 		dgs,
+		3,
 	)
 
 	cOrig, cClient := fx.ListenerSet.Dial(t, 0, 1)
@@ -164,10 +167,12 @@ func TestRunOrigination_missedAllUnreliableDatagrams(t *testing.T) {
 	_, err = s.Write(make([]byte, 4))
 	require.NoError(t, err)
 
-	// We must get all four datagrams in any order.
+	// We must get three datagrams in any order.
+	// The origination operation will only send nData chunks,
+	// and the receiver is responsible for reconstructing the missing pieces.
 	got := bitset.MustNew(4)
 	var meta [4]byte
-	for range 4 {
+	for range 3 {
 		require.NoError(t, s.SetReadDeadline(time.Now().Add(50*time.Millisecond)))
 		_, err = io.ReadFull(s, meta[:])
 		require.NoError(t, err)
@@ -206,6 +211,7 @@ func NewOriginationFixture(
 	protocolHeader bci.ProtocolHeader,
 	appHeader []byte,
 	datagrams [][]byte,
+	nData uint16,
 ) *OriginationFixture {
 	t.Helper()
 
@@ -218,6 +224,8 @@ func NewOriginationFixture(
 		AppHeader:      appHeader,
 
 		Datagrams: datagrams,
+
+		NData: nData,
 	}
 
 	return &OriginationFixture{
