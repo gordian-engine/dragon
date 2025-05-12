@@ -261,12 +261,13 @@ func sendUnreliableDatagrams(
 	peerHasDeltaCh <-chan *bitset.BitSet,
 	delay *time.Timer,
 ) {
-	// TODO: random iteration over peerHas.
 	nSent := 0
 	const timeout = 2 * time.Microsecond // Arbitrarily chosen.
-	for u, ok := peerHas.NextClear(0); ok; u, ok = peerHas.NextClear(u + 1) {
-		// Every iteration, check for an update.
+	for cb := range RandomClearBitIterator(peerHas) {
+		// Whether we need to skip this bit due to a new update.
 		skip := false
+
+		// Every iteration, check for an update.
 		if nSent&7 == 7 {
 			// But every 8th iteration, include a sleep.
 			delay.Reset(timeout)
@@ -274,9 +275,10 @@ func sendUnreliableDatagrams(
 			for {
 				select {
 				case d := <-peerHasDeltaCh:
+					cb.InPlaceUnion(d)
 					peerHas.InPlaceUnion(d)
 					if !skip {
-						skip = peerHas.Test(u)
+						skip = peerHas.Test(cb.Idx)
 					}
 					continue DELAY
 				case <-delay.C:
@@ -286,9 +288,10 @@ func sendUnreliableDatagrams(
 		} else {
 			select {
 			case d := <-peerHasDeltaCh:
+				cb.InPlaceUnion(d)
 				peerHas.InPlaceUnion(d)
 				if !skip {
-					skip = peerHas.Test(u)
+					skip = peerHas.Test(cb.Idx)
 				}
 			default:
 				// Nothing.
@@ -298,7 +301,7 @@ func sendUnreliableDatagrams(
 		// We will just ignore errors here for now.
 		// Although we should probably at least respect connection closed errors.
 		if !skip {
-			_ = conn.SendDatagram(datagrams[u])
+			_ = conn.SendDatagram(datagrams[cb.Idx])
 		}
 
 		// Increment counter regardless of skip,
@@ -319,15 +322,15 @@ func sendSyncDatagrams(
 	peerHasDeltaCh <-chan *bitset.BitSet,
 ) error {
 	const sendSyncDatagramTimeout = time.Millisecond // TODO: make configurable.
-	// TODO: random iteration over peerHas.
-	for u, ok := peerHas.NextClear(0); ok; u, ok = peerHas.NextClear(u + 1) {
+	for cb := range RandomClearBitIterator(peerHas) {
 		// Each iteration, check if there is an updated delta.
 		select {
 		case d := <-peerHasDeltaCh:
+			cb.InPlaceUnion(d)
 			peerHas.InPlaceUnion(d)
 
 			// It is possible that we just got the bit we were about to send.
-			if peerHas.Test(u) {
+			if peerHas.Test(cb.Idx) {
 				continue
 			}
 		default:
@@ -335,7 +338,7 @@ func sendSyncDatagrams(
 		}
 
 		if err := SendSyncDatagram(
-			s, sendSyncDatagramTimeout, uint16(u), datagrams[u],
+			s, sendSyncDatagramTimeout, uint16(cb.Idx), datagrams[cb.Idx],
 		); err != nil {
 			return fmt.Errorf("failed to send synchronous datagram: %w", err)
 		}
