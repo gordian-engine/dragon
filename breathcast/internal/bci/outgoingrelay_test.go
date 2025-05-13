@@ -219,7 +219,12 @@ func TestRunOutgoingRelay_missedDatagramSentReliably(t *testing.T) {
 
 	// The operation is running on the "host" side of the connection.
 	cHost, cClient := fx.ListenerSet.Dial(t, 0, 1)
-	fx.Run(t, ctx, nil, cHost)
+	hostDGs := dchan.NewMulticast[[]byte]()
+	cHW := &dquictest.MulticastingDatagramSender{
+		Connection: cHost,
+		Multicast:  hostDGs,
+	}
+	fx.Run(t, ctx, nil, cHW)
 
 	s, err := cClient.AcceptStream(ctx)
 	require.NoError(t, err)
@@ -237,8 +242,9 @@ func TestRunOutgoingRelay_missedDatagramSentReliably(t *testing.T) {
 
 	// Now the host should send that datagram,
 	// and we need to synchronize on that send.
-	gotDG, err := cClient.ReceiveDatagram(ctx)
-	require.NoError(t, err)
+	_ = dtest.ReceiveSoon(t, hostDGs.Ready)
+	gotDG := hostDGs.Val
+	hostDGs = hostDGs.Next
 	require.Equal(t, fx.Cfg.Datagrams[0], gotDG)
 
 	// Now we are going to send two empty bit sets in a row.
@@ -292,7 +298,12 @@ func TestRunOutgoingRelay_missedDatagrams_staggered(t *testing.T) {
 
 	// The operation is running on the "host" side of the connection.
 	cHost, cClient := fx.ListenerSet.Dial(t, 0, 1)
-	fx.Run(t, ctx, nil, cHost)
+	hostDGs := dchan.NewMulticast[[]byte]()
+	cHW := &dquictest.MulticastingDatagramSender{
+		Connection: cHost,
+		Multicast:  hostDGs,
+	}
+	fx.Run(t, ctx, nil, cHW)
 
 	s, err := cClient.AcceptStream(ctx)
 	require.NoError(t, err)
@@ -310,8 +321,9 @@ func TestRunOutgoingRelay_missedDatagrams_staggered(t *testing.T) {
 
 	// Now the host should send that datagram,
 	// and we need to synchronize on that send.
-	gotDG, err := cClient.ReceiveDatagram(ctx) // TODO: we may need to wrap this for reliability in test.
-	require.NoError(t, err)
+	_ = dtest.ReceiveSoon(t, hostDGs.Ready)
+	gotDG := hostDGs.Val
+	hostDGs = hostDGs.Next
 	require.Equal(t, fx.Cfg.Datagrams[0], gotDG)
 
 	// Now we send one empty delta update.
@@ -333,7 +345,9 @@ func TestRunOutgoingRelay_missedDatagrams_staggered(t *testing.T) {
 
 	// The host forwards the new datagram to the client,
 	// and we can synchronize on that.
-	gotDG, err = cClient.ReceiveDatagram(ctx) // TODO: we may need to wrap this for reliability in test.
+	_ = dtest.ReceiveSoon(t, hostDGs.Ready)
+	gotDG = hostDGs.Val
+	hostDGs = hostDGs.Next
 	require.NoError(t, err)
 	require.Equal(t, fx.Cfg.Datagrams[1], gotDG)
 
