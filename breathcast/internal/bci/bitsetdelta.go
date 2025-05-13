@@ -23,7 +23,6 @@ type bsdState struct {
 // receiveBitsetDeltas is a shared function for both
 // [RunOrigination] and [RunOutgoingRelay],
 // as both of them require this behavior.
-// (TODO: actually use it in RunOrigination.)
 func receiveBitsetDeltas(
 	ctx context.Context,
 	wg *sync.WaitGroup,

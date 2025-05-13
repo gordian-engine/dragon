@@ -46,15 +46,6 @@ type OutgoingRelayConfig struct {
 	NData, NParity uint16
 }
 
-// orDecState is the decoder state for an outgoing relay.
-// It is simply the pair of a receive stream and a CombinationDecoder.
-//
-// TODO: it should be possible to replace this with bsdState.
-type orDecState struct {
-	RS  quic.ReceiveStream
-	Dec *CombinationDecoder
-}
-
 // RunOutgoingRelay starts several background goroutines
 // to manage an outgoing breathcast relay.
 func RunOutgoingRelay(
@@ -63,13 +54,15 @@ func RunOutgoingRelay(
 	cfg OutgoingRelayConfig,
 ) {
 	// Buffered so that writes in openOutgoingRelayStream don't block.
-	dsCh := make(chan orDecState, 1)
 	ssStartCh := make(chan quic.SendStream, 1)
 	ssEndCh := make(chan quic.SendStream, 1)
 	initialPeerHas := make(chan *bitset.BitSet, 1)
+	bsdCh := make(chan bsdState, 1)
 
 	// Unbuffered because the goroutines need to track sends and receives.
 	peerBitsetUpdates := make(chan *bitset.BitSet)
+
+	clearDeltaTimeout := make(chan struct{}) // TODO: this isn't being closed yet.
 
 	// Unbuffered so the relayNewDatagrams is aware of when the bitset changes ownership.
 	syncRequests := make(chan *bitset.BitSet)
@@ -81,15 +74,19 @@ func RunOutgoingRelay(
 		ctx,
 		log.With("step", "open_stream"),
 		cfg,
-		dsCh, ssStartCh, initialPeerHas,
+		bsdCh, ssStartCh, initialPeerHas,
 	)
-	go receiveRelayBitsetUpdates(
+	go receiveBitsetDeltas(
 		ctx,
-		log.With("step", "receive_bitset_updates"),
 		cfg.WG,
-		dsCh,
+		uint(len(cfg.Datagrams)),
+		10*time.Millisecond, // TODO: make configurable
+		func(string, error) {
+			// TODO: cancel the whole stream here, I think.
+		},
+		bsdCh,
 		peerBitsetUpdates,
-		uint(cfg.NData+cfg.NParity),
+		clearDeltaTimeout,
 	)
 	go relayNewDatagrams(
 		ctx,
@@ -121,7 +118,7 @@ func openOutgoingRelayStream(
 	ctx context.Context,
 	log *slog.Logger,
 	cfg OutgoingRelayConfig,
-	dsCh chan<- orDecState,
+	bsdCh chan<- bsdState,
 	ssCh chan<- quic.SendStream,
 	initialPeerHas chan<- *bitset.BitSet,
 ) {
@@ -132,7 +129,7 @@ func openOutgoingRelayStream(
 	// If things go right, it's fine because the other goroutines
 	// only attempt to read one value, and they correctly handle
 	// the case of the channel being closed.
-	defer close(dsCh)
+	defer close(bsdCh)
 	defer close(ssCh)
 	defer close(initialPeerHas)
 
@@ -169,102 +166,12 @@ func openOutgoingRelayStream(
 	}
 
 	// These channels are buffered, so we don't need to select against them.
-	dsCh <- orDecState{
-		RS:  s,
-		Dec: dec,
+	bsdCh <- bsdState{
+		Stream: s,
+		Dec:    dec,
 	}
 	ssCh <- s
 	initialPeerHas <- peerHas
-}
-
-// receiveRelayBitsetUpdates reads compressed bitset updates
-// from the receiveStream sent on rsCh.
-// As it deserializes each bitset,
-// the that bitset is sent on the peerBitsetUpdates channel.
-func receiveRelayBitsetUpdates(
-	ctx context.Context,
-	log *slog.Logger,
-	wg *sync.WaitGroup,
-	dsCh <-chan orDecState,
-	peerBitsetUpdates chan<- *bitset.BitSet,
-	bsSize uint,
-) {
-	defer wg.Done()
-
-	// Block until the stream is ready.
-	var s quic.ReceiveStream
-	var dec *CombinationDecoder
-	select {
-	case <-ctx.Done():
-		return
-	case x, ok := <-dsCh:
-		if !ok {
-			// Channel was closed, so just quit.
-			return
-		}
-		s = x.RS
-		dec = x.Dec
-	}
-
-	// Now, the peer is going to send bitset updates intermittently.
-	// First allocate a destination bitset.
-	// This is the bitset that we are writing to.
-	wbs := bitset.MustNew(bsSize)
-
-	// The protocol is designed to send bitset updates
-	// at a significantly higher frequency than every 10ms.
-	// Nonetheless this should be made configurable.
-	const receiveTimeout = 10 * time.Millisecond
-
-	if err := dec.ReceiveBitset(
-		s,
-		receiveTimeout,
-		wbs,
-	); err != nil {
-		log.Info(
-			"Failed to receive first bitset update",
-			"err", err,
-		)
-		return
-	}
-
-	// Now the readable bitset is just a clone of the first update.
-	// Hand it off to the other goroutine.
-	// The channel is unbuffered so we know the other goroutine
-	// has ownership once the send completes.
-	// The other goroutine always owns the read bitset,
-	// and we always own the write bitset.
-	rbs := wbs.Clone()
-	select {
-	case <-ctx.Done():
-		return
-	case peerBitsetUpdates <- rbs:
-		// Okay.
-	}
-
-	// Now that the read and write bitsets are both initialized,
-	// we can handle alternating them as we receive updates.
-	for {
-		if err := dec.ReceiveBitset(
-			s,
-			receiveTimeout,
-			wbs,
-		); err != nil {
-			log.Info(
-				"Failed to receive bitset update",
-				"err", err,
-			)
-			return
-		}
-
-		wbs, rbs = rbs, wbs
-		select {
-		case <-ctx.Done():
-			return
-		case peerBitsetUpdates <- rbs:
-			// Okay.
-		}
-	}
 }
 
 // relayNewDatagrams reacts to new datagrams
