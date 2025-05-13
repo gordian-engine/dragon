@@ -1,6 +1,7 @@
 package bci_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"io"
@@ -394,6 +395,131 @@ func TestRunOutgoingRelay_missedDatagrams_staggered(t *testing.T) {
 	require.Equal(t, len(fx.Cfg.Datagrams[0]), int(sz))
 
 	require.Equal(t, fx.Cfg.Datagrams[1], buf[5:])
+}
+
+func TestOutgoingRelay_dataReady(t *testing.T) {
+	t.Parallel()
+
+	var wg sync.WaitGroup
+	defer wg.Wait()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const protocolID byte = 0xAA
+	broadcastID := []byte("test")
+	appHeader := []byte("dummy app header")
+
+	protoHeader := bci.NewProtocolHeader(protocolID, broadcastID, 0x01, appHeader)
+
+	fx := NewOutgoingRelayFixture(
+		t, ctx,
+		2,
+		protoHeader, appHeader,
+		3, 1,
+	)
+
+	// Mark the first datagram as present,
+	// so we can synchronize on sending that out first.
+	fx.Cfg.Datagrams[0] = []byte("\xAAtestdatagram 0")
+	fx.Cfg.InitialHaveDatagrams.Set(0)
+
+	// The operation is running on the "host" side of the connection.
+	cHost, cClient := fx.ListenerSet.Dial(t, 0, 1)
+	hostDGs := dchan.NewMulticast[[]byte]()
+	cHW := &dquictest.MulticastingDatagramSender{
+		Connection: cHost,
+		Multicast:  hostDGs,
+	}
+	fx.Run(t, ctx, nil, cHW)
+
+	s, err := cClient.AcceptStream(ctx)
+	require.NoError(t, err)
+
+	pid, bid, gotAH, _ := parseHeader(t, s, len(broadcastID))
+	require.Equal(t, protocolID, pid)
+	require.Equal(t, broadcastID, bid)
+	require.Equal(t, appHeader, gotAH)
+
+	// For the client side of the handshake,
+	// indicate we have the same single datagram.
+	var ce bci.CombinationEncoder
+	cbs := bitset.MustNew(4)
+	cbs.Set(0)
+	require.NoError(t, ce.SendBitset(s, 50*time.Millisecond, cbs))
+
+	// Now the host gets all its data somehow.
+	fx.Cfg.Datagrams[1] = []byte("\xAAtestdatagram 1")
+	fx.Cfg.Datagrams[2] = []byte("\xAAtestdatagram 2")
+	fx.Cfg.Datagrams[3] = []byte("\xAAtestdatagram 3")
+	close(fx.DataReady)
+
+	// So all three datagrams are sent immediately.
+	// But the bitsets are iterated randomly,
+	// so we cannot assume their order.
+	gotChunkIDs := make([]uint16, 0, 3)
+	for range 3 {
+		dtest.ReceiveSoon(t, hostDGs.Ready)
+
+		dg := hostDGs.Val
+		hostDGs = hostDGs.Next
+
+		if bytes.Equal(dg, fx.Cfg.Datagrams[1]) {
+			gotChunkIDs = append(gotChunkIDs, 1)
+		} else if bytes.Equal(dg, fx.Cfg.Datagrams[2]) {
+			gotChunkIDs = append(gotChunkIDs, 2)
+		} else if bytes.Equal(dg, fx.Cfg.Datagrams[3]) {
+			gotChunkIDs = append(gotChunkIDs, 3)
+		} else {
+			t.Fatalf("received unexpected datagram %x", dg)
+		}
+	}
+
+	require.ElementsMatch(t, []uint16{1, 2, 3}, gotChunkIDs)
+
+	// After the datagrams are sent,
+	// the host sends the single byte indicating datagram completion.
+	var buf [1]byte
+	require.NoError(t, s.SetReadDeadline(time.Now().Add(50*time.Millisecond)))
+	_, err = io.ReadFull(s, buf[:])
+	require.NoError(t, err)
+	require.Equal(t, byte(0xff), buf[0])
+
+	// The host blocks until we send another bitset update.
+	require.NoError(t, ce.SendBitset(s, 50*time.Millisecond, cbs))
+
+	// Now the datagram values are sent as-is.
+	// We are only going to get two of them,
+	// and since they are chosen randomly,
+	// we cannot guess which two they will be.
+	meta := make([]byte, 4)
+	_, err = io.ReadFull(s, meta)
+	require.NoError(t, err)
+	idx := binary.BigEndian.Uint16(meta[:2])
+	sz := binary.BigEndian.Uint16(meta[2:])
+
+	dg1 := make([]byte, sz)
+	_, err = io.ReadFull(s, dg1)
+	require.NoError(t, err)
+	require.Equal(t, fx.Cfg.Datagrams[idx], dg1)
+
+	// Once more.
+	_, err = io.ReadFull(s, meta)
+	require.NoError(t, err)
+	nextIdx := binary.BigEndian.Uint16(meta[:2])
+	require.NotEqual(t, nextIdx, idx)
+	sz = binary.BigEndian.Uint16(meta[2:])
+
+	dg2 := make([]byte, sz)
+	_, err = io.ReadFull(s, dg2)
+	require.NoError(t, err)
+	require.Equal(t, fx.Cfg.Datagrams[nextIdx], dg2)
+
+	// The write-side should be closed now,
+	// so the next read should be an EOF.
+	_, err = io.ReadFull(s, buf[:])
+	require.Error(t, err)
+	require.ErrorIs(t, err, io.EOF)
 }
 
 func parseHeader(

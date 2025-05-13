@@ -64,7 +64,8 @@ func RunOutgoingRelay(
 ) {
 	// Buffered so that writes in openOutgoingRelayStream don't block.
 	dsCh := make(chan orDecState, 1)
-	ssCh := make(chan quic.SendStream, 1)
+	ssStartCh := make(chan quic.SendStream, 1)
+	ssEndCh := make(chan quic.SendStream, 1)
 	initialPeerHas := make(chan *bitset.BitSet, 1)
 
 	// Unbuffered because the goroutines need to track sends and receives.
@@ -80,7 +81,7 @@ func RunOutgoingRelay(
 		ctx,
 		log.With("step", "open_stream"),
 		cfg,
-		dsCh, ssCh, initialPeerHas,
+		dsCh, ssStartCh, initialPeerHas,
 	)
 	go receiveRelayBitsetUpdates(
 		ctx,
@@ -102,12 +103,15 @@ func RunOutgoingRelay(
 		cfg.NewAvailableDatagrams,
 		cfg.DataReady,
 		syncRequests, syncReturns,
+		ssEndCh,
+		cfg.NData,
 	)
 	go sendSynchronousChunks(
 		ctx,
 		log.With("step", "send_sync"),
 		cfg.WG,
-		ssCh,
+		ssStartCh,
+		ssEndCh,
 		cfg.Datagrams,
 		syncRequests, syncReturns,
 	)
@@ -285,6 +289,8 @@ func relayNewDatagrams(
 	dataReady <-chan struct{},
 	syncOutCh chan<- *bitset.BitSet,
 	syncReturnCh <-chan *bitset.BitSet,
+	ssEndCh <-chan quic.SendStream,
+	nData uint16,
 ) {
 	defer wg.Done()
 
@@ -344,7 +350,26 @@ AWAIT_PEER_HAS:
 
 		case <-dataReady:
 			// We didn't have the full set of data, and now we do.
-			panic("TODO: handle data ready while relaying new datagrams")
+
+			// Closing this channel indicates we are not going to
+			// request any further syncs, so that goroutine can stop.
+			close(syncOutCh)
+
+			sent.InPlaceUnion(peerHas)
+			sent.InPlaceUnion(missed)
+			if syncing != nil {
+				sent.InPlaceUnion(syncing)
+			}
+			finishRelay(
+				ctx, log,
+				conn,
+				ssEndCh,
+				peerHas, peerBitsetUpdates,
+				datagrams,
+				sent,
+				nData,
+			)
+			return
 
 		case u := <-peerBitsetUpdates:
 			// The peer sent a synchronous update of what chunks it has.
@@ -452,18 +477,20 @@ func sendSynchronousChunks(
 	ctx context.Context,
 	log *slog.Logger,
 	wg *sync.WaitGroup,
-	ssCh <-chan quic.SendStream,
+	ssInCh <-chan quic.SendStream,
+	ssOutCh chan<- quic.SendStream,
 	datagrams [][]byte,
 	syncRequestsCh <-chan *bitset.BitSet,
 	syncReturnsCh chan<- *bitset.BitSet,
 ) {
 	defer wg.Done()
+	defer close(ssOutCh)
 
 	var s quic.SendStream
 	select {
 	case <-ctx.Done():
 		return
-	case x, ok := <-ssCh:
+	case x, ok := <-ssInCh:
 		if !ok {
 			return
 		}
@@ -477,7 +504,14 @@ func sendSynchronousChunks(
 		case <-ctx.Done():
 			return
 
-		case req := <-syncRequestsCh:
+		case req, ok := <-syncRequestsCh:
+			if !ok {
+				// Channel closed means no further work for this goroutine.
+				// Give up control of the steam now.
+				ssOutCh <- s // Output channel was buffered already.
+				return
+			}
+
 			// TODO: this should iterate over set bits randomly.
 			for u, ok := req.NextSet(0); ok; u, ok = req.NextSet(u + 1) {
 				const timeout = 3 * time.Millisecond // TODO: make configurable.
@@ -508,4 +542,124 @@ func sendSynchronousChunks(
 			syncReturnsCh <- req
 		}
 	}
+}
+
+// finishRelay handles remaining work on the stream,
+// changing behavior from relaying incoming data
+// to effectively broadcasting any remaining data for the peer.
+func finishRelay(
+	ctx context.Context,
+	log *slog.Logger,
+	conn quic.Connection,
+	sCh <-chan quic.SendStream,
+	peerHas *bitset.BitSet,
+	peerBitsetUpdates <-chan *bitset.BitSet,
+	datagrams [][]byte,
+	alreadySent *bitset.BitSet,
+	nData uint16,
+) {
+	// First send any datagrams that haven't been sent yet.
+	nSent := 0
+	for cb := range RandomClearBitIterator(alreadySent) {
+		// TODO: this loop should match [sendUnreliableDatagrams],
+		// which inspects peerBitsetUpdates between datagram sends.
+		if (nSent & 7) == 7 {
+			// Micro-sleep to give outgoing datagram buffers a chance to flush.
+			// Not actually measured, but seems likely to avoid dropped packets.
+			time.Sleep(5 * time.Microsecond)
+		}
+
+		if err := conn.SendDatagram(datagrams[cb.Idx]); err != nil {
+			// There are a few reasons why sending the datagram could fail.
+			// TODO: inspect this error and quit if the connection is closed.
+			log.Info(
+				"Failed to send existing datagram",
+				"idx", cb.Idx,
+				"err", err,
+			)
+		}
+
+		nSent++
+	}
+
+	// Now that we've sent the datagrams that we haven't sent before,
+	// we need to send the termination byte.
+	// But to do that, we need to control the stream again.
+	var s quic.SendStream
+AWAIT_STREAM_CONTROL:
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case s = <-sCh:
+			break AWAIT_STREAM_CONTROL
+		case u := <-peerBitsetUpdates:
+			peerHas.InPlaceUnion(u)
+			continue AWAIT_STREAM_CONTROL
+		}
+	}
+
+	// TODO: the rest of this is nearly identical to [sendDatagrams],
+	// so these should be refactored together.
+
+	// Termination byte.
+	const terminateTimeout = 5 * time.Millisecond // TODO: make configurable
+	if err := s.SetWriteDeadline(time.Now().Add(terminateTimeout)); err != nil {
+		panic(fmt.Errorf(
+			"TODO: handle error setting read deadline for datagram termination: %w",
+			err,
+		))
+	}
+
+	term := [1]byte{datagramsFinishedMessageID}
+	if _, err := s.Write(term[:]); err != nil {
+		panic(fmt.Errorf(
+			"TODO: handle error writing datagram termination byte: %w",
+			err,
+		))
+	}
+
+	// Now we have to wait for one more bitset update.
+	// It is possible that there are multiple bitset updates on the way,
+	// but if we receive another one in the middle of sync updates,
+	// we will adjust accordingly anyway.
+	const finalBitsetWaitTimeout = 100 * time.Millisecond // TODO: make configurable.
+	timer := time.NewTimer(finalBitsetWaitTimeout)
+
+	select {
+	case <-ctx.Done():
+		timer.Stop()
+		log.Info(
+			"Context canceled while waiting for final bitset update",
+			"cause", context.Cause(ctx),
+		)
+		return
+	case <-timer.C:
+		log.Info("Timed out waiting for final bitset update")
+		return
+	case u := <-peerBitsetUpdates:
+		timer.Stop()
+		peerHas.InPlaceUnion(u)
+	}
+
+	if err := sendSyncDatagrams(
+		s, datagrams,
+		nData,
+		peerHas, peerBitsetUpdates,
+	); err != nil {
+		panic(fmt.Errorf(
+			"TODO: handle error sending sync datagrams: %w",
+			err,
+		))
+	}
+
+	// We've sent everything successfully,
+	// so now we can close the write side.
+	// The quic-go docs make it look like the Close method
+	// is a clean close that allows previously written data to finish sending.
+	if err := s.Close(); err != nil {
+		log.Info("Failed to close stream", "err", err)
+	}
+
+	// TODO: need to somehow signal that we are no longer accepting reads either.
 }
