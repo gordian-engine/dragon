@@ -315,13 +315,9 @@ AWAIT_PEER_HAS:
 	sent := haveDatagrams.Difference(peerHas)
 	sendExistingDatagrams(log, conn, datagrams, sent)
 
-	// As we observe the first bitset update from the peer,
-	// we populate the "sent but missed" bitset,
-	// and we promote those into the "missed and never acknowledged" bitset.
-	// Datagrams that go unacknowledged for two bitset updates
-	// are enqueued to send synchronously.
+	// The missed bitset indicates which datagrams we sent
+	// and were absent from at least one peer delta update.
 	missed := bitset.MustNew(sent.Len())
-	unacked := bitset.MustNew(sent.Len())
 
 	// The syncing bitset is treated specially.
 	// When non-nil, this goroutine owns it and writes to it.
@@ -347,6 +343,7 @@ AWAIT_PEER_HAS:
 			return
 
 		case <-dataReady:
+			// We didn't have the full set of data, and now we do.
 			panic("TODO: handle data ready while relaying new datagrams")
 
 		case u := <-peerBitsetUpdates:
@@ -359,26 +356,21 @@ AWAIT_PEER_HAS:
 				// Clear out any bits in the update chain.
 				sent.InPlaceDifference(u)
 				missed.InPlaceDifference(u)
-				unacked.InPlaceDifference(u)
+			}
 
-				// Now propagate through the chain.
-				if syncing == nil {
-					// There is a sync in progress, so missed gets merged in to unacked.
-					unacked.InPlaceUnion(missed)
+			// Now propagate through the chain.
+			if syncing == nil {
+				// There is a sync in progress, so we can't promote missed.
+				missed.InPlaceUnion(sent)
+				sent.ClearAll()
+			} else {
+				// No active sync, so we can merge missed into syncing.
+				syncing.InPlaceDifference(u)
+				syncing.InPlaceUnion(missed)
 
-					// The sent bitset is promoted to missing,
-					// then sent is cleared.
-					sent, missed = missed, sent
-					sent.ClearAll()
-				} else {
-					// No active sync, so we can merge unacked into syncing.
-					syncing.InPlaceDifference(u)
-					syncing.InPlaceUnion(unacked)
-
-					// And then promotion.
-					sent, missed, unacked = unacked, sent, missed
-					sent.ClearAll()
-				}
+				// And then promotion.
+				sent, missed = missed, sent
+				sent.ClearAll()
 			}
 
 			if syncing != nil && syncing.Any() {
@@ -406,6 +398,7 @@ AWAIT_PEER_HAS:
 		case syncOut <- syncing:
 			// If we needed a sync, we give up the syncing bitset for a moment.
 			syncing = nil
+			needsSync = false
 
 		case syncing = <-syncReturn:
 			// Nothing to do here.
@@ -477,23 +470,25 @@ func sendSynchronousChunks(
 		s = x
 	}
 
+	var meta [5]byte
+	meta[0] = datagramSyncMessageID
 	for {
 		select {
 		case <-ctx.Done():
 			return
 
 		case req := <-syncRequestsCh:
-			var meta [4]byte
+			// TODO: this should iterate over set bits randomly.
 			for u, ok := req.NextSet(0); ok; u, ok = req.NextSet(u + 1) {
 				const timeout = 3 * time.Millisecond // TODO: make configurable.
 				if err := s.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
 					panic(fmt.Errorf("TODO: handle error setting write deadline: %w", err))
 				}
 
-				// Metadata for the chunk first.
-				// The chunk index and the size of the datagram.
-				binary.BigEndian.PutUint16(meta[:2], uint16(u))
-				binary.BigEndian.PutUint16(meta[2:], uint16(len(datagrams[u])))
+				// Update the metadata to include
+				// the chunk index and the size of the datagram.
+				binary.BigEndian.PutUint16(meta[1:3], uint16(u))
+				binary.BigEndian.PutUint16(meta[3:], uint16(len(datagrams[u])))
 				if _, err := s.Write(meta[:]); err != nil {
 					panic(fmt.Errorf("TODO: handle error writing sync datagram: %w", err))
 				}
@@ -507,6 +502,9 @@ func sendSynchronousChunks(
 			// so now we have to return the bitset.
 			// The channel is buffered, and this goroutine is the only writer,
 			// so we don't need a select here.
+			// We clear the bitset first here,
+			// since the other goroutine is more likely to be contended.
+			req.ClearAll()
 			syncReturnsCh <- req
 		}
 	}
