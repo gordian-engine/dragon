@@ -26,11 +26,25 @@ type bsdState struct {
 func receiveBitsetDeltas(
 	ctx context.Context,
 	wg *sync.WaitGroup,
+
+	// Need to know the size of the bitset up front,
+	// to allocate a new instance correctly.
 	bsSize uint,
+
+	// Fail if we don't receive a bitset within this timeout.
 	receiveTimeout time.Duration,
+
+	// Callback for failure cases.
 	onError func(string, error),
+
+	// Work blocks on a receive from this channel.
 	sCh <-chan bsdState,
+
+	// Outgoing channel for bitset deltas we read from the stream.
 	deltaUpdates chan<- *bitset.BitSet,
+
+	// When this channel is closed,
+	// there is no more read timeout applied.
 	clearTimeout <-chan struct{},
 ) {
 	defer wg.Done()
@@ -93,6 +107,10 @@ func receiveBitsetDeltas(
 		); err != nil {
 			// TODO: check if timeout error,
 			// then check if clearTimeout channel closed.
+			// Also this will fail if we get a partial read at the time of the deadline,
+			// so that needs to be handled somehow.
+			// A separate goroutine just for managing read deadlines
+			// is a bit heavy-handed but a simple solution.
 			onError("Failed to receive bitset update", err)
 			return
 		}

@@ -192,9 +192,33 @@ func sendDatagrams(
 	timer.Stop()
 
 	sendUnreliableDatagrams(
-		conn, datagrams, peerHas, peerHasDeltaCh, timer,
+		conn, datagrams, nil, peerHas, peerHasDeltaCh, timer,
 	)
 
+	synchronizeMissedDatagrams(
+		ctx, log,
+		s,
+		peerHas, peerHasDeltaCh,
+		datagrams, nData,
+		timer, clearDeltaTimeout,
+	)
+}
+
+// synchronizeMissedDatagrams sends the termination byte on the stream,
+// waits for one more bitset delta update,
+// and then sends enough datagrams synchronously to give the peer
+// sufficient shards to reconstruct the original data.
+func synchronizeMissedDatagrams(
+	ctx context.Context,
+	log *slog.Logger,
+	s quic.SendStream,
+	peerHas *bitset.BitSet,
+	peerBitsetUpdates <-chan *bitset.BitSet,
+	datagrams [][]byte,
+	nData uint16,
+	timer *time.Timer,
+	clearDeltaTimeout chan<- struct{},
+) {
 	// Indicate that we are done with the unreliable datagrams.
 	const sendCompletionTimeout = 20 * time.Millisecond // TODO: make configurable.
 	if err := s.SetWriteDeadline(time.Now().Add(sendCompletionTimeout)); err != nil {
@@ -230,7 +254,7 @@ func sendDatagrams(
 	case <-timer.C:
 		log.Info("Timed out waiting for final bitset update")
 		return
-	case u := <-peerHasDeltaCh:
+	case u := <-peerBitsetUpdates:
 		timer.Stop()
 		peerHas.InPlaceUnion(u)
 	}
@@ -241,7 +265,7 @@ func sendDatagrams(
 	close(clearDeltaTimeout)
 
 	if err := sendSyncDatagrams(
-		s, datagrams, nData, peerHas, peerHasDeltaCh,
+		s, datagrams, nData, peerHas, peerBitsetUpdates,
 	); err != nil {
 		log.Info(
 			"Failure when sending synchronous datagrams",
@@ -264,16 +288,31 @@ func sendDatagrams(
 // sendUnreliableDatagrams sends all the missing datagrams to the peer,
 // respecting the peerHas bitset and respecting delta updates
 // sent over the peerHasDeltaCh channel.
+//
+// The alreadySent parameter is optional -- used during relay but not origination --
+// indicating which datagrams were already sent unreliably,
+// but possibly not yet acknowledged.
+//
+// This function does update peerHas with deltas from peerHasDeltaCh,
+// but it does not update alreadySent,
+// because that bitset is not longer used after this function.
+//
+// sendUnreliableDatagrams ensures that the timer is stopped upon return.
 func sendUnreliableDatagrams(
 	conn quic.Connection,
 	datagrams [][]byte,
+	alreadySent *bitset.BitSet,
 	peerHas *bitset.BitSet,
 	peerHasDeltaCh <-chan *bitset.BitSet,
 	delay *time.Timer,
 ) {
 	nSent := 0
 	const timeout = 2 * time.Microsecond // Arbitrarily chosen.
-	for cb := range RandomClearBitIterator(peerHas) {
+	it := alreadySent
+	if it == nil {
+		it = peerHas
+	}
+	for cb := range RandomClearBitIterator(it) {
 		// Whether we need to skip this bit due to a new update.
 		skip := false
 
