@@ -41,7 +41,7 @@ func TestRunOutgoingRelay_handshake(t *testing.T) {
 		protoHeader, appHeader,
 		3, 1,
 	)
-	fx.Cfg.Packets[0] = []byte("\xAAtestdatagram 0")
+	fx.Cfg.Packets[0] = []byte("\xAAtest\x00\x00datagram 0")
 	fx.Cfg.InitialHavePackets.Set(0)
 
 	cHost, cClient := fx.ListenerSet.Dial(t, 0, 1)
@@ -92,7 +92,7 @@ func TestRunOutgoingRelay_redundantDatagramNotSent(t *testing.T) {
 		protoHeader, appHeader,
 		3, 1,
 	)
-	fx.Cfg.Packets[0] = []byte("\xAAtestdatagram 0")
+	fx.Cfg.Packets[0] = []byte("\xAAtest\x00\x00datagram 0")
 	fx.Cfg.InitialHavePackets.Set(0)
 
 	cHost, cClient := fx.ListenerSet.Dial(t, 0, 1)
@@ -148,7 +148,7 @@ func TestRunOutgoingRelay_forwardNewDatagram(t *testing.T) {
 
 	// Mark the first datagram as present,
 	// so we can synchronize on sending that out first.
-	fx.Cfg.Packets[0] = []byte("\xAAtestdatagram 0")
+	fx.Cfg.Packets[0] = []byte("\xAAtest\x00\x00datagram 0")
 	fx.Cfg.InitialHavePackets.Set(0)
 
 	// The operation is running on the "host" side of the connection.
@@ -215,7 +215,7 @@ func TestRunOutgoingRelay_missedDatagramSentReliably(t *testing.T) {
 
 	// Mark the first datagram as present,
 	// so we can synchronize on sending that out first.
-	fx.Cfg.Packets[0] = []byte("\xAAtestdatagram 0")
+	fx.Cfg.Packets[0] = []byte("\xAAtest\x00\x00datagram 0")
 	fx.Cfg.InitialHavePackets.Set(0)
 
 	// The operation is running on the "host" side of the connection.
@@ -294,7 +294,7 @@ func TestRunOutgoingRelay_missedDatagrams_staggered(t *testing.T) {
 
 	// Mark the first datagram as present,
 	// so we can synchronize on sending that out first.
-	fx.Cfg.Packets[0] = []byte("\xAAtestdatagram 0")
+	fx.Cfg.Packets[0] = []byte("\xAAtest\x00\x00datagram 0")
 	fx.Cfg.InitialHavePackets.Set(0)
 
 	// The operation is running on the "host" side of the connection.
@@ -339,7 +339,7 @@ func TestRunOutgoingRelay_missedDatagrams_staggered(t *testing.T) {
 	time.Sleep(2 * time.Millisecond)
 
 	// Then the host gets a new datagram.
-	fx.Cfg.Packets[1] = []byte("\xAAtestdatagram 1")
+	fx.Cfg.Packets[1] = []byte("\xAAtest\x00\x01datagram 1")
 	nad := fx.Cfg.NewAvailablePackets
 	nad.Set(1)
 	nad = nad.Next
@@ -421,7 +421,7 @@ func TestOutgoingRelay_dataReady(t *testing.T) {
 
 	// Mark the first datagram as present,
 	// so we can synchronize on sending that out first.
-	fx.Cfg.Packets[0] = []byte("\xAAtestdatagram 0")
+	fx.Cfg.Packets[0] = []byte("\xAAtest\x00\x00datagram 0")
 	fx.Cfg.InitialHavePackets.Set(0)
 
 	// The operation is running on the "host" side of the connection.
@@ -449,9 +449,9 @@ func TestOutgoingRelay_dataReady(t *testing.T) {
 	require.NoError(t, ce.SendBitset(s, 50*time.Millisecond, cbs))
 
 	// Now the host gets all its data somehow.
-	fx.Cfg.Packets[1] = []byte("\xAAtestdatagram 1")
-	fx.Cfg.Packets[2] = []byte("\xAAtestdatagram 2")
-	fx.Cfg.Packets[3] = []byte("\xAAtestdatagram 3")
+	fx.Cfg.Packets[1] = []byte("\xAAtest\x00\x01datagram 1")
+	fx.Cfg.Packets[2] = []byte("\xAAtest\x00\x02datagram 2")
+	fx.Cfg.Packets[3] = []byte("\xAAtest\x00\x03datagram 3")
 	close(fx.DataReady)
 
 	// So all three datagrams are sent immediately.
@@ -631,6 +631,19 @@ func (f *OutgoingRelayFixture) Run(
 	conn quic.Connection,
 ) {
 	t.Helper()
+
+	// Ensure that all provided packets have the correct prefix.
+	// If not, the tests can end up behaving differently from how production code works.
+	protoID := f.Cfg.ProtocolHeader[0]
+	bID := []byte(f.Cfg.ProtocolHeader[1 : len(f.Cfg.ProtocolHeader)-3])
+	for u, ok := f.Cfg.InitialHavePackets.NextSet(0); ok; u, ok = f.Cfg.InitialHavePackets.NextSet(u + 1) {
+		p := f.Cfg.Packets[u]
+		require.Equal(t, protoID, p[0], "packet did not start with protocol ID")
+		require.Equal(t, bID, p[1:1+len(bID)], "packet had protocol ID but not broadcast ID")
+
+		chunkID := binary.BigEndian.Uint16(p[1+len(bID) : 1+len(bID)+2])
+		require.Equal(t, u, uint(chunkID), "packet had protocol and broadcast ID but missing/wrong chunk ID")
+	}
 
 	if log == nil {
 		log = dtest.NewLogger(t)

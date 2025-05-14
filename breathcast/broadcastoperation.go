@@ -746,11 +746,12 @@ func (o *BroadcastOperation) attemptToAddPacket(
 		uint(o.rootProofCount),
 		o.hashSize,
 	)
-	err := t.AddLeaf(bd.ChunkIndex, bd.Data, bd.Proofs)
 
 	req := addLeafRequest{
 		Tree: t,
 	}
+
+	err := t.AddLeaf(bd.ChunkIndex, bd.Data, bd.Proofs)
 	if err == nil {
 		// Only set the field if we expect the main loop to retain it.
 		// If there was an error, we don't want the packet,
@@ -770,6 +771,9 @@ func (o *BroadcastOperation) attemptToAddPacket(
 		// Okay.
 	}
 
+	// We had to send the request in either case,
+	// at a minimum to return the tree for reuse.
+	// But if we failed to add the leaf then this call fails too.
 	if err != nil {
 		return fmt.Errorf("failed to add packet: %w", err)
 	}

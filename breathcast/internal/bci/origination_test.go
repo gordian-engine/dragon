@@ -33,10 +33,10 @@ func TestRunOrigination_handshake(t *testing.T) {
 	protoHeader := bci.NewProtocolHeader(protocolID, broadcastID, 0xFF, appHeader)
 
 	dgs := [][]byte{
-		[]byte("datagram0"),
-		[]byte("datagram1"),
-		[]byte("datagram2"),
-		[]byte("datagram3"),
+		[]byte("\xAAtest\x00\x00datagram0"),
+		[]byte("\xAAtest\x00\x01datagram1"),
+		[]byte("\xAAtest\x00\x02datagram2"),
+		[]byte("\xAAtest\x00\x03datagram3"),
 	}
 
 	fx := NewOriginationFixture(
@@ -79,10 +79,10 @@ func TestRunOrigination_cleanShutdownIfRejected(t *testing.T) {
 	protoHeader := bci.NewProtocolHeader(protocolID, broadcastID, 0xFF, appHeader)
 
 	dgs := [][]byte{
-		[]byte("datagram0"),
-		[]byte("datagram1"),
-		[]byte("datagram2"),
-		[]byte("datagram3"),
+		[]byte("\xAAtest\x00\x00datagram0"),
+		[]byte("\xAAtest\x00\x01datagram1"),
+		[]byte("\xAAtest\x00\x02datagram2"),
+		[]byte("\xAAtest\x00\x03datagram3"),
 	}
 
 	fx := NewOriginationFixture(
@@ -123,10 +123,10 @@ func TestRunOrigination_missedAllUnreliableDatagrams(t *testing.T) {
 	protoHeader := bci.NewProtocolHeader(protocolID, broadcastID, 0xFF, appHeader)
 
 	dgs := [][]byte{
-		[]byte("datagram0"),
-		[]byte("datagram1"),
-		[]byte("datagram2"),
-		[]byte("datagram3"),
+		[]byte("\xAAtest\x00\x00datagram0"),
+		[]byte("\xAAtest\x00\x01datagram1"),
+		[]byte("\xAAtest\x00\x02datagram2"),
+		[]byte("\xAAtest\x00\x03datagram3"),
 	}
 
 	fx := NewOriginationFixture(
@@ -210,7 +210,7 @@ func NewOriginationFixture(
 	nListeners int,
 	protocolHeader bci.ProtocolHeader,
 	appHeader []byte,
-	datagrams [][]byte,
+	packets [][]byte,
 	nData uint16,
 ) *OriginationFixture {
 	t.Helper()
@@ -223,7 +223,7 @@ func NewOriginationFixture(
 		ProtocolHeader: protocolHeader,
 		AppHeader:      appHeader,
 
-		Packets: datagrams,
+		Packets: packets,
 
 		NData: nData,
 	}
@@ -246,6 +246,18 @@ func (f *OriginationFixture) Run(
 	conn quic.Connection,
 ) {
 	t.Helper()
+
+	// Ensure that all provided packets have the correct prefix.
+	// If not, the tests can end up behaving differently from how production code works.
+	protoID := f.Cfg.ProtocolHeader[0]
+	bID := []byte(f.Cfg.ProtocolHeader[1 : len(f.Cfg.ProtocolHeader)-3])
+	for i, p := range f.Cfg.Packets {
+		require.Equal(t, protoID, p[0], "packet did not start with protocol ID")
+		require.Equal(t, bID, p[1:1+len(bID)], "packet had protocol ID but not broadcast ID")
+
+		chunkID := binary.BigEndian.Uint16(p[1+len(bID) : 1+len(bID)+2])
+		require.Equal(t, uint(i), uint(chunkID), "packet had protocol and broadcast ID but missing/wrong chunk ID")
+	}
 
 	if log == nil {
 		log = dtest.NewLogger(t)
