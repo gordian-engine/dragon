@@ -48,7 +48,7 @@ func TestProtocol_allDatagramsSucceed(t *testing.T) {
 	bop0, err := fx.Protocols[0].NewOrigination(ctx, breathcast.OriginationConfig{
 		BroadcastID: []byte("xyz"),
 		AppHeader:   []byte("fake app header"),
-		Datagrams:   orig.Chunks,
+		Packets:     orig.Packets,
 
 		NData: uint16(orig.NumData),
 
@@ -156,7 +156,7 @@ func (w guaranteedDatagramQCWrapper) SendDatagram(datagram []byte) error {
 		// Okay.
 	}
 
-	go w.IncomingBroadcast.HandleDatagram(w.Ctx, datagram)
+	go w.IncomingBroadcast.HandlePacket(w.Ctx, datagram)
 
 	return nil
 }
@@ -198,7 +198,7 @@ func TestProtocol_onlyFirstDatagramDropped(t *testing.T) {
 	bop0, err := fx.Protocols[0].NewOrigination(ctx, breathcast.OriginationConfig{
 		BroadcastID: []byte("xyz"),
 		AppHeader:   []byte("fake app header"),
-		Datagrams:   orig.Chunks,
+		Packets:     orig.Packets,
 
 		NData: uint16(orig.NumData),
 
@@ -311,7 +311,7 @@ func (w *dropFirstDatagramQCWrapper) SendDatagram(datagram []byte) error {
 	}
 
 	if sent > 1 {
-		go w.IncomingBroadcast.HandleDatagram(w.Ctx, datagram)
+		go w.IncomingBroadcast.HandlePacket(w.Ctx, datagram)
 	}
 
 	return nil
@@ -358,7 +358,7 @@ func TestProtocol_allDatagramsDropped(t *testing.T) {
 	bop0, err := fx.Protocols[0].NewOrigination(ctx, breathcast.OriginationConfig{
 		BroadcastID: []byte("xyz"),
 		AppHeader:   []byte("fake app header"),
-		Datagrams:   orig.Chunks,
+		Packets:     orig.Packets,
 
 		NData: uint16(orig.NumData),
 
@@ -469,7 +469,7 @@ func TestProtocol_Relay_datagramsForwarded(t *testing.T) {
 	bop0, err := fx.Protocols[0].NewOrigination(ctx, breathcast.OriginationConfig{
 		BroadcastID: []byte("xyz"),
 		AppHeader:   []byte("fake app header"),
-		Datagrams:   orig.Chunks,
+		Packets:     orig.Packets,
 
 		NData: uint16(orig.NumData),
 
@@ -683,7 +683,7 @@ func (w *lateBoundDatagramQCWrapper) SendDatagram(datagram []byte) error {
 		// Okay.
 	}
 
-	go op.HandleDatagram(w.ctx, datagram)
+	go op.HandlePacket(w.ctx, datagram)
 
 	return nil
 }

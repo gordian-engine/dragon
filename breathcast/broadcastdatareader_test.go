@@ -46,7 +46,7 @@ func TestBroadcastOperation_origination_reader(t *testing.T) {
 	bop, err := p.NewOrigination(ctx, breathcast.OriginationConfig{
 		BroadcastID: []byte("xyz"),
 		AppHeader:   []byte("fake app header"),
-		Datagrams:   orig.Chunks,
+		Packets:     orig.Packets,
 
 		NData: uint16(orig.NumData),
 

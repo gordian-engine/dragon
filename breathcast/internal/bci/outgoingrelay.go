@@ -28,15 +28,15 @@ type OutgoingRelayConfig struct {
 
 	AppHeader []byte
 
-	// Read-only view of the datagrams that the operation has available.
-	Datagrams [][]byte
+	// Read-only view of the packets that the operation has available.
+	Packets [][]byte
 
-	// What datagrams we are initially allowed to read.
+	// What packets we are initially allowed to read.
 	// The RunOutgoingRelay function takes ownership of this bitset.
-	InitialHaveDatagrams *bitset.BitSet
+	InitialHavePackets *bitset.BitSet
 
-	// Multicast of datagrams that we now are allowed to read.
-	NewAvailableDatagrams *dchan.Multicast[uint]
+	// Multicast of indices of packets that we now are allowed to read.
+	NewAvailablePackets *dchan.Multicast[uint]
 
 	// Channel that is closed when the broadcast operation
 	// has reconstituted the data.
@@ -79,7 +79,7 @@ func RunOutgoingRelay(
 	go receiveBitsetDeltas(
 		ctx,
 		cfg.WG,
-		uint(len(cfg.Datagrams)),
+		uint(len(cfg.Packets)),
 		10*time.Millisecond, // TODO: make configurable
 		func(string, error) {
 			// TODO: cancel the whole stream here, I think.
@@ -95,22 +95,22 @@ func RunOutgoingRelay(
 		initialPeerHas,
 		peerBitsetUpdates,
 		cfg.Conn,
-		cfg.Datagrams,
+		cfg.Packets,
 		cfg.NData,
-		cfg.InitialHaveDatagrams,
-		cfg.NewAvailableDatagrams,
+		cfg.InitialHavePackets,
+		cfg.NewAvailablePackets,
 		cfg.DataReady,
 		syncRequests, syncReturns,
 		ssEndCh,
 		clearDeltaTimeout,
 	)
-	go sendSynchronousChunks(
+	go sendMissedPackets(
 		ctx,
 		log.With("step", "send_sync"),
 		cfg.WG,
 		ssStartCh,
 		ssEndCh,
-		cfg.Datagrams,
+		cfg.Packets,
 		syncRequests, syncReturns,
 	)
 }
@@ -182,8 +182,8 @@ func openOutgoingRelayStream(
 // This goroutine also tracks what datagrams have been sent
 // and some recent bitset updates from the peer;
 // if a datagram is unacknowledged within two bitset updates,
-// that datagram is sent synchronously
-// by coordinating with the [sendSynchronousChunks] goroutine.
+// that packet is sent synchronously
+// by coordinating with the [sendMissedPackets] goroutine.
 func relayNewDatagrams(
 	ctx context.Context,
 	log *slog.Logger,
@@ -191,10 +191,10 @@ func relayNewDatagrams(
 	initialPeerHas <-chan *bitset.BitSet,
 	peerBitsetUpdates <-chan *bitset.BitSet,
 	conn quic.Connection,
-	datagrams [][]byte,
+	packets [][]byte,
 	nData uint16,
-	haveDatagrams *bitset.BitSet,
-	newAvailableDatagrams *dchan.Multicast[uint],
+	havePackets *bitset.BitSet,
+	newAvailablePackets *dchan.Multicast[uint],
 	dataReady <-chan struct{},
 	syncOutCh chan<- *bitset.BitSet,
 	syncReturnCh <-chan *bitset.BitSet,
@@ -217,18 +217,18 @@ AWAIT_PEER_HAS:
 			peerHas = x
 			break AWAIT_PEER_HAS
 
-		case <-newAvailableDatagrams.Ready:
-			// Keep our view of the available datagrams updated.
-			haveDatagrams.Set(newAvailableDatagrams.Val)
-			newAvailableDatagrams = newAvailableDatagrams.Next
+		case <-newAvailablePackets.Ready:
+			// Keep our view of the available packets updated.
+			havePackets.Set(newAvailablePackets.Val)
+			newAvailablePackets = newAvailablePackets.Next
 		}
 	}
 
 	// Now the peer has acknowledged our handshake,
-	// and we know which datagrams they already have.
+	// and we know which packets they already have.
 	// Send datagrams for everything we have that they don't.
-	sent := haveDatagrams.Difference(peerHas)
-	sendExistingDatagrams(log, conn, datagrams, sent)
+	sent := havePackets.Difference(peerHas)
+	sendExistingDatagrams(log, conn, packets, sent)
 
 	// The missed bitset indicates which datagrams we sent
 	// and were absent from at least one peer delta update.
@@ -236,7 +236,7 @@ AWAIT_PEER_HAS:
 
 	// The syncing bitset is treated specially.
 	// When non-nil, this goroutine owns it and writes to it.
-	// When nil, the sendSynchronousChunks owns it.
+	// When nil, the sendMissedPackets owns it.
 	syncing := bitset.MustNew(sent.Len())
 	needsSync := false
 
@@ -274,7 +274,7 @@ AWAIT_PEER_HAS:
 				conn,
 				ssEndCh,
 				peerHas, peerBitsetUpdates,
-				datagrams,
+				packets,
 				sent,
 				nData,
 				clearDeltaTimeout,
@@ -312,15 +312,15 @@ AWAIT_PEER_HAS:
 				needsSync = true
 			}
 
-		case <-newAvailableDatagrams.Ready:
-			idx := newAvailableDatagrams.Val
-			newAvailableDatagrams = newAvailableDatagrams.Next
+		case <-newAvailablePackets.Ready:
+			idx := newAvailablePackets.Val
+			newAvailablePackets = newAvailablePackets.Next
 
 			if !peerHas.Test(idx) {
 				// Assuming that sending the datagram won't block here.
 				// If that assumption is wrong,
 				// we can offload sends to a separate worker goroutine.
-				if err := conn.SendDatagram(datagrams[idx]); err != nil {
+				if err := conn.SendDatagram(packets[idx]); err != nil {
 					log.Info(
 						"Failed to send new datagram",
 						"idx", idx,
@@ -349,7 +349,7 @@ AWAIT_PEER_HAS:
 func sendExistingDatagrams(
 	log *slog.Logger,
 	conn quic.Connection,
-	datagrams [][]byte,
+	packets [][]byte,
 	toSend *bitset.BitSet,
 ) {
 	// TODO: this should randomly iterate the set bits,
@@ -362,7 +362,7 @@ func sendExistingDatagrams(
 			time.Sleep(5 * time.Microsecond)
 		}
 
-		if err := conn.SendDatagram(datagrams[u]); err != nil {
+		if err := conn.SendDatagram(packets[u]); err != nil {
 			// There are a few reasons why sending the datagram could fail.
 			// TODO: inspect this error and quit if the connection is closed.
 			log.Info(
@@ -376,20 +376,20 @@ func sendExistingDatagrams(
 	}
 }
 
-// sendSynchronousChunks coordinates with [relayNewDatagrams]
-// to synchronously send datagrams that have gone unacknowledged for too long.
+// sendMissedPackets coordinates with [relayNewDatagrams]
+// to synchronously send packets that have gone unacknowledged for too long.
 //
-// It accepts a bitset indicating which datagrams to send synchronously
-// over syncRequestsCh, then sends those datagrams,
+// It accepts a bitset indicating which packets to send synchronously
+// over syncRequestsCh, then sends those packets,
 // and finally sends the bitset back to the other goroutine
 // over syncReturnsCh so that ownership is easily tracked.
-func sendSynchronousChunks(
+func sendMissedPackets(
 	ctx context.Context,
 	log *slog.Logger,
 	wg *sync.WaitGroup,
 	ssInCh <-chan quic.SendStream,
 	ssOutCh chan<- quic.SendStream,
-	datagrams [][]byte,
+	packets [][]byte,
 	syncRequestsCh <-chan *bitset.BitSet,
 	syncReturnsCh chan<- *bitset.BitSet,
 ) {
@@ -430,19 +430,19 @@ func sendSynchronousChunks(
 				}
 
 				// Update the metadata to include
-				// the chunk index and the size of the datagram.
+				// the chunk index and the size of the packet.
 				binary.BigEndian.PutUint16(meta[1:3], uint16(u))
-				binary.BigEndian.PutUint16(meta[3:], uint16(len(datagrams[u])))
+				binary.BigEndian.PutUint16(meta[3:], uint16(len(packets[u])))
 				if _, err := s.Write(meta[:]); err != nil {
-					panic(fmt.Errorf("TODO: handle error writing sync datagram: %w", err))
+					panic(fmt.Errorf("TODO: handle error writing sync packet: %w", err))
 				}
 
-				if _, err := s.Write(datagrams[u]); err != nil {
-					panic(fmt.Errorf("TODO: handle error writing sync datagram: %w", err))
+				if _, err := s.Write(packets[u]); err != nil {
+					panic(fmt.Errorf("TODO: handle error writing sync packet: %w", err))
 				}
 			}
 
-			// We sent all the synchronous datagrams,
+			// We sent all the synchronous packets,
 			// so now we have to return the bitset.
 			// The channel is buffered, and this goroutine is the only writer,
 			// so we don't need a select here.
@@ -464,7 +464,7 @@ func finishRelay(
 	sCh <-chan quic.SendStream,
 	peerHas *bitset.BitSet,
 	peerBitsetUpdates <-chan *bitset.BitSet,
-	datagrams [][]byte,
+	packets [][]byte,
 	alreadySent *bitset.BitSet,
 	nData uint16,
 	clearDeltaTimeout chan<- struct{},
@@ -475,7 +475,7 @@ func finishRelay(
 	timer.Stop()
 
 	sendUnreliableDatagrams(
-		conn, datagrams, alreadySent, peerHas, peerBitsetUpdates, timer,
+		conn, packets, alreadySent, peerHas, peerBitsetUpdates, timer,
 	)
 
 	// Now that we've sent the datagrams that we haven't sent before,
@@ -483,7 +483,7 @@ func finishRelay(
 	// But to do that, we need to control the stream again.
 	// Prior to calling this function,
 	// we closed the synchronization request channel,
-	// which signaled to [sendSynchronousChunks]
+	// which signaled to [sendMissedPackets]
 	// that it needs to return the stream over the sCh channel.
 	var s quic.SendStream
 AWAIT_STREAM_CONTROL:
@@ -499,11 +499,11 @@ AWAIT_STREAM_CONTROL:
 		}
 	}
 
-	synchronizeMissedDatagrams(
+	synchronizeMissedPackets(
 		ctx, log,
 		s,
 		peerHas, peerBitsetUpdates,
-		datagrams, nData,
+		packets, nData,
 		timer, clearDeltaTimeout,
 	)
 }

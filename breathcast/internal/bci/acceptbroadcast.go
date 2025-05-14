@@ -18,8 +18,8 @@ import (
 type AcceptBroadcastConfig struct {
 	WG *sync.WaitGroup
 
-	Stream          quic.Stream
-	DatagramHandler DatagramHandler
+	Stream        quic.Stream
+	PacketHandler PacketHandler
 
 	InitialHaveLeaves *bitset.BitSet
 	AddedLeaves       *dchan.Multicast[uint]
@@ -29,10 +29,10 @@ type AcceptBroadcastConfig struct {
 	DataReady <-chan struct{}
 }
 
-// DatagramHandler handles new datagrams.
+// PacketHandler handles new packets.
 // In production code this will be an instance of [*breathcast.BroadcastOperation].
-type DatagramHandler interface {
-	HandleDatagram(context.Context, []byte) error
+type PacketHandler interface {
+	HandlePacket(context.Context, []byte) error
 }
 
 // RunAcceptBroadcast runs background goroutines to handle the receive side
@@ -66,7 +66,7 @@ func RunAcceptBroadcast(
 		log.With("step", "accept_sync_updates"),
 		cfg.WG,
 		cfg.Stream,
-		cfg.DatagramHandler,
+		cfg.PacketHandler,
 		newHaveLeaves,
 		5*time.Millisecond,
 		cfg.DataReady,
@@ -199,7 +199,7 @@ func acceptSyncUpdates(
 	log *slog.Logger,
 	wg *sync.WaitGroup,
 	s quic.ReceiveStream,
-	dh DatagramHandler,
+	dh PacketHandler,
 	newHaveLeaves <-chan *bitset.BitSet,
 	readSyncTimeout time.Duration,
 	dataReady <-chan struct{},
@@ -259,7 +259,7 @@ UNFINISHED:
 		switch oneByte[0] {
 		case datagramSyncMessageID:
 			// Re-sync of a missed datagram.
-			if err := readSingleSyncDatagram(
+			if err := readSingleSyncPacket(
 				ctx,
 				s, dh,
 				haveLeaves, newHaveLeaves,
@@ -307,7 +307,7 @@ UNFINISHED:
 			// Just proceed to reading the datagram.
 		}
 
-		if err := readSingleSyncDatagram(
+		if err := readSingleSyncPacket(
 			ctx,
 			s, dh,
 			haveLeaves, newHaveLeaves,
@@ -323,19 +323,19 @@ UNFINISHED:
 	}
 }
 
-// readSingleSyncDatagram reads a full, single synchronous datagram from s.
-// We expect that the datagram should be available immediately,
-// due to receiving a header for a one-off sync datagram,
-// or because the remote signaled that the datagrams are finished.
+// readSingleSyncPacket reads a full, single synchronous packet from s.
+// We expect that the packet should be available immediately,
+// due to receiving a header for a one-off sync packet,
+// or because the remote signaled that the unreliable datagrams are finished.
 //
 // haveLeaves and the corresponding newHaveLeaves channel give an optimistic
 // view of what leaves we already have.
 // If the stream contains a datagram that isn't present in the leaves we have,
-// then the datagram is passed to the datagram handler.
-func readSingleSyncDatagram(
+// then the packet is passed to the packet handler.
+func readSingleSyncPacket(
 	ctx context.Context,
 	s quic.ReceiveStream,
-	dh DatagramHandler,
+	dh PacketHandler,
 	haveLeaves *bitset.BitSet,
 	newHaveLeaves <-chan *bitset.BitSet,
 	readSyncTimeout time.Duration,
@@ -395,9 +395,9 @@ func readSingleSyncDatagram(
 	}
 
 	// We didn't have the datagram, so try to add it.
-	// This seems safe to do between parsing datagrams,
+	// This seems safe to do between parsing packets,
 	// but we could offload it to a separate goroutine if needed.
-	if err := dh.HandleDatagram(ctx, dg); err != nil {
+	if err := dh.HandlePacket(ctx, dg); err != nil {
 		return fmt.Errorf("failed to handle synchronous datagram: %w", err)
 	}
 

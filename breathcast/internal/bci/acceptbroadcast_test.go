@@ -33,8 +33,8 @@ func TestRunAcceptBroadcast_firstUpdate(t *testing.T) {
 		bci.RunAcceptBroadcast(ctx, dtest.NewLogger(t), bci.AcceptBroadcastConfig{
 			WG: &wg,
 
-			Stream:          sTest,
-			DatagramHandler: new(datagramCollector),
+			Stream:        sTest,
+			PacketHandler: new(datagramCollector),
 
 			InitialHaveLeaves: haveLeaves.Clone(),
 			AddedLeaves:       dchan.NewMulticast[uint](),
@@ -72,8 +72,8 @@ func TestRunAcceptBroadcast_firstUpdate(t *testing.T) {
 		bci.RunAcceptBroadcast(ctx, dtest.NewLogger(t), bci.AcceptBroadcastConfig{
 			WG: &wg,
 
-			Stream:          sTest,
-			DatagramHandler: new(datagramCollector),
+			Stream:        sTest,
+			PacketHandler: new(datagramCollector),
 
 			InitialHaveLeaves: haveLeaves.Clone(),
 			AddedLeaves:       dchan.NewMulticast[uint](),
@@ -116,8 +116,8 @@ func TestRunAcceptBroadcast_externalUpdatesShared(t *testing.T) {
 	bci.RunAcceptBroadcast(ctx, dtest.NewLogger(t), bci.AcceptBroadcastConfig{
 		WG: &wg,
 
-		Stream:          sTest,
-		DatagramHandler: new(datagramCollector),
+		Stream:        sTest,
+		PacketHandler: new(datagramCollector),
 
 		InitialHaveLeaves: haveLeaves.Clone(),
 		AddedLeaves:       al,
@@ -168,8 +168,8 @@ func TestRunAcceptBroadcast_syncDatagrams(t *testing.T) {
 	bci.RunAcceptBroadcast(ctx, dtest.NewLogger(t), bci.AcceptBroadcastConfig{
 		WG: &wg,
 
-		Stream:          sTest,
-		DatagramHandler: c,
+		Stream:        sTest,
+		PacketHandler: c,
 
 		InitialHaveLeaves: bitset.MustNew(4),
 		AddedLeaves:       dchan.NewMulticast[uint](),
@@ -210,7 +210,7 @@ type datagramCollector struct {
 	dgs [][]byte
 }
 
-func (c *datagramCollector) HandleDatagram(_ context.Context, dg []byte) error {
+func (c *datagramCollector) HandlePacket(_ context.Context, dg []byte) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

@@ -223,7 +223,7 @@ func NewOriginationFixture(
 		ProtocolHeader: protocolHeader,
 		AppHeader:      appHeader,
 
-		Datagrams: datagrams,
+		Packets: datagrams,
 
 		NData: nData,
 	}

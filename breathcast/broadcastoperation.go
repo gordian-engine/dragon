@@ -27,7 +27,8 @@ type BroadcastOperation struct {
 	broadcastID []byte
 	appHeader   []byte
 
-	datagrams [][]byte
+	// The raw packets, ready to be sent across the network.
+	packets [][]byte
 
 	// Needed for limiting the number of synchronous chunks sent.
 	nData uint16
@@ -36,26 +37,26 @@ type BroadcastOperation struct {
 	totalDataSize int
 	chunkSize     int
 
-	// Fields needed to parse datagrams.
+	// Fields needed to parse packets.
 	nChunks        uint16
 	hashSize       int
 	rootProofCount int
 
-	// Channel that is closed when we have the entire set of datagrams
+	// Channel that is closed when we have the entire set of packets
 	// and the reconstituted data.
 	dataReady chan struct{}
 
 	acceptBroadcastRequests chan acceptBroadcastRequest
 
-	// When handling an incoming datagram,
+	// When handling an incoming packet,
 	// there is first a low-cost quick check through this channel,
 	// so that contention on the main loop is minimized.
-	checkDatagramRequests chan checkDatagramRequest
+	checkPacketRequests chan checkPacketRequest
 
-	// If the datagram was checked and the main loop still wants it,
+	// If the packet was checked and the main loop still wants it,
 	// the other goroutine adds the leaf data to a cloned partial tree,
 	// and sends that tree and the parsed data back over this channel.
-	addDatagramRequests chan addLeafRequest
+	addPacketRequests chan addLeafRequest
 
 	// The main loop isn't part of the wait group,
 	// so that if we are adding goroutines through the main loop,
@@ -70,39 +71,39 @@ type acceptBroadcastRequest struct {
 	Resp   chan struct{}
 }
 
-type checkDatagramRequest struct {
+type checkPacketRequest struct {
 	Raw  []byte
-	Resp chan checkDatagramResponse
+	Resp chan checkPacketResponse
 }
 
-type checkDatagramResponse struct {
-	Code checkDatagramResponseCode
+type checkPacketResponse struct {
+	Code checkPacketResponseCode
 
 	// If the caller needs to add a leaf,
 	// this tree value will be non-nil.
 	Tree *cbmt.PartialTree
 }
 
-// checkDatagramResponseCode is the information that the operation main loop
-// sends to the datagram receiver,
+// checkPacketResponseCode is the information that the operation main loop
+// sends to the packet receiver,
 // indicating what work needs to be offloaded from the main loop
 // to the receiver's goroutine.
-type checkDatagramResponseCode uint8
+type checkPacketResponseCode uint8
 
 const (
 	// Nothing for zero.
-	_ checkDatagramResponseCode = iota
+	_ checkPacketResponseCode = iota
 
 	// The index was out of bounds.
-	checkDatagramInvalidIndex
+	checkPacketInvalidIndex
 
 	// We already have the chunk ID.
 	// The caller could choose whether to verify the proof anyway,
 	// depending on the level of peer trust.
-	checkDatagramAlreadyHaveChunk
+	checkPacketAlreadyHaveChunk
 
 	// The chunk ID is in bounds and we don't have the chunk.
-	checkDatagramNeed
+	checkPacketNeed
 )
 
 // addLeafRequest is an internal request occurring after
@@ -119,11 +120,11 @@ type addLeafRequest struct {
 
 	// The relay operation will retain a reference to this slice,
 	// so that it can be directly sent to other peers.
-	RawDatagram []byte
+	RawPacket []byte
 
-	// The parsed datagram,
+	// The parsed packet,
 	// which contains the leaf index and the raw data content.
-	Parsed bci.BroadcastDatagram
+	Parsed bci.BroadcastPacket
 }
 
 // DataReady returns a channel that is closed
@@ -226,7 +227,7 @@ func (o *BroadcastOperation) runOrigination(
 			Conn:           conn,
 			ProtocolHeader: protoHeader,
 			AppHeader:      o.appHeader,
-			Datagrams:      o.datagrams,
+			Packets:        o.packets,
 			NData:          o.nData,
 		},
 	)
@@ -273,8 +274,8 @@ func (o *BroadcastOperation) runAcceptBroadcast(
 		bci.AcceptBroadcastConfig{
 			WG: &o.wg,
 
-			Stream:          s,
-			DatagramHandler: o,
+			Stream:        s,
+			PacketHandler: o,
 
 			InitialHaveLeaves: is.pt.HaveLeaves().Clone(),
 			AddedLeaves:       is.addedLeafIndices,
@@ -317,11 +318,11 @@ func (o *BroadcastOperation) relayMainLoop(
 			)
 			close(req.Resp)
 
-		case req := <-o.checkDatagramRequests:
-			o.handleCheckDatagramRequest(req, is)
+		case req := <-o.checkPacketRequests:
+			o.handleCheckPacketRequest(req, is)
 
-		case req := <-o.addDatagramRequests:
-			o.handleAddDatagramRequest(req, is)
+		case req := <-o.addPacketRequests:
+			o.handleAddPacketRequest(req, is)
 		}
 	}
 }
@@ -344,16 +345,16 @@ func (o *BroadcastOperation) handleRelayConnChange(
 				"remote", cc.Conn.QUIC.RemoteAddr(),
 			),
 			bci.OutgoingRelayConfig{
-				WG:                    &o.wg,
-				Conn:                  cc.Conn.QUIC,
-				ProtocolHeader:        protoHeader,
-				AppHeader:             o.appHeader,
-				Datagrams:             o.datagrams,
-				InitialHaveDatagrams:  is.pt.HaveLeaves().Clone(),
-				NewAvailableDatagrams: is.addedLeafIndices,
-				DataReady:             o.dataReady,
-				NData:                 o.nData,
-				NParity:               o.nChunks - o.nData,
+				WG:                  &o.wg,
+				Conn:                cc.Conn.QUIC,
+				ProtocolHeader:      protoHeader,
+				AppHeader:           o.appHeader,
+				Packets:             o.packets,
+				InitialHavePackets:  is.pt.HaveLeaves().Clone(),
+				NewAvailablePackets: is.addedLeafIndices,
+				DataReady:           o.dataReady,
+				NData:               o.nData,
+				NParity:             o.nChunks - o.nData,
 			},
 		)
 	} else {
@@ -364,11 +365,11 @@ func (o *BroadcastOperation) handleRelayConnChange(
 	return connChanges.Next
 }
 
-func (o *BroadcastOperation) handleCheckDatagramRequest(
-	req checkDatagramRequest,
+func (o *BroadcastOperation) handleCheckPacketRequest(
+	req checkPacketRequest,
 	is *incomingState,
 ) {
-	// The datagram layout is:
+	// The packet layout is:
 	//   - 1 byte, protocol ID
 	//   - fixed-length broadcast ID
 	//   - 2-byte (big-endian uint16) chunk ID
@@ -381,13 +382,13 @@ func (o *BroadcastOperation) handleCheckDatagramRequest(
 	raw := req.Raw
 	if len(raw) < minLen {
 		panic(fmt.Errorf(
-			"BUG: impossibly short datagram; length should have been at least %d, but got %d",
+			"BUG: impossibly short packet; length should have been at least %d, but got %d",
 			len(raw), minLen,
 		))
 	}
 	if raw[0] != o.protocolID {
 		panic(fmt.Errorf(
-			"BUG: tried to check datagram with invalid protocol ID 0x%x (only 0x%x is valid)",
+			"BUG: tried to check packet with invalid protocol ID 0x%x (only 0x%x is valid)",
 			raw[0], o.protocolID,
 		))
 	}
@@ -395,7 +396,7 @@ func (o *BroadcastOperation) handleCheckDatagramRequest(
 	bID := o.broadcastID
 	if !bytes.Equal(bID, raw[1:bidLen+1]) {
 		panic(fmt.Errorf(
-			"BUG: received datagram with incorrect broadcast ID: expected 0x%x, got 0x%x",
+			"BUG: received packet with incorrect broadcast ID: expected 0x%x, got 0x%x",
 			bID, raw[1:bidLen+1],
 		))
 	}
@@ -403,22 +404,22 @@ func (o *BroadcastOperation) handleCheckDatagramRequest(
 	// The response depends on whether the index was valid in the first place,
 	// and then on whether we already have the leaf for that index.
 	idx := binary.BigEndian.Uint16(raw[1+bidLen : 1+bidLen+2])
-	var resp checkDatagramResponse
+	var resp checkPacketResponse
 	if idx >= (o.nChunks) {
-		resp = checkDatagramResponse{
-			Code: checkDatagramInvalidIndex,
+		resp = checkPacketResponse{
+			Code: checkPacketInvalidIndex,
 			// No tree necessary.
 		}
 	} else if is.pt.HasLeaf(idx) {
-		resp = checkDatagramResponse{
-			Code: checkDatagramAlreadyHaveChunk,
+		resp = checkPacketResponse{
+			Code: checkPacketAlreadyHaveChunk,
 			// Not sending a tree value back here,
 			// but we could send back the expected hash of the chunk
 			// so the worker can confirm its correctness.
 		}
 	} else {
-		resp = checkDatagramResponse{
-			Code: checkDatagramNeed,
+		resp = checkPacketResponse{
+			Code: checkPacketNeed,
 		}
 
 		// TODO: extract to (*incomingState).GetTreeClone().
@@ -441,8 +442,8 @@ func (o *BroadcastOperation) handleCheckDatagramRequest(
 	req.Resp <- resp
 }
 
-// handleAddDatagramRequest is called from the main loop.
-func (o *BroadcastOperation) handleAddDatagramRequest(
+// handleAddPacketRequest is called from the main loop.
+func (o *BroadcastOperation) handleAddPacketRequest(
 	req addLeafRequest,
 	is *incomingState,
 ) {
@@ -456,18 +457,18 @@ func (o *BroadcastOperation) handleAddDatagramRequest(
 
 		// Now we copy the content to the encoder's shards.
 		// This copy is not greatly memory-efficient,
-		// since between those shards and the datagrams we hold,
+		// since between those shards and the packets we hold,
 		// we are storing two copies of the data;
 		// but the encoder is supposed to see a significant throughput increase
 		// when working with correctly memory-aligned shards,
 		// so we assume for now that it's worth the tradeoff.
 		is.shards[idx] = append(is.shards[idx], req.Parsed.Data...)
 
-		// Also we have the raw datagram data that we can now retain.
-		o.datagrams[idx] = req.RawDatagram
+		// Also we have the raw packet data that we can now retain.
+		o.packets[idx] = req.RawPacket
 
-		// Now that the datagrams have been updated,
-		// we can notify any observers that we have the datagram.
+		// Now that the packets have been updated,
+		// we can notify any observers that we have the packet.
 		is.addedLeafIndices.Set(uint(idx))
 		is.addedLeafIndices = is.addedLeafIndices.Next
 
@@ -487,12 +488,12 @@ func (o *BroadcastOperation) handleAddDatagramRequest(
 	}
 
 	// And hold on to the clone in case we can reuse it,
-	// regardless of whether the datagram was addable.
+	// regardless of whether the packet was addable.
 	if leavesSoFar < uint(is.nData) {
 		// TODO: we could discard the tree
 		// if there would be more clones than missing chunks,
 		// but that also risks re-allocating a new clone
-		// if we are concurrently receiving datagrams.
+		// if we are concurrently receiving packets.
 		// Maybe we could allow the slice to be twice the size of the gap.
 		is.treeClones = append(is.treeClones, req.Tree)
 	} else {
@@ -532,30 +533,30 @@ func (o *BroadcastOperation) finishReconstruction(is *incomingState) {
 	}
 
 	c := is.pt.Complete(missedLeaves)
-	o.restoreDatagrams(c, is)
+	o.restorePackets(c, is)
 
 	// Data has been reconstructed.
 	// Notify any watchers.
 	close(o.dataReady)
 }
 
-func (o *BroadcastOperation) restoreDatagrams(
+func (o *BroadcastOperation) restorePackets(
 	c cbmt.CompleteResult,
 	is *incomingState,
 ) {
 	// All shards are the same size.
 	// The last chunk likely includes padding.
-	// In the future we may remove padding from the datagram,
+	// In the future we may remove padding from the packets,
 	// although that will add complexity in a few places.
 	// But it would be a slightly smaller allocation,
 	// and fewer bytes across the network.
 	shardSize := len(is.shards[0])
 
-	// The base size of a datagram, excluding proofs.
+	// The base size of a packet, excluding proofs.
 	// Recall that proofs may be different lengths,
 	// if the leaves are not a power of two
 	// and if the missed leaves encounter both length classes.
-	baseDatagramSize :=
+	basePacketSize :=
 		// 1-byte protocol header.
 		1 +
 			// Broadcast ID.
@@ -570,10 +571,10 @@ func (o *BroadcastOperation) restoreDatagrams(
 		nHashes += len(p)
 	}
 
-	// One single backing allocation for all the new datagrams.
+	// One single backing allocation for all the new packets.
 	// A single root object simplifies GC,
-	// and the lifecycle of all datagrams is coupled together anyway.
-	memSize := (baseDatagramSize * len(c.Proofs)) + (nHashes * o.hashSize)
+	// and the lifecycle of all packets is coupled together anyway.
+	memSize := (basePacketSize * len(c.Proofs)) + (nHashes * o.hashSize)
 	mem := make([]byte, memSize)
 
 	haveLeaves := is.pt.HaveLeaves()
@@ -597,7 +598,7 @@ func (o *BroadcastOperation) restoreDatagrams(
 		shardData := is.shards[u]
 		memIdx += copy(mem[memIdx:], shardData)
 
-		o.datagrams[u] = mem[dgStart:memIdx]
+		o.packets[u] = mem[dgStart:memIdx]
 	}
 }
 
@@ -655,14 +656,14 @@ func (o *BroadcastOperation) AcceptBroadcast(
 	}
 }
 
-// HandleDatagram parses the given datagram
+// HandlePacket parses the given packet
 // (which must have already been confirmed to belong to this operation
-// by checking the broadcast ID via [*Protocol.ExtractDatagramBroadcastID])
+// by checking the broadcast ID via [*Protocol.ExtractPacketBroadcastID])
 // and updates the internal state of the operation.
 //
-// If the raw datagram is valid and if it is new to this operation,
-// it is forwarded to any peers who may not have it yet.
-func (o *BroadcastOperation) HandleDatagram(
+// If the raw packet is valid and if it is new to this operation,
+// it is forwarded to any peers who do not have it yet.
+func (o *BroadcastOperation) HandlePacket(
 	ctx context.Context,
 	raw []byte,
 ) error {
@@ -684,8 +685,8 @@ func (o *BroadcastOperation) HandleDatagram(
 	// Then, depending on the main loop's judgement,
 	// we do any heavy lifting in this separate goroutine.
 
-	checkRespCh := make(chan checkDatagramResponse, 1)
-	checkReq := checkDatagramRequest{
+	checkRespCh := make(chan checkPacketResponse, 1)
+	checkReq := checkPacketRequest{
 		Raw:  raw,
 		Resp: checkRespCh,
 	}
@@ -693,18 +694,18 @@ func (o *BroadcastOperation) HandleDatagram(
 	select {
 	case <-ctx.Done():
 		return fmt.Errorf(
-			"context canceled while making check datagram request: %w",
+			"context canceled while making check packet request: %w",
 			context.Cause(ctx),
 		)
-	case o.checkDatagramRequests <- checkReq:
+	case o.checkPacketRequests <- checkReq:
 		// Okay.
 	}
 
-	var checkResp checkDatagramResponse
+	var checkResp checkPacketResponse
 	select {
 	case <-ctx.Done():
 		return fmt.Errorf(
-			"context canceled while awaiting check datagram response: %w",
+			"context canceled while awaiting check packet response: %w",
 			context.Cause(ctx),
 		)
 	case checkResp = <-checkRespCh:
@@ -712,23 +713,23 @@ func (o *BroadcastOperation) HandleDatagram(
 	}
 
 	switch checkResp.Code {
-	case checkDatagramInvalidIndex:
+	case checkPacketInvalidIndex:
 		panic("TODO: handle invalid index")
-	case checkDatagramAlreadyHaveChunk:
+	case checkPacketAlreadyHaveChunk:
 		// TODO: we could decide whether to verify the proof anyway.
 		return nil
 
-	case checkDatagramNeed:
-		return o.attemptToAddDatagram(ctx, checkResp.Tree, raw)
+	case checkPacketNeed:
+		return o.attemptToAddPacket(ctx, checkResp.Tree, raw)
 
 	default:
 		panic(fmt.Errorf(
-			"TODO: handle check datagram response value %d", checkResp.Code,
+			"TODO: handle check packet response value %d", checkResp.Code,
 		))
 	}
 }
 
-func (o *BroadcastOperation) attemptToAddDatagram(
+func (o *BroadcastOperation) attemptToAddPacket(
 	ctx context.Context, t *cbmt.PartialTree, raw []byte,
 ) error {
 	// The input tree here is a clone of the tree in the main loop.
@@ -738,7 +739,7 @@ func (o *BroadcastOperation) attemptToAddDatagram(
 	// so it can be reused.
 
 	// TODO: we need a length check here to ensure parsing does not panic.
-	bd := bci.ParseBroadcastDatagram(
+	bd := bci.ParseBroadcastPacket(
 		raw,
 		uint8(len(o.broadcastID)),
 		o.nChunks,
@@ -752,25 +753,25 @@ func (o *BroadcastOperation) attemptToAddDatagram(
 	}
 	if err == nil {
 		// Only set the field if we expect the main loop to retain it.
-		// If there was an error, we don't want the datagram,
+		// If there was an error, we don't want the packet,
 		// so it may be eligible for earlier GC.
 		req.Add = true
-		req.RawDatagram = raw
+		req.RawPacket = raw
 		req.Parsed = bd
 	}
 
 	select {
 	case <-ctx.Done():
 		return fmt.Errorf(
-			"context canceled while sending add datagram request: %w",
+			"context canceled while sending add packet request: %w",
 			context.Cause(ctx),
 		)
-	case o.addDatagramRequests <- req:
+	case o.addPacketRequests <- req:
 		// Okay.
 	}
 
 	if err != nil {
-		return fmt.Errorf("failed to add datagram: %w", err)
+		return fmt.Errorf("failed to add packet: %w", err)
 	}
 
 	return nil

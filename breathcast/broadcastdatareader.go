@@ -37,19 +37,19 @@ func (r *broadcastDataReader) Read(p []byte) (int, error) {
 		return 0, io.EOF
 	}
 
-	// Every datagram starts with some metadata but ends with the raw data.
+	// Every packet starts with some metadata but ends with the raw data.
 	// The math is a bit simpler if we just count from the end,
 	// because the metadata length can change
 	// depending on the datagram index.
-	curDatagram := r.op.datagrams[r.dIdx]
-	curData := curDatagram[len(curDatagram)-r.op.chunkSize+r.dOffset:]
+	curPacket := r.op.packets[r.dIdx]
+	curData := curPacket[len(curPacket)-r.op.chunkSize+r.dOffset:]
 
 	var n int
 	for r.toRead > 0 && len(p) > 0 {
 		readSz := min(
-			len(curData), // Length of the current datagram remaining.
+			len(curData), // Length of the current packet remaining.
 			len(p),       // Length of output buffer.
-			r.toRead,     // Total data left (relevant for last datagram).
+			r.toRead,     // Total data left (relevant for last data (non-parity) packet).
 		)
 
 		nn := copy(p, curData[:readSz])
@@ -69,8 +69,8 @@ func (r *broadcastDataReader) Read(p []byte) (int, error) {
 			// so we can safely advance to the next datagram.
 			r.dIdx++
 			r.dOffset = 0
-			curDatagram := r.op.datagrams[r.dIdx]
-			curData = curDatagram[len(curDatagram)-r.op.chunkSize:] // r.dOffset is zero already.
+			curPacket := r.op.packets[r.dIdx]
+			curData = curPacket[len(curPacket)-r.op.chunkSize:] // r.dOffset is zero already.
 		}
 
 		if len(p) == 0 {

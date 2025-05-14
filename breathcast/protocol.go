@@ -24,7 +24,7 @@ import (
 // and [*Protocol.NewIncomingBroadcast] to handle an incoming broadcast.
 //
 // Originating a broadcast requires using [PrepareOrigination] first
-// to split the original data into erasure-coded chunks and datagrams.
+// to split the original data into erasure-coded chunks and packets.
 //
 // To accept an incoming broadcast, the application layer must first
 // accept an incoming stream from a connection,
@@ -92,7 +92,7 @@ type ProtocolConfig struct {
 
 	// The fixed length of broadcast identifiers.
 	// The broadcast ID needs to be extracted from the origination header
-	// and it consumes space in chunk datagrams.
+	// and it consumes space in chunk packets.
 	BroadcastIDLength uint8
 }
 
@@ -171,12 +171,17 @@ type OriginationConfig struct {
 	BroadcastID []byte
 
 	AppHeader []byte
-	Datagrams [][]byte
+	Packets   [][]byte
 
 	NData uint16
 
+	// The size of the original data.
+	// This differs from ChunkSize * NData,
+	// as the final data packet may contain padding.
 	TotalDataSize int
-	ChunkSize     int
+
+	// The size of the chunk in each packet.
+	ChunkSize int
 }
 
 func (p *Protocol) NewOrigination(
@@ -213,7 +218,7 @@ func (p *Protocol) NewOrigination(
 		broadcastID: cfg.BroadcastID,
 		appHeader:   cfg.AppHeader,
 
-		datagrams: cfg.Datagrams,
+		packets: cfg.Packets,
 
 		nData:         cfg.NData,
 		totalDataSize: cfg.TotalDataSize,
@@ -221,7 +226,7 @@ func (p *Protocol) NewOrigination(
 
 		dataReady: make(chan struct{}),
 
-		// acceptBroadcastRequests and checkDatagramRequests
+		// acceptBroadcastRequests and checkPacketRequests
 		// can both be nil in this case.
 
 		mainLoopDone: make(chan struct{}),
@@ -279,7 +284,7 @@ type IncomingBroadcastConfig struct {
 
 	// The root proofs extracted from the incoming application header.
 	// More root proofs in the header means that
-	// proofs in datagrams consume less space.
+	// proofs in packets consume less space.
 	RootProofs [][]byte
 
 	// The size of the underlying erasure-coded shards.
@@ -359,9 +364,9 @@ func (p *Protocol) NewIncomingBroadcast(
 		broadcastID: cfg.BroadcastID,
 		appHeader:   cfg.AppHeader,
 
-		// We will save the datagrams from incoming data,
+		// We will save the packets from incoming data,
 		// so it's fine that the inner slices are all nil.
-		datagrams: make([][]byte, cfg.NData+cfg.NParity),
+		packets: make([][]byte, cfg.NData+cfg.NParity),
 
 		nData:         cfg.NData,
 		totalDataSize: cfg.TotalDataSize,
@@ -374,8 +379,8 @@ func (p *Protocol) NewIncomingBroadcast(
 		dataReady: make(chan struct{}),
 
 		acceptBroadcastRequests: make(chan acceptBroadcastRequest),
-		checkDatagramRequests:   make(chan checkDatagramRequest),
-		addDatagramRequests:     make(chan addLeafRequest),
+		checkPacketRequests:     make(chan checkPacketRequest),
+		addPacketRequests:       make(chan addLeafRequest),
 
 		mainLoopDone: make(chan struct{}),
 	}
@@ -505,35 +510,35 @@ func (p *Protocol) ExtractStreamBroadcastID(r io.Reader, dst []byte) ([]byte, er
 	return dst, nil
 }
 
-// ExtractDatagramBroadcastID extracts the broadcast ID
-// from the given raw datagram bytes.
-// Given the broadcast ID, the application can route the datagram
+// ExtractPacketBroadcastID extracts the broadcast ID
+// from the given raw packet bytes.
+// Given the broadcast ID, the application can route the packet
 // to the correct [RelayOperation].
 //
 // The caller must have already read the first byte of the input stream,
-// confirming that the datagram belongs to this protocol instance.
+// confirming that the packet belongs to this protocol instance.
 // The input must include that protocol identifier byte,
-// so that the entire byte slice for the datagram
+// so that the entire byte slice for the packet
 // can be forwarded to other peers, if necessary,
 // without rebuilding and reallocating the slice.
 //
-// If the datagram is too short to contain a full broadcast ID,
+// If the packet is too short to contain a full broadcast ID,
 // the returned slice will be nil.
 //
 // The returned slice is a subslice of the input,
 // so retaining the return value will retain the input.
-func (p *Protocol) ExtractDatagramBroadcastID(raw []byte) []byte {
+func (p *Protocol) ExtractPacketBroadcastID(raw []byte) []byte {
 	if len(raw) == 0 {
 		// Caller needs to protect against this.
 		panic(errors.New(
-			"BUG: input to ExtractDatagramBroadcastID must not be empty",
+			"BUG: input to ExtractPacketBroadcastID must not be empty",
 		))
 	}
 
 	if raw[0] != p.protocolID {
 		// Caller did not route message correctly.
 		panic(fmt.Errorf(
-			"BUG: first byte of datagram was 0x%x, but it should have been the configured protocol ID 0x%x",
+			"BUG: first byte of packet was 0x%x, but it should have been the configured protocol ID 0x%x",
 			raw[0], p.protocolID,
 		))
 	}

@@ -25,16 +25,17 @@ type OriginationConfig struct {
 
 	AppHeader []byte
 
-	// Read-only view of the full set of datagrams.
-	Datagrams [][]byte
+	// Read-only view of the full set of packets.
+	Packets [][]byte
 
 	// Required to limit number of reliable chunks sent.
 	NData uint16
 }
 
-// sendDatagramState is the set of initial values required for [sendDatagrams],
+// initialOriginationState is the set of initial values
+// required for [sendOriginationPackets],
 // and it is created in [openOriginationStream].
-type sendDatagramState struct {
+type initialOriginationState struct {
 	Stream  quic.SendStream
 	PeerHas *bitset.BitSet
 }
@@ -52,7 +53,7 @@ func RunOrigination(
 
 	// Buffered so the openOriginationStream work does not block.
 	bsdCh := make(chan bsdState, 1)
-	sdsCh := make(chan sendDatagramState, 1)
+	iosCh := make(chan initialOriginationState, 1)
 
 	peerHasDeltaCh := make(chan *bitset.BitSet)
 	clearDeltaTimeout := make(chan struct{})
@@ -65,25 +66,25 @@ func RunOrigination(
 		cfg.Conn,
 		cfg.ProtocolHeader,
 		cfg.AppHeader,
-		cfg.Datagrams,
+		cfg.Packets,
 		bsdCh,
-		sdsCh,
+		iosCh,
 	)
-	go sendDatagrams(
+	go sendOriginationPackets(
 		ctx,
-		log.With("step", "send_datagrams"),
+		log.With("step", "send_origination_packets"),
 		cfg.WG,
 		cfg.Conn,
-		cfg.Datagrams,
+		cfg.Packets,
 		cfg.NData,
-		sdsCh,
+		iosCh,
 		peerHasDeltaCh,
 		clearDeltaTimeout,
 	)
 	go receiveBitsetDeltas(
 		ctx,
 		cfg.WG,
-		uint(len(cfg.Datagrams)),
+		uint(len(cfg.Packets)),
 		5*time.Millisecond, // TODO: make configurable
 		func(string, error) {
 			// TODO: cancel the whole stream here, I think.
@@ -104,13 +105,13 @@ func openOriginationStream(
 	conn quic.Connection,
 	pHeader ProtocolHeader,
 	appHeader []byte,
-	datagrams [][]byte,
+	packets [][]byte,
 	bsdCh chan<- bsdState,
-	sdsCh chan<- sendDatagramState,
+	iosCh chan<- initialOriginationState,
 ) {
 	defer wg.Done()
 
-	defer close(sdsCh)
+	defer close(iosCh)
 
 	s, err := OpenStream(ctx, conn, OpenStreamConfig{
 		// TODO: make these configurable.
@@ -129,7 +130,7 @@ func openOriginationStream(
 	// We could let the bitset receiving goroutine accept the first bitset,
 	// but this goroutine is blocked on that work anyway,
 	// so just receive it here.
-	peerHas := bitset.MustNew(uint(len(datagrams)))
+	peerHas := bitset.MustNew(uint(len(packets)))
 	dec := new(CombinationDecoder)
 
 	if err := dec.ReceiveBitset(
@@ -153,21 +154,23 @@ func openOriginationStream(
 		Dec:    dec,
 	}
 
-	sdsCh <- sendDatagramState{
+	iosCh <- initialOriginationState{
 		Stream:  s,
 		PeerHas: peerHas,
 	}
 }
 
-// sendDatagrams handles the write side of the stream.
-func sendDatagrams(
+// sendOriginationPackets handles the write side of an origination,
+// sending packets as unreliable datagrams first
+// and then falling back to a synchronous stream.
+func sendOriginationPackets(
 	ctx context.Context,
 	log *slog.Logger,
 	wg *sync.WaitGroup,
 	conn quic.Connection,
-	datagrams [][]byte,
+	packets [][]byte,
 	nData uint16,
-	initialStateCh <-chan sendDatagramState,
+	initialStateCh <-chan initialOriginationState,
 	peerHasDeltaCh <-chan *bitset.BitSet,
 	clearDeltaTimeout chan<- struct{},
 ) {
@@ -192,29 +195,29 @@ func sendDatagrams(
 	timer.Stop()
 
 	sendUnreliableDatagrams(
-		conn, datagrams, nil, peerHas, peerHasDeltaCh, timer,
+		conn, packets, nil, peerHas, peerHasDeltaCh, timer,
 	)
 
-	synchronizeMissedDatagrams(
+	synchronizeMissedPackets(
 		ctx, log,
 		s,
 		peerHas, peerHasDeltaCh,
-		datagrams, nData,
+		packets, nData,
 		timer, clearDeltaTimeout,
 	)
 }
 
-// synchronizeMissedDatagrams sends the termination byte on the stream,
+// synchronizeMissedPackets sends the termination byte on the stream,
 // waits for one more bitset delta update,
-// and then sends enough datagrams synchronously to give the peer
+// and then sends enough packets synchronously to give the peer
 // sufficient shards to reconstruct the original data.
-func synchronizeMissedDatagrams(
+func synchronizeMissedPackets(
 	ctx context.Context,
 	log *slog.Logger,
 	s quic.SendStream,
 	peerHas *bitset.BitSet,
 	peerBitsetUpdates <-chan *bitset.BitSet,
-	datagrams [][]byte,
+	packets [][]byte,
 	nData uint16,
 	timer *time.Timer,
 	clearDeltaTimeout chan<- struct{},
@@ -264,11 +267,11 @@ func synchronizeMissedDatagrams(
 	// for futher delta bitsets.
 	close(clearDeltaTimeout)
 
-	if err := sendSyncDatagrams(
-		s, datagrams, nData, peerHas, peerBitsetUpdates,
+	if err := sendSyncPackets(
+		s, packets, nData, peerHas, peerBitsetUpdates,
 	); err != nil {
 		log.Info(
-			"Failure when sending synchronous datagrams",
+			"Failure when sending synchronous packets",
 			"err", err,
 		)
 		return
@@ -300,7 +303,7 @@ func synchronizeMissedDatagrams(
 // sendUnreliableDatagrams ensures that the timer is stopped upon return.
 func sendUnreliableDatagrams(
 	conn quic.Connection,
-	datagrams [][]byte,
+	packets [][]byte,
 	alreadySent *bitset.BitSet,
 	peerHas *bitset.BitSet,
 	peerHasDeltaCh <-chan *bitset.BitSet,
@@ -350,7 +353,7 @@ func sendUnreliableDatagrams(
 		// We will just ignore errors here for now.
 		// Although we should probably at least respect connection closed errors.
 		if !skip {
-			_ = conn.SendDatagram(datagrams[cb.Idx])
+			_ = conn.SendDatagram(packets[cb.Idx])
 		}
 
 		// Increment counter regardless of skip,
@@ -359,19 +362,19 @@ func sendUnreliableDatagrams(
 	}
 }
 
-// sendSyncDatagrams inspects the cleared bits in peerHas
-// and sends synchronous datagrams to the peer over the given stream.
+// sendSyncPackets inspects the cleared bits in peerHas
+// and sends synchronous packets to the peer over the given stream.
 //
 // Delta updates sent over the peerHasDeltaCh are checked
 // between individual sends.
-func sendSyncDatagrams(
+func sendSyncPackets(
 	s quic.SendStream,
-	datagrams [][]byte,
+	packets [][]byte,
 	nData uint16,
 	peerHas *bitset.BitSet,
 	peerHasDeltaCh <-chan *bitset.BitSet,
 ) error {
-	// Track how many datagrams the peer is missing
+	// Track how many packets the peer is missing
 	// to be able to reconstruct the data.
 	haveCount := peerHas.Count()
 	if haveCount >= uint(nData) {
@@ -379,7 +382,7 @@ func sendSyncDatagrams(
 	}
 	need := nData - uint16(haveCount)
 
-	const sendSyncDatagramTimeout = time.Millisecond // TODO: make configurable.
+	const sendSyncPacketTimeout = time.Millisecond // TODO: make configurable.
 	for cb := range RandomClearBitIterator(peerHas) {
 		// Each iteration, check if there is an updated delta.
 		select {
@@ -402,10 +405,10 @@ func sendSyncDatagrams(
 			// Nothing.
 		}
 
-		if err := SendSyncDatagram(
-			s, sendSyncDatagramTimeout, uint16(cb.Idx), datagrams[cb.Idx],
+		if err := SendSyncPacket(
+			s, sendSyncPacketTimeout, uint16(cb.Idx), packets[cb.Idx],
 		); err != nil {
-			return fmt.Errorf("failed to send synchronous datagram: %w", err)
+			return fmt.Errorf("failed to send synchronous packet: %w", err)
 		}
 
 		need--

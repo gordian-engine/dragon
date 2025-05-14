@@ -41,8 +41,8 @@ func TestRunOutgoingRelay_handshake(t *testing.T) {
 		protoHeader, appHeader,
 		3, 1,
 	)
-	fx.Cfg.Datagrams[0] = []byte("\xAAtestdatagram 0")
-	fx.Cfg.InitialHaveDatagrams.Set(0)
+	fx.Cfg.Packets[0] = []byte("\xAAtestdatagram 0")
+	fx.Cfg.InitialHavePackets.Set(0)
 
 	cHost, cClient := fx.ListenerSet.Dial(t, 0, 1)
 
@@ -68,7 +68,7 @@ func TestRunOutgoingRelay_handshake(t *testing.T) {
 	defer dgCancel()
 	dg, err := cClient.ReceiveDatagram(dgCtx)
 	require.NoError(t, err)
-	require.Equal(t, fx.Cfg.Datagrams[0], dg)
+	require.Equal(t, fx.Cfg.Packets[0], dg)
 }
 
 func TestRunOutgoingRelay_redundantDatagramNotSent(t *testing.T) {
@@ -92,8 +92,8 @@ func TestRunOutgoingRelay_redundantDatagramNotSent(t *testing.T) {
 		protoHeader, appHeader,
 		3, 1,
 	)
-	fx.Cfg.Datagrams[0] = []byte("\xAAtestdatagram 0")
-	fx.Cfg.InitialHaveDatagrams.Set(0)
+	fx.Cfg.Packets[0] = []byte("\xAAtestdatagram 0")
+	fx.Cfg.InitialHavePackets.Set(0)
 
 	cHost, cClient := fx.ListenerSet.Dial(t, 0, 1)
 
@@ -148,8 +148,8 @@ func TestRunOutgoingRelay_forwardNewDatagram(t *testing.T) {
 
 	// Mark the first datagram as present,
 	// so we can synchronize on sending that out first.
-	fx.Cfg.Datagrams[0] = []byte("\xAAtestdatagram 0")
-	fx.Cfg.InitialHaveDatagrams.Set(0)
+	fx.Cfg.Packets[0] = []byte("\xAAtestdatagram 0")
+	fx.Cfg.InitialHavePackets.Set(0)
 
 	// The operation is running on the "host" side of the connection.
 	cHost, cClient := fx.ListenerSet.Dial(t, 0, 1)
@@ -177,18 +177,18 @@ func TestRunOutgoingRelay_forwardNewDatagram(t *testing.T) {
 	// If we are able to force a datagram continue,
 	// then we are synchronized with the host's main loop.
 	d0 := dtest.ReceiveSoon(t, cWH.Out)
-	require.Equal(t, fx.Cfg.Datagrams[0], d0)
+	require.Equal(t, fx.Cfg.Packets[0], d0)
 
 	// Now we indicate that the next datagram is available to the host.
 	// It would have arrived from a separate peer somehow.
-	ad := fx.Cfg.NewAvailableDatagrams
+	ad := fx.Cfg.NewAvailablePackets
 	ad.Set(1)
 	ad = ad.Next
 
 	// Then if we are able to send another continue signal,
 	// the host tried to send the datagram.
 	d1 := dtest.ReceiveSoon(t, cWH.Out)
-	require.Equal(t, fx.Cfg.Datagrams[1], d1)
+	require.Equal(t, fx.Cfg.Packets[1], d1)
 }
 
 func TestRunOutgoingRelay_missedDatagramSentReliably(t *testing.T) {
@@ -215,8 +215,8 @@ func TestRunOutgoingRelay_missedDatagramSentReliably(t *testing.T) {
 
 	// Mark the first datagram as present,
 	// so we can synchronize on sending that out first.
-	fx.Cfg.Datagrams[0] = []byte("\xAAtestdatagram 0")
-	fx.Cfg.InitialHaveDatagrams.Set(0)
+	fx.Cfg.Packets[0] = []byte("\xAAtestdatagram 0")
+	fx.Cfg.InitialHavePackets.Set(0)
 
 	// The operation is running on the "host" side of the connection.
 	cHost, cClient := fx.ListenerSet.Dial(t, 0, 1)
@@ -246,7 +246,7 @@ func TestRunOutgoingRelay_missedDatagramSentReliably(t *testing.T) {
 	_ = dtest.ReceiveSoon(t, hostDGs.Ready)
 	gotDG := hostDGs.Val
 	hostDGs = hostDGs.Next
-	require.Equal(t, fx.Cfg.Datagrams[0], gotDG)
+	require.Equal(t, fx.Cfg.Packets[0], gotDG)
 
 	// Now we are going to send two empty bit sets in a row.
 	// This tells the host that we never got the datagram.
@@ -256,7 +256,7 @@ func TestRunOutgoingRelay_missedDatagramSentReliably(t *testing.T) {
 
 	// Next, the host sends the 1-byte sync message ID and the datagram.
 	require.NoError(t, s.SetReadDeadline(time.Now().Add(50*time.Millisecond)))
-	buf := make([]byte, 1+4+len(fx.Cfg.Datagrams[0]))
+	buf := make([]byte, 1+4+len(fx.Cfg.Packets[0]))
 	_, err = io.ReadFull(s, buf)
 	require.NoError(t, err)
 	require.Equal(t, byte(1), buf[0])
@@ -265,9 +265,9 @@ func TestRunOutgoingRelay_missedDatagramSentReliably(t *testing.T) {
 	require.Zero(t, chunkID)
 
 	sz := binary.BigEndian.Uint16(buf[3:5])
-	require.Equal(t, len(fx.Cfg.Datagrams[0]), int(sz))
+	require.Equal(t, len(fx.Cfg.Packets[0]), int(sz))
 
-	require.Equal(t, fx.Cfg.Datagrams[0], buf[5:])
+	require.Equal(t, fx.Cfg.Packets[0], buf[5:])
 }
 
 func TestRunOutgoingRelay_missedDatagrams_staggered(t *testing.T) {
@@ -294,8 +294,8 @@ func TestRunOutgoingRelay_missedDatagrams_staggered(t *testing.T) {
 
 	// Mark the first datagram as present,
 	// so we can synchronize on sending that out first.
-	fx.Cfg.Datagrams[0] = []byte("\xAAtestdatagram 0")
-	fx.Cfg.InitialHaveDatagrams.Set(0)
+	fx.Cfg.Packets[0] = []byte("\xAAtestdatagram 0")
+	fx.Cfg.InitialHavePackets.Set(0)
 
 	// The operation is running on the "host" side of the connection.
 	cHost, cClient := fx.ListenerSet.Dial(t, 0, 1)
@@ -325,7 +325,7 @@ func TestRunOutgoingRelay_missedDatagrams_staggered(t *testing.T) {
 	_ = dtest.ReceiveSoon(t, hostDGs.Ready)
 	gotDG := hostDGs.Val
 	hostDGs = hostDGs.Next
-	require.Equal(t, fx.Cfg.Datagrams[0], gotDG)
+	require.Equal(t, fx.Cfg.Packets[0], gotDG)
 
 	// Now we send one empty delta update.
 	require.NoError(t, ce.SendBitset(s, 50*time.Millisecond, cbs))
@@ -339,8 +339,8 @@ func TestRunOutgoingRelay_missedDatagrams_staggered(t *testing.T) {
 	time.Sleep(2 * time.Millisecond)
 
 	// Then the host gets a new datagram.
-	fx.Cfg.Datagrams[1] = []byte("\xAAtestdatagram 1")
-	nad := fx.Cfg.NewAvailableDatagrams
+	fx.Cfg.Packets[1] = []byte("\xAAtestdatagram 1")
+	nad := fx.Cfg.NewAvailablePackets
 	nad.Set(1)
 	nad = nad.Next
 
@@ -350,14 +350,14 @@ func TestRunOutgoingRelay_missedDatagrams_staggered(t *testing.T) {
 	gotDG = hostDGs.Val
 	hostDGs = hostDGs.Next
 	require.NoError(t, err)
-	require.Equal(t, fx.Cfg.Datagrams[1], gotDG)
+	require.Equal(t, fx.Cfg.Packets[1], gotDG)
 
 	// Now the client sends the next delta update, which is still zero.
 	require.NoError(t, ce.SendBitset(s, 50*time.Millisecond, cbs))
 
 	// That is two deltas without acknowledging the first datagram.
 	require.NoError(t, s.SetReadDeadline(time.Now().Add(50*time.Millisecond)))
-	buf := make([]byte, 1+4+len(fx.Cfg.Datagrams[0]))
+	buf := make([]byte, 1+4+len(fx.Cfg.Packets[0]))
 	_, err = io.ReadFull(s, buf)
 	require.NoError(t, err)
 	require.Equal(t, byte(1), buf[0])
@@ -366,9 +366,9 @@ func TestRunOutgoingRelay_missedDatagrams_staggered(t *testing.T) {
 	require.Zero(t, chunkID)
 
 	sz := binary.BigEndian.Uint16(buf[3:5])
-	require.Equal(t, len(fx.Cfg.Datagrams[0]), int(sz))
+	require.Equal(t, len(fx.Cfg.Packets[0]), int(sz))
 
-	require.Equal(t, fx.Cfg.Datagrams[0], buf[5:])
+	require.Equal(t, fx.Cfg.Packets[0], buf[5:])
 
 	// Do a short read attempt, and it must time out.
 	require.NoError(t, s.SetReadDeadline(time.Now().Add(2*time.Millisecond)))
@@ -392,9 +392,9 @@ func TestRunOutgoingRelay_missedDatagrams_staggered(t *testing.T) {
 	require.Equal(t, uint16(1), chunkID)
 
 	sz = binary.BigEndian.Uint16(buf[3:5])
-	require.Equal(t, len(fx.Cfg.Datagrams[0]), int(sz))
+	require.Equal(t, len(fx.Cfg.Packets[0]), int(sz))
 
-	require.Equal(t, fx.Cfg.Datagrams[1], buf[5:])
+	require.Equal(t, fx.Cfg.Packets[1], buf[5:])
 }
 
 func TestOutgoingRelay_dataReady(t *testing.T) {
@@ -421,8 +421,8 @@ func TestOutgoingRelay_dataReady(t *testing.T) {
 
 	// Mark the first datagram as present,
 	// so we can synchronize on sending that out first.
-	fx.Cfg.Datagrams[0] = []byte("\xAAtestdatagram 0")
-	fx.Cfg.InitialHaveDatagrams.Set(0)
+	fx.Cfg.Packets[0] = []byte("\xAAtestdatagram 0")
+	fx.Cfg.InitialHavePackets.Set(0)
 
 	// The operation is running on the "host" side of the connection.
 	cHost, cClient := fx.ListenerSet.Dial(t, 0, 1)
@@ -449,9 +449,9 @@ func TestOutgoingRelay_dataReady(t *testing.T) {
 	require.NoError(t, ce.SendBitset(s, 50*time.Millisecond, cbs))
 
 	// Now the host gets all its data somehow.
-	fx.Cfg.Datagrams[1] = []byte("\xAAtestdatagram 1")
-	fx.Cfg.Datagrams[2] = []byte("\xAAtestdatagram 2")
-	fx.Cfg.Datagrams[3] = []byte("\xAAtestdatagram 3")
+	fx.Cfg.Packets[1] = []byte("\xAAtestdatagram 1")
+	fx.Cfg.Packets[2] = []byte("\xAAtestdatagram 2")
+	fx.Cfg.Packets[3] = []byte("\xAAtestdatagram 3")
 	close(fx.DataReady)
 
 	// So all three datagrams are sent immediately.
@@ -464,11 +464,11 @@ func TestOutgoingRelay_dataReady(t *testing.T) {
 		dg := hostDGs.Val
 		hostDGs = hostDGs.Next
 
-		if bytes.Equal(dg, fx.Cfg.Datagrams[1]) {
+		if bytes.Equal(dg, fx.Cfg.Packets[1]) {
 			gotChunkIDs = append(gotChunkIDs, 1)
-		} else if bytes.Equal(dg, fx.Cfg.Datagrams[2]) {
+		} else if bytes.Equal(dg, fx.Cfg.Packets[2]) {
 			gotChunkIDs = append(gotChunkIDs, 2)
-		} else if bytes.Equal(dg, fx.Cfg.Datagrams[3]) {
+		} else if bytes.Equal(dg, fx.Cfg.Packets[3]) {
 			gotChunkIDs = append(gotChunkIDs, 3)
 		} else {
 			t.Fatalf("received unexpected datagram %x", dg)
@@ -501,7 +501,7 @@ func TestOutgoingRelay_dataReady(t *testing.T) {
 	dg1 := make([]byte, sz)
 	_, err = io.ReadFull(s, dg1)
 	require.NoError(t, err)
-	require.Equal(t, fx.Cfg.Datagrams[idx], dg1)
+	require.Equal(t, fx.Cfg.Packets[idx], dg1)
 
 	// Once more.
 	_, err = io.ReadFull(s, meta)
@@ -513,7 +513,7 @@ func TestOutgoingRelay_dataReady(t *testing.T) {
 	dg2 := make([]byte, sz)
 	_, err = io.ReadFull(s, dg2)
 	require.NoError(t, err)
-	require.Equal(t, fx.Cfg.Datagrams[nextIdx], dg2)
+	require.Equal(t, fx.Cfg.Packets[nextIdx], dg2)
 
 	// The write-side should be closed now,
 	// so the next read should be an EOF.
@@ -599,11 +599,11 @@ func NewOutgoingRelayFixture(
 		ProtocolHeader: protocolHeader,
 		AppHeader:      appHeader,
 
-		Datagrams: make([][]byte, nData+nParity),
+		Packets: make([][]byte, nData+nParity),
 
-		InitialHaveDatagrams: bitset.MustNew(uint(nData + nParity)),
+		InitialHavePackets: bitset.MustNew(uint(nData + nParity)),
 
-		NewAvailableDatagrams: dchan.NewMulticast[uint](),
+		NewAvailablePackets: dchan.NewMulticast[uint](),
 
 		DataReady: dataReady,
 

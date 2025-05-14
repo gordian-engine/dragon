@@ -20,7 +20,7 @@ type PrepareOriginationConfig struct {
 	MaxChunkSize int
 
 	// The protocol ID byte.
-	// Required for creating data for outgoing datagrams.
+	// Required for creating data for outgoing packets.
 	ProtocolID byte
 
 	// A unique ID to identify this operation.
@@ -77,10 +77,9 @@ type PreparedOrigination struct {
 	// The size, in bytes, of each chunk.
 	ChunkSize int
 
-	// The data and parity chunks, with metadata included.
+	// The packets are the data and parity chunks, with metadata included.
 	// These are ready to be transfered over the network.
-	// TODO: this could be unexported because it is internal to this package.
-	Chunks [][]byte
+	Packets [][]byte
 }
 
 // PrepareOrigination converts the given data and config
@@ -210,19 +209,19 @@ func PrepareOrigination(
 	po.ChunkSize = len(rawChunks[0])
 
 	po.RootProof = res.RootProof
-	po.Chunks = buildDatagrams(rawChunks, res.Proofs, cfg)
+	po.Packets = buildPackets(rawChunks, res.Proofs, cfg)
 
 	return po, nil
 }
 
-func buildDatagrams(rawChunks [][]byte, chunkProofs [][][]byte, cfg PrepareOriginationConfig) [][]byte {
+func buildPackets(rawChunks [][]byte, chunkProofs [][][]byte, cfg PrepareOriginationConfig) [][]byte {
 	n := uint16(len(rawChunks))
 	chunkSize := len(rawChunks[0])
 	longProofSize := len(chunkProofs[len(chunkProofs)-1]) * cfg.HashSize
 	shortProofSize := len(chunkProofs[0]) * cfg.HashSize
 	bidSize := len(cfg.BroadcastID)
 
-	shortDatagramSize :=
+	shortPacketSize :=
 		// 1-byte protocol header.
 		1 +
 			// Broadcast ID.
@@ -233,32 +232,32 @@ func buildDatagrams(rawChunks [][]byte, chunkProofs [][][]byte, cfg PrepareOrigi
 			// Raw chunk data.
 			chunkSize
 
-	// One datagram per raw chunk.
-	datagrams := make([][]byte, n)
+	// One packet per raw chunk.
+	packets := make([][]byte, n)
 
-	var shortDatagramCount, longDatagramCount uint16
+	var shortPacketCount, longPacketCount uint16
 	if n&(n-1) == 0 {
-		shortDatagramCount = n
+		shortPacketCount = n
 	} else {
 		// Otherwise, we need to calculate how many chunks didn't fit into the power of two.
 		smallerPow2 := uint16(1 << (uint16(bits.Len16(n-1) - 1)))
 		overflow := n - smallerPow2
-		longDatagramCount = 2 * overflow
-		shortDatagramCount = n - longDatagramCount
+		longPacketCount = 2 * overflow
+		shortPacketCount = n - longPacketCount
 	}
 
-	longDatagramSize := shortDatagramSize - shortProofSize + longProofSize
+	longPacketSize := shortPacketSize - shortProofSize + longProofSize
 
-	// One single backing allocation for all the datagrams.
+	// One single backing allocation for all the packets.
 	// A single root object simplifies GC,
-	// and the lifecycle of all datagrams is coupled together anyway.
+	// and the lifecycle of all packets is coupled together anyway.
 	mem := make(
 		[]byte,
-		(int(shortDatagramSize)*int(shortDatagramCount))+(int(longDatagramSize)*int(longDatagramCount)),
+		(int(shortPacketSize)*int(shortPacketCount))+(int(longPacketSize)*int(longPacketCount)),
 	)
 
-	for i := range rawChunks[:shortDatagramCount] {
-		base := shortDatagramSize * i
+	for i := range rawChunks[:shortPacketCount] {
+		base := shortPacketSize * i
 
 		mem[base] = cfg.ProtocolID
 		idx := base + 1
@@ -277,13 +276,13 @@ func buildDatagrams(rawChunks [][]byte, chunkProofs [][][]byte, cfg PrepareOrigi
 		}
 
 		copy(mem[idx:idx+chunkSize], rawChunks[i])
-		datagrams[i] = mem[base : idx+chunkSize]
+		packets[i] = mem[base : idx+chunkSize]
 	}
 
-	longBase := int(shortDatagramCount) * int(shortDatagramSize)
-	for j := range rawChunks[shortDatagramCount:] {
-		base := longBase + (j * longDatagramSize)
-		i := j + int(shortDatagramCount)
+	longBase := int(shortPacketCount) * int(shortPacketSize)
+	for j := range rawChunks[shortPacketCount:] {
+		base := longBase + (j * longPacketSize)
+		i := j + int(shortPacketCount)
 
 		mem[base] = cfg.ProtocolID
 		idx := base + 1
@@ -302,8 +301,8 @@ func buildDatagrams(rawChunks [][]byte, chunkProofs [][][]byte, cfg PrepareOrigi
 		}
 
 		copy(mem[idx:idx+chunkSize], rawChunks[i])
-		datagrams[i] = mem[base : idx+chunkSize]
+		packets[i] = mem[base : idx+chunkSize]
 	}
 
-	return datagrams
+	return packets
 }

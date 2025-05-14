@@ -104,7 +104,8 @@ func OpenStream(
 	return s, nil
 }
 
-func SendSyncDatagram(
+// SendSyncPacket writes the packet over the given stream.
+func SendSyncPacket(
 	s quic.SendStream,
 	sendTimeout time.Duration,
 	chunkIdx uint16,
@@ -112,14 +113,14 @@ func SendSyncDatagram(
 ) error {
 	if len(raw) > (1<<16)-1 {
 		panic(fmt.Errorf(
-			"BUG: datagram size must fit in uint16 (got length %d)",
+			"BUG: packet size must fit in uint16 (got length %d)",
 			len(raw),
 		))
 	}
 
 	if err := s.SetWriteDeadline(time.Now().Add(sendTimeout)); err != nil {
 		return fmt.Errorf(
-			"failed to set write deadline for synchronous datagram: %w", err,
+			"failed to set write deadline for synchronous packet: %w", err,
 		)
 	}
 
@@ -129,19 +130,21 @@ func SendSyncDatagram(
 
 	if _, err := s.Write(meta[:]); err != nil {
 		return fmt.Errorf(
-			"failed to write synchronous datagram metadata: %w", err,
+			"failed to write synchronous packet metadata: %w", err,
 		)
 	}
 
 	if _, err := s.Write(raw); err != nil {
 		return fmt.Errorf(
-			"failed to write synchronous datagram data: %w", err,
+			"failed to write synchronous packet data: %w", err,
 		)
 	}
 
 	return nil
 }
 
+// SendSyncMissedDatagram sends an individual missed datagram
+// as a synchronous packet over the given stream.
 func SendSyncMissedDatagram(
 	s quic.SendStream,
 	sendTimeout time.Duration,

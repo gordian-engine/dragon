@@ -5,9 +5,9 @@ import (
 	"math/bits"
 )
 
-// BroadcastDatagram is the structured content
-// contained in the datagrams sent as part of broadcast.
-type BroadcastDatagram struct {
+// BroadcastPacket is the structured content
+// contained in the packets sent as part of broadcast.
+type BroadcastPacket struct {
 	// The protocol ID is omitted.
 
 	BroadcastID []byte
@@ -17,21 +17,21 @@ type BroadcastDatagram struct {
 	Data   []byte
 }
 
-// ParseBroadcastDatagram extracts the BroadcastDatagram from b.
+// ParseBroadcastPacket extracts the BroadcastPacket from b.
 //
-// Byte slice fields of the returned BroadcastDatagram
+// Byte slice fields of the returned BroadcastPacket
 // retain references into b, so they must not be modified.
-func ParseBroadcastDatagram(
-	datagram []byte,
+func ParseBroadcastPacket(
+	b []byte,
 	bidSz uint8,
 	nChunks uint16,
 	rootProofsLen uint,
 	hashSz int,
-) BroadcastDatagram {
-	chunkIdx := binary.BigEndian.Uint16(datagram[1+bidSz : 1+bidSz+2])
-	d := BroadcastDatagram{
+) BroadcastPacket {
+	chunkIdx := binary.BigEndian.Uint16(b[1+bidSz : 1+bidSz+2])
+	bp := BroadcastPacket{
 		// Not keeping the protocol ID.
-		BroadcastID: datagram[1 : 1+bidSz],
+		BroadcastID: b[1 : 1+bidSz],
 		ChunkIndex:  chunkIdx,
 	}
 
@@ -56,14 +56,14 @@ func ParseBroadcastDatagram(
 
 	idxOffset := 1 + int(bidSz) + 2
 	for i := range proofs {
-		proofs[i] = datagram[idxOffset : idxOffset+hashSz]
+		proofs[i] = b[idxOffset : idxOffset+hashSz]
 		idxOffset += hashSz
 	}
-	d.Proofs = proofs
+	bp.Proofs = proofs
 
 	// Assume the entire remainder of the slice
 	// is the raw data.
-	d.Data = datagram[idxOffset:]
+	bp.Data = b[idxOffset:]
 
-	return d
+	return bp
 }
