@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/bits-and-blooms/bitset"
+	"github.com/gordian-engine/dragon/breathcast/bcmerkle/bcsha256"
 	"github.com/gordian-engine/dragon/breathcast/internal/bci"
 	"github.com/gordian-engine/dragon/internal/dquic/dquictest"
 	"github.com/gordian-engine/dragon/internal/dtest"
@@ -170,23 +171,23 @@ func TestRunOrigination_missedAllUnreliableDatagrams(t *testing.T) {
 	// We must get three datagrams in any order.
 	// The origination operation will only send nData chunks,
 	// and the receiver is responsible for reconstructing the missing pieces.
-	got := bitset.MustNew(4)
-	var meta [4]byte
+	gotPackets := bitset.MustNew(4)
+	dec := bci.NewPacketDecoder(
+		protocolID,
+		broadcastID,
+		7,
+		bcsha256.HashSize,
+		uint16(len("datagram0")),
+	)
+
 	for range 3 {
 		require.NoError(t, s.SetReadDeadline(time.Now().Add(50*time.Millisecond)))
-		_, err = io.ReadFull(s, meta[:])
+		res, err := dec.Decode(s, gotPackets)
 		require.NoError(t, err)
-
-		idx := binary.BigEndian.Uint16(meta[:2])
-		sz := binary.BigEndian.Uint16(meta[2:])
-
-		data := make([]byte, sz)
-		_, err = io.ReadFull(s, data)
-		require.NoError(t, err)
-
-		require.Equal(t, dgs[idx], data)
-		require.False(t, got.Test(uint(idx)))
-		got.Set(uint(idx))
+		idx := uint(res.Packet.ChunkIndex)
+		require.Equal(t, dgs[idx], res.Raw)
+		require.False(t, gotPackets.Test(idx))
+		gotPackets.Set(idx)
 	}
 
 	// Then the originator must close the stream.

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/bits-and-blooms/bitset"
+	"github.com/gordian-engine/dragon/breathcast/bcmerkle/bcsha256"
 	"github.com/gordian-engine/dragon/breathcast/internal/bci"
 	"github.com/gordian-engine/dragon/internal/dchan"
 	"github.com/gordian-engine/dragon/internal/dquic/dquictest"
@@ -165,10 +166,19 @@ func TestRunAcceptBroadcast_syncDatagrams(t *testing.T) {
 
 	c := new(datagramCollector)
 
+	pDec := bci.NewPacketDecoder(
+		0xaa,
+		[]byte("test"),
+		7,
+		bcsha256.HashSize,
+		uint16(len("datagram0")),
+	)
+
 	bci.RunAcceptBroadcast(ctx, dtest.NewLogger(t), bci.AcceptBroadcastConfig{
 		WG: &wg,
 
 		Stream:        sTest,
+		PacketDecoder: pDec,
 		PacketHandler: c,
 
 		InitialHaveLeaves: bitset.MustNew(4),
@@ -189,8 +199,8 @@ func TestRunAcceptBroadcast_syncDatagrams(t *testing.T) {
 	require.Zero(t, got.Count())
 
 	// Now we send a synchronous datagram.
-	dg := []byte("some fake datagram content")
-	require.NoError(t, bci.SendSyncMissedDatagram(s, 10*time.Millisecond, 0, dg))
+	dg := []byte("\xAAtest\x00\x00datagram0")
+	require.NoError(t, bci.SendSyncMissedDatagram(s, 10*time.Millisecond, dg))
 
 	// When the operation calls HandleDatagram,
 	// it would normally be relying on feedback from the BroadcastOperation

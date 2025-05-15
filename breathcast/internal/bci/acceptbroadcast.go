@@ -2,7 +2,7 @@ package bci
 
 import (
 	"context"
-	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -19,6 +19,7 @@ type AcceptBroadcastConfig struct {
 	WG *sync.WaitGroup
 
 	Stream        quic.Stream
+	PacketDecoder *PacketDecoder
 	PacketHandler PacketHandler
 
 	InitialHaveLeaves *bitset.BitSet
@@ -66,6 +67,7 @@ func RunAcceptBroadcast(
 		log.With("step", "accept_sync_updates"),
 		cfg.WG,
 		cfg.Stream,
+		cfg.PacketDecoder,
 		cfg.PacketHandler,
 		newHaveLeaves,
 		5*time.Millisecond,
@@ -199,6 +201,7 @@ func acceptSyncUpdates(
 	log *slog.Logger,
 	wg *sync.WaitGroup,
 	s quic.ReceiveStream,
+	pDec *PacketDecoder,
 	dh PacketHandler,
 	newHaveLeaves <-chan *bitset.BitSet,
 	readSyncTimeout time.Duration,
@@ -261,10 +264,10 @@ UNFINISHED:
 			// Re-sync of a missed datagram.
 			if err := readSingleSyncPacket(
 				ctx,
-				s, dh,
-				haveLeaves, newHaveLeaves,
+				s,
+				pDec, haveLeaves,
+				dh,
 				readSyncTimeout,
-				dataReady,
 			); err != nil {
 				log.Info(
 					"Failed to read synchronous missed datagram",
@@ -309,10 +312,10 @@ UNFINISHED:
 
 		if err := readSingleSyncPacket(
 			ctx,
-			s, dh,
-			haveLeaves, newHaveLeaves,
+			s,
+			pDec, haveLeaves,
+			dh,
 			readSyncTimeout,
-			dataReady,
 		); err != nil {
 			log.Info(
 				"Failed to read synchronous missed datagram",
@@ -335,11 +338,10 @@ UNFINISHED:
 func readSingleSyncPacket(
 	ctx context.Context,
 	s quic.ReceiveStream,
+	dec *PacketDecoder,
+	havePackets *bitset.BitSet,
 	dh PacketHandler,
-	haveLeaves *bitset.BitSet,
-	newHaveLeaves <-chan *bitset.BitSet,
 	readSyncTimeout time.Duration,
-	dataReady <-chan struct{},
 ) error {
 	// Single read deadline for the metadata and the actual data.
 	if err := s.SetReadDeadline(time.Now().Add(readSyncTimeout)); err != nil {
@@ -348,57 +350,19 @@ func readSingleSyncPacket(
 		)
 	}
 
-	var meta [4]byte
-	if _, err := io.ReadFull(s, meta[:]); err != nil {
-		return fmt.Errorf(
-			"failed to read synchronous metadata: %w", err,
-		)
-	}
-
-	idx := binary.BigEndian.Uint16(meta[:2])
-	sz := binary.BigEndian.Uint16(meta[2:])
-
-	// TODO: validate that sz matches expected limits.
-
-	// One more check to see if we need to process this datagram.
-	select {
-	case <-ctx.Done():
-		return fmt.Errorf(
-			"context canceled while receiving synchronous datagram: %w",
-			context.Cause(ctx),
-		)
-	case <-dataReady:
-		// All done.
-		return nil
-
-	case n := <-newHaveLeaves:
-		// Newer than what we had before.
-		n.CopyFull(haveLeaves)
-
-	default:
-		// Keep going.
-	}
-
-	if haveLeaves.Test(uint(idx)) {
-		// Skip over the data.
-		if _, err := io.CopyN(io.Discard, s, int64(sz)); err != nil {
-			return fmt.Errorf("failed to skip redundant synchronous datagram: %w", err)
+	res, err := dec.Decode(s, havePackets)
+	if err != nil {
+		if errors.As(err, new(AlreadyHadPacketError)) {
+			return nil
 		}
-
-		// And we've handled the datagram at this point.
-		return nil
+		return fmt.Errorf("failed to decode packet: %w", err)
 	}
 
-	dg := make([]byte, sz)
-	if _, err := io.ReadFull(s, dg); err != nil {
-		return fmt.Errorf("failed to read synchronous datagram: %w", err)
-	}
-
-	// We didn't have the datagram, so try to add it.
-	// This seems safe to do between parsing packets,
-	// but we could offload it to a separate goroutine if needed.
-	if err := dh.HandlePacket(ctx, dg); err != nil {
-		return fmt.Errorf("failed to handle synchronous datagram: %w", err)
+	// TODO: we've already parsed the packet,
+	// so the PacketHander interface ought to be different
+	// in order to avoid repeating the parse work.
+	if err := dh.HandlePacket(ctx, res.Raw); err != nil {
+		return fmt.Errorf("failed to handle synchronous packet: %w", err)
 	}
 
 	return nil

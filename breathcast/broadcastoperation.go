@@ -274,7 +274,14 @@ func (o *BroadcastOperation) runAcceptBroadcast(
 		bci.AcceptBroadcastConfig{
 			WG: &o.wg,
 
-			Stream:        s,
+			Stream: s,
+			PacketDecoder: bci.NewPacketDecoder(
+				o.protocolID,
+				o.broadcastID,
+				uint(o.rootProofCount),
+				o.hashSize,
+				uint16(o.chunkSize), // TODO: o.chunkSize is an int. Is uint16 too restrictive?
+			),
 			PacketHandler: o,
 
 			InitialHaveLeaves: is.pt.HaveLeaves().Clone(),

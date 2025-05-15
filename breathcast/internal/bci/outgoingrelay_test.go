@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/bits-and-blooms/bitset"
+	"github.com/gordian-engine/dragon/breathcast/bcmerkle/bcsha256"
 	"github.com/gordian-engine/dragon/breathcast/internal/bci"
 	"github.com/gordian-engine/dragon/internal/dchan"
 	"github.com/gordian-engine/dragon/internal/dquic/dquictest"
@@ -488,36 +489,32 @@ func TestOutgoingRelay_dataReady(t *testing.T) {
 	// The host blocks until we send another bitset update.
 	require.NoError(t, ce.SendBitset(s, 50*time.Millisecond, cbs))
 
-	// Now the datagram values are sent as-is.
-	// We are only going to get two of them,
-	// and since they are chosen randomly,
-	// we cannot guess which two they will be.
-	meta := make([]byte, 4)
-	_, err = io.ReadFull(s, meta)
-	require.NoError(t, err)
-	idx := binary.BigEndian.Uint16(meta[:2])
-	sz := binary.BigEndian.Uint16(meta[2:])
+	decHave := bitset.MustNew(4)
+	decHave.Set(0)
+	dec := bci.NewPacketDecoder(
+		0xAA,
+		[]byte("test"),
+		7,
+		bcsha256.HashSize,
+		uint16(len("datagram 0")),
+	)
 
-	dg1 := make([]byte, sz)
-	_, err = io.ReadFull(s, dg1)
+	res, err := dec.Decode(s, decHave)
 	require.NoError(t, err)
-	require.Equal(t, fx.Cfg.Packets[idx], dg1)
+	require.False(t, decHave.Test(uint(res.Packet.ChunkIndex)))
+	require.Equal(t, fx.Cfg.Packets[res.Packet.ChunkIndex], res.Raw)
+	decHave.Set(uint(res.Packet.ChunkIndex))
 
-	// Once more.
-	_, err = io.ReadFull(s, meta)
+	// And one more time.
+	res, err = dec.Decode(s, decHave)
 	require.NoError(t, err)
-	nextIdx := binary.BigEndian.Uint16(meta[:2])
-	require.NotEqual(t, nextIdx, idx)
-	sz = binary.BigEndian.Uint16(meta[2:])
-
-	dg2 := make([]byte, sz)
-	_, err = io.ReadFull(s, dg2)
-	require.NoError(t, err)
-	require.Equal(t, fx.Cfg.Packets[nextIdx], dg2)
+	require.False(t, decHave.Test(uint(res.Packet.ChunkIndex)))
+	require.Equal(t, fx.Cfg.Packets[res.Packet.ChunkIndex], res.Raw)
 
 	// The write-side should be closed now,
 	// so the next read should be an EOF.
-	_, err = io.ReadFull(s, buf[:])
+	n, err := io.ReadFull(s, buf[:])
+	require.Zero(t, n)
 	require.Error(t, err)
 	require.ErrorIs(t, err, io.EOF)
 }

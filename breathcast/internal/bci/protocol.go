@@ -108,29 +108,11 @@ func OpenStream(
 func SendSyncPacket(
 	s quic.SendStream,
 	sendTimeout time.Duration,
-	chunkIdx uint16,
 	raw []byte,
 ) error {
-	if len(raw) > (1<<16)-1 {
-		panic(fmt.Errorf(
-			"BUG: packet size must fit in uint16 (got length %d)",
-			len(raw),
-		))
-	}
-
 	if err := s.SetWriteDeadline(time.Now().Add(sendTimeout)); err != nil {
 		return fmt.Errorf(
 			"failed to set write deadline for synchronous packet: %w", err,
-		)
-	}
-
-	var meta [4]byte
-	binary.BigEndian.PutUint16(meta[:2], chunkIdx)
-	binary.BigEndian.PutUint16(meta[2:], uint16(len(raw)))
-
-	if _, err := s.Write(meta[:]); err != nil {
-		return fmt.Errorf(
-			"failed to write synchronous packet metadata: %w", err,
 		)
 	}
 
@@ -148,30 +130,17 @@ func SendSyncPacket(
 func SendSyncMissedDatagram(
 	s quic.SendStream,
 	sendTimeout time.Duration,
-	chunkIdx uint16,
 	raw []byte,
 ) error {
-	if len(raw) > (1<<16)-1 {
-		panic(fmt.Errorf(
-			"BUG: datagram size must fit in uint16 (got length %d)",
-			len(raw),
-		))
-	}
-
 	if err := s.SetWriteDeadline(time.Now().Add(sendTimeout)); err != nil {
 		return fmt.Errorf(
 			"failed to set write deadline for synchronous datagram: %w", err,
 		)
 	}
 
-	var meta [5]byte
-	meta[0] = datagramSyncMessageID
-	binary.BigEndian.PutUint16(meta[1:3], chunkIdx)
-	binary.BigEndian.PutUint16(meta[3:], uint16(len(raw)))
-
-	if _, err := s.Write(meta[:]); err != nil {
+	if _, err := s.Write([]byte{datagramSyncMessageID}); err != nil {
 		return fmt.Errorf(
-			"failed to write synchronous missed datagram metadata: %w", err,
+			"failed to write missed datagram message ID: %w", err,
 		)
 	}
 

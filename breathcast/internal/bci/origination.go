@@ -406,7 +406,7 @@ func sendSyncPackets(
 		}
 
 		if err := SendSyncPacket(
-			s, sendSyncPacketTimeout, uint16(cb.Idx), packets[cb.Idx],
+			s, sendSyncPacketTimeout, packets[cb.Idx],
 		); err != nil {
 			return fmt.Errorf("failed to send synchronous packet: %w", err)
 		}
