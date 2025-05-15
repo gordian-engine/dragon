@@ -257,18 +257,23 @@ func TestRunOutgoingRelay_missedDatagramSentReliably(t *testing.T) {
 
 	// Next, the host sends the 1-byte sync message ID and the datagram.
 	require.NoError(t, s.SetReadDeadline(time.Now().Add(50*time.Millisecond)))
-	buf := make([]byte, 1+4+len(fx.Cfg.Packets[0]))
-	_, err = io.ReadFull(s, buf)
+
+	var buf [1]byte
+	_, err = io.ReadFull(s, buf[:])
 	require.NoError(t, err)
 	require.Equal(t, byte(1), buf[0])
 
-	chunkID := binary.BigEndian.Uint16(buf[1:3])
-	require.Zero(t, chunkID)
-
-	sz := binary.BigEndian.Uint16(buf[3:5])
-	require.Equal(t, len(fx.Cfg.Packets[0]), int(sz))
-
-	require.Equal(t, fx.Cfg.Packets[0], buf[5:])
+	dec := bci.NewPacketDecoder(
+		0xAA,
+		[]byte("test"),
+		7,
+		32,
+		uint16(len("datagram 0")),
+	)
+	res, err := dec.Decode(s, bitset.MustNew(4))
+	require.NoError(t, err)
+	require.Zero(t, res.Packet.ChunkIndex)
+	require.Equal(t, fx.Cfg.Packets[0], res.Raw)
 }
 
 func TestRunOutgoingRelay_missedDatagrams_staggered(t *testing.T) {
@@ -358,22 +363,30 @@ func TestRunOutgoingRelay_missedDatagrams_staggered(t *testing.T) {
 
 	// That is two deltas without acknowledging the first datagram.
 	require.NoError(t, s.SetReadDeadline(time.Now().Add(50*time.Millisecond)))
-	buf := make([]byte, 1+4+len(fx.Cfg.Packets[0]))
-	_, err = io.ReadFull(s, buf)
+
+	msgBuf := make([]byte, 1)
+	_, err = io.ReadFull(s, msgBuf)
 	require.NoError(t, err)
-	require.Equal(t, byte(1), buf[0])
+	require.Equal(t, byte(1), msgBuf[0])
 
-	chunkID := binary.BigEndian.Uint16(buf[1:3])
-	require.Zero(t, chunkID)
-
-	sz := binary.BigEndian.Uint16(buf[3:5])
-	require.Equal(t, len(fx.Cfg.Packets[0]), int(sz))
-
-	require.Equal(t, fx.Cfg.Packets[0], buf[5:])
+	dec := bci.NewPacketDecoder(
+		0xAA,
+		[]byte("test"),
+		7,
+		32,
+		uint16(len("datagram 0")),
+	)
+	decHave := bitset.MustNew(4)
+	res, err := dec.Decode(s, decHave)
+	require.NoError(t, err)
+	require.Zero(t, res.Packet.ChunkIndex)
+	require.Equal(t, fx.Cfg.Packets[0], res.Raw)
+	decHave.Set(0)
 
 	// Do a short read attempt, and it must time out.
 	require.NoError(t, s.SetReadDeadline(time.Now().Add(2*time.Millisecond)))
-	n, err := io.ReadFull(s, buf[:])
+
+	n, err := io.ReadFull(s, make([]byte, 1))
 	require.Error(t, err)
 	require.ErrorIs(t, err, os.ErrDeadlineExceeded)
 	require.Zero(t, n)
@@ -385,17 +398,22 @@ func TestRunOutgoingRelay_missedDatagrams_staggered(t *testing.T) {
 
 	// That update causes another sync update, finally.
 	require.NoError(t, s.SetReadDeadline(time.Now().Add(50*time.Millisecond)))
-	_, err = io.ReadFull(s, buf)
+
+	_, err = io.ReadFull(s, msgBuf)
 	require.NoError(t, err)
-	require.Equal(t, byte(1), buf[0])
+	require.Equal(t, byte(1), msgBuf[0])
 
-	chunkID = binary.BigEndian.Uint16(buf[1:3])
-	require.Equal(t, uint16(1), chunkID)
+	res, err = dec.Decode(s, decHave)
+	require.NoError(t, err)
+	require.Equal(t, uint16(1), res.Packet.ChunkIndex)
+	require.Equal(t, fx.Cfg.Packets[1], res.Raw)
 
-	sz = binary.BigEndian.Uint16(buf[3:5])
-	require.Equal(t, len(fx.Cfg.Packets[0]), int(sz))
-
-	require.Equal(t, fx.Cfg.Packets[1], buf[5:])
+	// Still nothing available to read after that.
+	require.NoError(t, s.SetReadDeadline(time.Now().Add(2*time.Millisecond)))
+	n, err = io.ReadFull(s, make([]byte, 1))
+	require.Error(t, err)
+	require.ErrorIs(t, err, os.ErrDeadlineExceeded)
+	require.Zero(t, n)
 }
 
 func TestOutgoingRelay_dataReady(t *testing.T) {

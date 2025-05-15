@@ -83,3 +83,57 @@ func TestRandomClearBitIterator_onlyVisitsClear(t *testing.T) {
 		require.Len(t, visited, sz-1)
 	}
 }
+
+func TestRandomSetBitIterator_differentOrder(t *testing.T) {
+	t.Parallel()
+
+	// With 98 set bits, it's virtually impossible
+	// that a relatively small set of iterations would go in the same order.
+	bs := bitset.MustNew(100)
+	for i := range uint(100) {
+		if i == 10 || i == 20 {
+			continue
+		}
+		bs.Set(i)
+	}
+
+	ord1 := make([]uint, 0, 98)
+	for cb := range bci.RandomSetBitIterator(bs) {
+		ord1 = append(ord1, cb.Idx)
+	}
+
+	got := make([]uint, 0, 98)
+	for range bitIteratorCheckCount {
+		got = got[:0]
+		for cb := range bci.RandomSetBitIterator(bs) {
+			got = append(got, cb.Idx)
+		}
+
+		require.ElementsMatch(t, ord1, got)
+		require.NotEqual(t, ord1, got)
+	}
+}
+
+func TestRandomSetBitIterator_onlyVisitsSet(t *testing.T) {
+	t.Parallel()
+
+	const sz = bitIteratorCheckCount * 5
+	visited := make([]uint, 0, sz)
+	for i := range bitIteratorCheckCount {
+		bs := bitset.MustNew(sz)
+		bs.Set(uint(i))
+
+		visited = visited[:0]
+		for cb := range bci.RandomClearBitIterator(bs) {
+			visited = append(visited, cb.Idx)
+		}
+
+		require.Len(t, visited, sz-1)
+		require.NotContains(t, visited, uint(i)) // Doesn't have the one bit we set.
+
+		// There were no duplicate visits in the list.
+		slices.Sort(visited)
+		visited = slices.Compact(visited)
+		require.Len(t, visited, sz-1)
+	}
+}

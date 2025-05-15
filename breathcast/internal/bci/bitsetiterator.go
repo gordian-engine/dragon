@@ -12,7 +12,15 @@ import (
 // for choosing a coprime number for pseudorandom iteration
 // over bitsets.
 var primes = [...]uint{
-	7, 17, 41, 89, 137, 191, 239, 257, 311, 389, 419,
+	// We do want a few more small primes,
+	// because we do want to occasionally have to try again on getCoprime.
+	// If we never try again,
+	// and if we never have concurrent updates to globalSeed,
+	// we would only end up inspecting every other entry in prime
+	// since normal use involves one seed for the primes index
+	// and another seed for the starting position in the bitset.
+	7, 11, 13, 17, 23, 29, 31, 37, 41,
+	89, 137, 191, 239, 257, 311, 389, 419,
 	467, 541, 593, 643, 701, 797, 821, 887, 941, 997,
 }
 
@@ -33,8 +41,8 @@ var globalSeed uint64
 var bsPool sync.Pool
 
 // ClearBit is the type returned in the [RandomClearBitIterator].
-// We use a dedicated type here as opposed to a simple uint
-// so that we can expose the [*ClearBit.InPlaceUnion] method.
+// This is a dedicated type as opposed to a simple uint
+// in order to expose the [*ClearBit.InPlaceUnion] method.
 type ClearBit struct {
 	Idx uint
 	bs  *bitset.BitSet
@@ -51,7 +59,7 @@ type ClearBit struct {
 func (b *ClearBit) InPlaceUnion(x *bitset.BitSet) {
 	b.bs.InPlaceUnion(x)
 
-	// Don't do bookkeeping in here.
+	// Don't do bookkeeping around b.Idx in here.
 	// Simply signal to the iterator code that it is outdated.
 	b.dirty = true
 }
@@ -151,6 +159,90 @@ func RandomClearBitIterator(bs *bitset.BitSet) iter.Seq[*ClearBit] {
 			}
 
 			cb.Idx = (cb.Idx + stride) % sz
+		}
+	}
+}
+
+// SetBit is the type returned by [RandomSetBitIterator].
+type SetBit struct {
+	Idx uint
+
+	// TODO: we didn't need to mutate the set bits anywhere yet,
+	// but we may need a reference to the bitset later.
+}
+
+func RandomSetBitIterator(bs *bitset.BitSet) iter.Seq[*SetBit] {
+	x := bsPool.Get()
+	var local *bitset.BitSet
+	if x == nil {
+		local = bs.Clone()
+	} else {
+		local = x.(*bitset.BitSet)
+		bs.CopyFull(local)
+	}
+
+	return func(yield func(*SetBit) bool) {
+		defer bsPool.Put(local)
+
+		remaining := local.Count()
+		if remaining == 0 {
+			// Unlikely early return case.
+			return
+		}
+
+		sz := local.Len()
+
+		// Finding a coprime value to the bitset's length
+		// allows us to effectively find a pseudorandom order of iteration.
+		stride := getCoprime(sz)
+
+		// See halfIdx comments in RandomClearBitIterator.
+		halfIdx := sz / 2
+
+		sb := &SetBit{
+			Idx: uint(atomic.AddUint64(&globalSeed, 1)) % sz,
+		}
+
+		for {
+			if local.Test(sb.Idx) {
+				// Landed on a set bit, so we can yield directly.
+				if !yield(sb) {
+					return
+				}
+				local.Clear(sb.Idx)
+			} else {
+				// On an already clear bit,
+				// so seek towards the larger side first.
+				oldIdx := sb.Idx
+
+				var ok bool
+				if oldIdx < halfIdx {
+					// Scan forward first to cover more bits.
+					sb.Idx, ok = local.NextSet(oldIdx)
+					if !ok {
+						sb.Idx, _ = local.PreviousSet(oldIdx)
+					}
+				} else {
+					// Scan backward first.
+					sb.Idx, ok = local.PreviousSet(oldIdx)
+					if !ok {
+						sb.Idx, _ = local.NextSet(oldIdx)
+					}
+				}
+
+				if !yield(sb) {
+					return
+				}
+				local.Clear(sb.Idx)
+				sb.Idx = oldIdx
+			}
+
+			remaining--
+			if remaining == 0 {
+				return
+			}
+
+			sb.Idx = (sb.Idx + stride) % sz
 		}
 	}
 }

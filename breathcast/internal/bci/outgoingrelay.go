@@ -2,8 +2,6 @@ package bci
 
 import (
 	"context"
-	"encoding/binary"
-	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -352,22 +350,20 @@ func sendExistingDatagrams(
 	packets [][]byte,
 	toSend *bitset.BitSet,
 ) {
-	// TODO: this should randomly iterate the set bits,
-	// otherwise we are likely to have redundant sends with other peers.
 	nSent := 0
-	for u, ok := toSend.NextSet(0); ok; u, ok = toSend.NextSet(u + 1) {
+	for sb := range RandomSetBitIterator(toSend) {
 		if (nSent & 7) == 7 {
 			// Micro-sleep to give outgoing datagram buffers a chance to flush.
 			// Not actually measured, but seems likely to avoid dropped packets.
 			time.Sleep(5 * time.Microsecond)
 		}
 
-		if err := conn.SendDatagram(packets[u]); err != nil {
+		if err := conn.SendDatagram(packets[sb.Idx]); err != nil {
 			// There are a few reasons why sending the datagram could fail.
 			// TODO: inspect this error and quit if the connection is closed.
 			log.Info(
 				"Failed to send existing datagram",
-				"idx", u,
+				"idx", sb.Idx,
 				"err", err,
 			)
 		}
@@ -407,8 +403,6 @@ func sendMissedPackets(
 		s = x
 	}
 
-	var meta [5]byte
-	meta[0] = datagramSyncMessageID
 	for {
 		select {
 		case <-ctx.Done():
@@ -422,24 +416,9 @@ func sendMissedPackets(
 				return
 			}
 
-			// TODO: this should iterate over set bits randomly.
-			for u, ok := req.NextSet(0); ok; u, ok = req.NextSet(u + 1) {
+			for sb := range RandomSetBitIterator(req) {
 				const timeout = 3 * time.Millisecond // TODO: make configurable.
-				if err := s.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
-					panic(fmt.Errorf("TODO: handle error setting write deadline: %w", err))
-				}
-
-				// Update the metadata to include
-				// the chunk index and the size of the packet.
-				binary.BigEndian.PutUint16(meta[1:3], uint16(u))
-				binary.BigEndian.PutUint16(meta[3:], uint16(len(packets[u])))
-				if _, err := s.Write(meta[:]); err != nil {
-					panic(fmt.Errorf("TODO: handle error writing sync packet: %w", err))
-				}
-
-				if _, err := s.Write(packets[u]); err != nil {
-					panic(fmt.Errorf("TODO: handle error writing sync packet: %w", err))
-				}
+				SendSyncMissedDatagram(s, timeout, packets[sb.Idx])
 			}
 
 			// We sent all the synchronous packets,
