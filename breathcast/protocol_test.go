@@ -604,14 +604,14 @@ func TestProtocol_Relay_datagramsForwarded(t *testing.T) {
 	dtest.NotSending(t, bop1.DataReady())
 	dtest.NotSending(t, bop2.DataReady())
 
-	t.Skip("TODO: finish handling completed data in outgoing relay")
-
 	dtest.SendSoon(t, cont01, struct{}{})
 	dtest.SendSoon(t, cont12, struct{}{})
 
 	_ = dtest.ReceiveSoon(t, bop1.DataReady())
 	_ = dtest.ReceiveSoon(t, bop2.DataReady())
 
+	// Short sleep to allow background work to happen,
+	// possibly allowing a panic if one were to happen.
 	time.Sleep(5 * time.Millisecond)
 }
 
