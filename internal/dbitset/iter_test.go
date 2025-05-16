@@ -1,11 +1,11 @@
-package bci_test
+package dbitset_test
 
 import (
 	"slices"
 	"testing"
 
 	"github.com/bits-and-blooms/bitset"
-	"github.com/gordian-engine/dragon/breathcast/internal/bci"
+	"github.com/gordian-engine/dragon/dbitset"
 	"github.com/stretchr/testify/require"
 )
 
@@ -21,14 +21,14 @@ func TestRandomClearBitIterator_differentOrder(t *testing.T) {
 	bs.Set(20)
 
 	ord1 := make([]uint, 0, 98)
-	for cb := range bci.RandomClearBitIterator(bs) {
+	for cb := range dbitset.RandomClearBitIterator(bs) {
 		ord1 = append(ord1, cb.Idx)
 	}
 
 	got := make([]uint, 0, 98)
 	for range bitIteratorCheckCount {
 		got = got[:0]
-		for cb := range bci.RandomClearBitIterator(bs) {
+		for cb := range dbitset.RandomClearBitIterator(bs) {
 			got = append(got, cb.Idx)
 		}
 
@@ -48,7 +48,7 @@ func TestRandomClearBitIterator_InPlaceUnion(t *testing.T) {
 
 	for range bitIteratorCheckCount {
 		iters := 0
-		for cb := range bci.RandomClearBitIterator(bs) {
+		for cb := range dbitset.RandomClearBitIterator(bs) {
 			iters++
 
 			// Unioning with an all-set bitset
@@ -70,7 +70,7 @@ func TestRandomClearBitIterator_onlyVisitsClear(t *testing.T) {
 		bs.Set(uint(i))
 
 		visited = visited[:0]
-		for cb := range bci.RandomClearBitIterator(bs) {
+		for cb := range dbitset.RandomClearBitIterator(bs) {
 			visited = append(visited, cb.Idx)
 		}
 
@@ -98,14 +98,14 @@ func TestRandomSetBitIterator_differentOrder(t *testing.T) {
 	}
 
 	ord1 := make([]uint, 0, 98)
-	for cb := range bci.RandomSetBitIterator(bs) {
+	for cb := range dbitset.RandomSetBitIterator(bs) {
 		ord1 = append(ord1, cb.Idx)
 	}
 
 	got := make([]uint, 0, 98)
 	for range bitIteratorCheckCount {
 		got = got[:0]
-		for cb := range bci.RandomSetBitIterator(bs) {
+		for cb := range dbitset.RandomSetBitIterator(bs) {
 			got = append(got, cb.Idx)
 		}
 
@@ -124,7 +124,7 @@ func TestRandomSetBitIterator_onlyVisitsSet(t *testing.T) {
 		bs.Set(uint(i))
 
 		visited = visited[:0]
-		for cb := range bci.RandomClearBitIterator(bs) {
+		for cb := range dbitset.RandomClearBitIterator(bs) {
 			visited = append(visited, cb.Idx)
 		}
 

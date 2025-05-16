@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/bits-and-blooms/bitset"
+	"github.com/gordian-engine/dragon/internal/dbitset"
 	"github.com/gordian-engine/dragon/internal/dchan"
 	"github.com/quic-go/quic-go"
 )
@@ -351,7 +352,7 @@ func sendExistingDatagrams(
 	toSend *bitset.BitSet,
 ) {
 	nSent := 0
-	for sb := range RandomSetBitIterator(toSend) {
+	for sb := range dbitset.RandomSetBitIterator(toSend) {
 		if (nSent & 7) == 7 {
 			// Micro-sleep to give outgoing datagram buffers a chance to flush.
 			// Not actually measured, but seems likely to avoid dropped packets.
@@ -416,7 +417,7 @@ func sendMissedPackets(
 				return
 			}
 
-			for sb := range RandomSetBitIterator(req) {
+			for sb := range dbitset.RandomSetBitIterator(req) {
 				const timeout = 3 * time.Millisecond // TODO: make configurable.
 				SendSyncMissedDatagram(s, timeout, packets[sb.Idx])
 			}

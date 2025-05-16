@@ -1,4 +1,4 @@
-package bci
+package dbitset
 
 import (
 	"iter"

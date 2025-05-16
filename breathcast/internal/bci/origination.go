@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bits-and-blooms/bitset"
+	"github.com/gordian-engine/dragon/internal/dbitset"
 	"github.com/quic-go/quic-go"
 )
 
@@ -315,7 +316,7 @@ func sendUnreliableDatagrams(
 	if it == nil {
 		it = peerHas
 	}
-	for cb := range RandomClearBitIterator(it) {
+	for cb := range dbitset.RandomClearBitIterator(it) {
 		// Whether we need to skip this bit due to a new update.
 		skip := false
 
@@ -383,7 +384,7 @@ func sendSyncPackets(
 	need := nData - uint16(haveCount)
 
 	const sendSyncPacketTimeout = time.Millisecond // TODO: make configurable.
-	for cb := range RandomClearBitIterator(peerHas) {
+	for cb := range dbitset.RandomClearBitIterator(peerHas) {
 		// Each iteration, check if there is an updated delta.
 		select {
 		case d := <-peerHasDeltaCh:
