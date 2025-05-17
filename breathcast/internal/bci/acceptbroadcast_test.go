@@ -10,6 +10,7 @@ import (
 	"github.com/bits-and-blooms/bitset"
 	"github.com/gordian-engine/dragon/breathcast/bcmerkle/bcsha256"
 	"github.com/gordian-engine/dragon/breathcast/internal/bci"
+	"github.com/gordian-engine/dragon/internal/dbitset"
 	"github.com/gordian-engine/dragon/internal/dchan"
 	"github.com/gordian-engine/dragon/internal/dquic/dquictest"
 	"github.com/gordian-engine/dragon/internal/dtest"
@@ -47,7 +48,7 @@ func TestRunAcceptBroadcast_firstUpdate(t *testing.T) {
 		})
 		defer cancel()
 
-		dec := new(bci.CombinationDecoder)
+		dec := new(dbitset.CombinationDecoder)
 		got := bitset.MustNew(4)
 
 		// The operation immediately sends its have bitset, which is empty.
@@ -86,7 +87,7 @@ func TestRunAcceptBroadcast_firstUpdate(t *testing.T) {
 		})
 		defer cancel()
 
-		dec := new(bci.CombinationDecoder)
+		dec := new(dbitset.CombinationDecoder)
 		got := bitset.MustNew(4)
 
 		// The operation immediately sends its have bitset,
@@ -130,7 +131,7 @@ func TestRunAcceptBroadcast_externalUpdatesShared(t *testing.T) {
 	})
 	defer cancel()
 
-	dec := new(bci.CombinationDecoder)
+	dec := new(dbitset.CombinationDecoder)
 	got := bitset.MustNew(4)
 
 	// The operation immediately sends its have bitset.
@@ -191,7 +192,7 @@ func TestRunAcceptBroadcast_syncDatagrams(t *testing.T) {
 	})
 	defer cancel()
 
-	dec := new(bci.CombinationDecoder)
+	dec := new(dbitset.CombinationDecoder)
 	got := bitset.MustNew(4)
 
 	// The operation immediately sends its have bitset, which is empty.

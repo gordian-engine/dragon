@@ -152,7 +152,7 @@ func openOutgoingRelayStream(
 	const receiveBitsetTimeout = 10 * time.Millisecond
 	peerHas := bitset.MustNew(uint(cfg.NData + cfg.NParity))
 
-	dec := new(CombinationDecoder)
+	dec := new(dbitset.CombinationDecoder)
 	if err := dec.ReceiveBitset(s, receiveBitsetTimeout, peerHas); err != nil {
 		log.Info(
 			"Failed to receive initial bitset acknowledgement to relay stream",

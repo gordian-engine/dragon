@@ -14,6 +14,7 @@ import (
 	"github.com/bits-and-blooms/bitset"
 	"github.com/gordian-engine/dragon/breathcast/bcmerkle/bcsha256"
 	"github.com/gordian-engine/dragon/breathcast/internal/bci"
+	"github.com/gordian-engine/dragon/internal/dbitset"
 	"github.com/gordian-engine/dragon/internal/dchan"
 	"github.com/gordian-engine/dragon/internal/dquic/dquictest"
 	"github.com/gordian-engine/dragon/internal/dtest"
@@ -110,7 +111,7 @@ func TestRunOutgoingRelay_redundantDatagramNotSent(t *testing.T) {
 
 	// For the client side of the handshake,
 	// indicate that we already have the zeroth datagram.
-	var ce bci.CombinationEncoder
+	var ce dbitset.CombinationEncoder
 	cbs := bitset.MustNew(4)
 	cbs.Set(0)
 	require.NoError(t, ce.SendBitset(s, 50*time.Millisecond, cbs))
@@ -171,7 +172,7 @@ func TestRunOutgoingRelay_forwardNewDatagram(t *testing.T) {
 
 	// For the client side of the handshake,
 	// indicate we don't have any data yet.
-	var ce bci.CombinationEncoder
+	var ce dbitset.CombinationEncoder
 	cbs := bitset.MustNew(4)
 	require.NoError(t, ce.SendBitset(s, 50*time.Millisecond, cbs))
 
@@ -238,7 +239,7 @@ func TestRunOutgoingRelay_missedDatagramSentReliably(t *testing.T) {
 
 	// For the client side of the handshake,
 	// indicate we don't have any data yet.
-	var ce bci.CombinationEncoder
+	var ce dbitset.CombinationEncoder
 	cbs := bitset.MustNew(4)
 	require.NoError(t, ce.SendBitset(s, 50*time.Millisecond, cbs))
 
@@ -322,7 +323,7 @@ func TestRunOutgoingRelay_missedDatagrams_staggered(t *testing.T) {
 
 	// For the client side of the handshake,
 	// indicate we don't have any data yet.
-	var ce bci.CombinationEncoder
+	var ce dbitset.CombinationEncoder
 	cbs := bitset.MustNew(4)
 	require.NoError(t, ce.SendBitset(s, 50*time.Millisecond, cbs))
 
@@ -462,7 +463,7 @@ func TestOutgoingRelay_dataReady(t *testing.T) {
 
 	// For the client side of the handshake,
 	// indicate we have the same single datagram.
-	var ce bci.CombinationEncoder
+	var ce dbitset.CombinationEncoder
 	cbs := bitset.MustNew(4)
 	cbs.Set(0)
 	require.NoError(t, ce.SendBitset(s, 50*time.Millisecond, cbs))

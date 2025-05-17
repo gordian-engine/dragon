@@ -13,6 +13,7 @@ require (
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
+	github.com/golang/snappy v1.0.0 // indirect
 	github.com/google/pprof v0.0.0-20250501235452-c0086092b71a // indirect
 	github.com/klauspost/cpuid/v2 v2.2.10 // indirect
 	github.com/onsi/ginkgo/v2 v2.23.4 // indirect

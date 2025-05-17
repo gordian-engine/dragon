@@ -1,4 +1,4 @@
-package bci
+package dbitset
 
 import (
 	"encoding/binary"
@@ -97,7 +97,7 @@ func (e *CombinationEncoder) calculateCombIdx(bs *bitset.BitSet) uint16 {
 type CombinationDecoder struct {
 	inBuf []byte
 
-	combIdx, remaining, scratch big.Int
+	combIdx, scratch big.Int
 }
 
 // ReceiveBitset reads a compressed bitset from the given stream,

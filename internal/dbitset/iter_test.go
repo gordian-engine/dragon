@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/bits-and-blooms/bitset"
-	"github.com/gordian-engine/dragon/dbitset"
+	"github.com/gordian-engine/dragon/internal/dbitset"
 	"github.com/stretchr/testify/require"
 )
 

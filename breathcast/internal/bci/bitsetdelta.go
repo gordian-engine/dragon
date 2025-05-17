@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/bits-and-blooms/bitset"
+	"github.com/gordian-engine/dragon/internal/dbitset"
 	"github.com/quic-go/quic-go"
 )
 
@@ -13,7 +14,7 @@ import (
 // required for [receiveBitsetDeltas].
 type bsdState struct {
 	Stream quic.ReceiveStream
-	Dec    *CombinationDecoder
+	Dec    *dbitset.CombinationDecoder
 }
 
 // receiveBitsetDeltas repeatedly reads bitset values
@@ -51,7 +52,7 @@ func receiveBitsetDeltas(
 
 	// Block until the stream is ready.
 	var s quic.ReceiveStream
-	var dec *CombinationDecoder
+	var dec *dbitset.CombinationDecoder
 	select {
 	case <-ctx.Done():
 		return

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/bits-and-blooms/bitset"
+	"github.com/gordian-engine/dragon/internal/dbitset"
 	"github.com/gordian-engine/dragon/internal/dchan"
 	"github.com/quic-go/quic-go"
 )
@@ -95,7 +96,7 @@ func runPeriodicBitsetUpdates(
 ) {
 	defer wg.Done()
 
-	enc := new(CombinationEncoder)
+	enc := new(dbitset.CombinationEncoder)
 
 	// Send the first update immediately.
 	// This is the only time we send the entire bitset.
