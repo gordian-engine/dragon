@@ -59,10 +59,9 @@ func TestRunOutgoingRelay_handshake(t *testing.T) {
 	require.Equal(t, appHeader, gotAH)
 
 	// For the client side of the handshake,
-	// just send 4 zero bytes to indicate that we have no datagrams.
-	require.NoError(t, s.SetWriteDeadline(time.Now().Add(50*time.Millisecond)))
-	_, err = s.Write(make([]byte, 4))
-	require.NoError(t, err)
+	// indicate that we have no datagrams.
+	var enc dbitset.AdaptiveEncoder
+	require.NoError(t, enc.SendBitset(s, 50*time.Millisecond, bitset.MustNew(4)))
 
 	// Have the client connection receive a datagram,
 	// which should only work after the handshake (I think?).
@@ -111,7 +110,7 @@ func TestRunOutgoingRelay_redundantDatagramNotSent(t *testing.T) {
 
 	// For the client side of the handshake,
 	// indicate that we already have the zeroth datagram.
-	var ce dbitset.CombinationEncoder
+	var ce dbitset.AdaptiveEncoder
 	cbs := bitset.MustNew(4)
 	cbs.Set(0)
 	require.NoError(t, ce.SendBitset(s, 50*time.Millisecond, cbs))
@@ -172,7 +171,7 @@ func TestRunOutgoingRelay_forwardNewDatagram(t *testing.T) {
 
 	// For the client side of the handshake,
 	// indicate we don't have any data yet.
-	var ce dbitset.CombinationEncoder
+	var ce dbitset.AdaptiveEncoder
 	cbs := bitset.MustNew(4)
 	require.NoError(t, ce.SendBitset(s, 50*time.Millisecond, cbs))
 
@@ -239,7 +238,7 @@ func TestRunOutgoingRelay_missedDatagramSentReliably(t *testing.T) {
 
 	// For the client side of the handshake,
 	// indicate we don't have any data yet.
-	var ce dbitset.CombinationEncoder
+	var ce dbitset.AdaptiveEncoder
 	cbs := bitset.MustNew(4)
 	require.NoError(t, ce.SendBitset(s, 50*time.Millisecond, cbs))
 
@@ -323,7 +322,7 @@ func TestRunOutgoingRelay_missedDatagrams_staggered(t *testing.T) {
 
 	// For the client side of the handshake,
 	// indicate we don't have any data yet.
-	var ce dbitset.CombinationEncoder
+	var ce dbitset.AdaptiveEncoder
 	cbs := bitset.MustNew(4)
 	require.NoError(t, ce.SendBitset(s, 50*time.Millisecond, cbs))
 
@@ -463,7 +462,7 @@ func TestOutgoingRelay_dataReady(t *testing.T) {
 
 	// For the client side of the handshake,
 	// indicate we have the same single datagram.
-	var ce dbitset.CombinationEncoder
+	var ce dbitset.AdaptiveEncoder
 	cbs := bitset.MustNew(4)
 	cbs.Set(0)
 	require.NoError(t, ce.SendBitset(s, 50*time.Millisecond, cbs))

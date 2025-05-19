@@ -12,6 +12,7 @@ import (
 	"github.com/bits-and-blooms/bitset"
 	"github.com/gordian-engine/dragon/breathcast/bcmerkle/bcsha256"
 	"github.com/gordian-engine/dragon/breathcast/internal/bci"
+	"github.com/gordian-engine/dragon/internal/dbitset"
 	"github.com/gordian-engine/dragon/internal/dquic/dquictest"
 	"github.com/gordian-engine/dragon/internal/dtest"
 	"github.com/quic-go/quic-go"
@@ -152,10 +153,10 @@ func TestRunOrigination_missedAllUnreliableDatagrams(t *testing.T) {
 	require.Equal(t, appHeader, gotAH)
 
 	// For the client side of the handshake,
-	// just send 4 zero bytes to indicate that we have no datagrams.
-	require.NoError(t, s.SetWriteDeadline(time.Now().Add(50*time.Millisecond)))
-	_, err = s.Write(make([]byte, 4))
-	require.NoError(t, err)
+	// indicate that we have no datagrams.
+	var enc dbitset.AdaptiveEncoder
+	emptyBS := bitset.MustNew(4)
+	require.NoError(t, enc.SendBitset(s, 50*time.Millisecond, emptyBS))
 
 	// Now the first byte we read must be the termination byte.
 	var buf [1]byte
@@ -164,14 +165,12 @@ func TestRunOrigination_missedAllUnreliableDatagrams(t *testing.T) {
 	require.Equal(t, byte(0xff), buf[0])
 
 	// We have to respond with our bitset again.
-	require.NoError(t, s.SetWriteDeadline(time.Now().Add(50*time.Millisecond)))
-	_, err = s.Write(make([]byte, 4))
-	require.NoError(t, err)
+	require.NoError(t, enc.SendBitset(s, 50*time.Millisecond, emptyBS))
 
 	// We must get three datagrams in any order.
 	// The origination operation will only send nData chunks,
 	// and the receiver is responsible for reconstructing the missing pieces.
-	gotPackets := bitset.MustNew(4)
+	gotPackets := emptyBS // Rename and reuse.
 	dec := bci.NewPacketDecoder(
 		protocolID,
 		broadcastID,

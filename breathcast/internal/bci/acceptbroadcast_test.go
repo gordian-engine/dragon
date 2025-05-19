@@ -48,7 +48,7 @@ func TestRunAcceptBroadcast_firstUpdate(t *testing.T) {
 		})
 		defer cancel()
 
-		dec := new(dbitset.CombinationDecoder)
+		dec := new(dbitset.AdaptiveDecoder)
 		got := bitset.MustNew(4)
 
 		// The operation immediately sends its have bitset, which is empty.
@@ -87,7 +87,7 @@ func TestRunAcceptBroadcast_firstUpdate(t *testing.T) {
 		})
 		defer cancel()
 
-		dec := new(dbitset.CombinationDecoder)
+		dec := new(dbitset.AdaptiveDecoder)
 		got := bitset.MustNew(4)
 
 		// The operation immediately sends its have bitset,
@@ -131,7 +131,7 @@ func TestRunAcceptBroadcast_externalUpdatesShared(t *testing.T) {
 	})
 	defer cancel()
 
-	dec := new(dbitset.CombinationDecoder)
+	dec := new(dbitset.AdaptiveDecoder)
 	got := bitset.MustNew(4)
 
 	// The operation immediately sends its have bitset.
@@ -192,7 +192,7 @@ func TestRunAcceptBroadcast_syncDatagrams(t *testing.T) {
 	})
 	defer cancel()
 
-	dec := new(dbitset.CombinationDecoder)
+	dec := new(dbitset.AdaptiveDecoder)
 	got := bitset.MustNew(4)
 
 	// The operation immediately sends its have bitset, which is empty.

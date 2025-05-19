@@ -96,7 +96,7 @@ func runPeriodicBitsetUpdates(
 ) {
 	defer wg.Done()
 
-	enc := new(dbitset.CombinationEncoder)
+	enc := new(dbitset.AdaptiveEncoder)
 
 	// Send the first update immediately.
 	// This is the only time we send the entire bitset.

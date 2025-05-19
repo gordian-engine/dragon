@@ -132,7 +132,7 @@ func openOriginationStream(
 	// but this goroutine is blocked on that work anyway,
 	// so just receive it here.
 	peerHas := bitset.MustNew(uint(len(packets)))
-	dec := new(dbitset.CombinationDecoder)
+	dec := new(dbitset.AdaptiveDecoder)
 
 	if err := dec.ReceiveBitset(
 		s,

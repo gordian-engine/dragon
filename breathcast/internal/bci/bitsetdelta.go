@@ -14,7 +14,7 @@ import (
 // required for [receiveBitsetDeltas].
 type bsdState struct {
 	Stream quic.ReceiveStream
-	Dec    *dbitset.CombinationDecoder
+	Dec    *dbitset.AdaptiveDecoder
 }
 
 // receiveBitsetDeltas repeatedly reads bitset values
@@ -52,7 +52,7 @@ func receiveBitsetDeltas(
 
 	// Block until the stream is ready.
 	var s quic.ReceiveStream
-	var dec *dbitset.CombinationDecoder
+	var dec *dbitset.AdaptiveDecoder
 	select {
 	case <-ctx.Done():
 		return
