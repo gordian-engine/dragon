@@ -25,6 +25,37 @@ type CombinationEncoder struct {
 	combIdx, scratch big.Int
 }
 
+func (e *CombinationEncoder) encode(
+	bs *bitset.BitSet,
+	adaptive bool,
+) {
+	k := e.calculateCombIdx(bs)
+
+	// We need the out buffer to accommodate 4 bytes of metadata
+	// plus the size of the combination index.
+	ciByteCount := (e.combIdx.BitLen() + 7) / 8
+	sz := 4 + ciByteCount
+	if adaptive {
+		sz++
+	}
+	if cap(e.outBuf) < sz {
+		e.outBuf = make([]byte, sz)
+	} else {
+		e.outBuf = e.outBuf[:sz]
+	}
+
+	outBuf := e.outBuf
+	if adaptive {
+		outBuf[0] = combinationEncoding
+		outBuf = outBuf[1:]
+	}
+
+	binary.BigEndian.PutUint16(outBuf[:2], k)
+	binary.BigEndian.PutUint16(outBuf[2:4], uint16(ciByteCount))
+
+	_ = e.combIdx.FillBytes(outBuf[4:])
+}
+
 // SendBitset writes the compressed form of bs to the given stream.
 // The bitset's length (as reported by [*bitset.BitSet.Len])
 // must be the same value the remote expects,
@@ -34,23 +65,15 @@ func (e *CombinationEncoder) SendBitset(
 	timeout time.Duration,
 	bs *bitset.BitSet,
 ) error {
-	k := e.calculateCombIdx(bs)
+	e.encode(bs, false)
 
-	// We need the out buffer to accommodate 4 bytes of metadata
-	// plus the size of the combination index.
-	ciByteCount := (e.combIdx.BitLen() + 7) / 8
-	sz := 4 + ciByteCount
-	if cap(e.outBuf) < sz {
-		e.outBuf = make([]byte, sz)
-	} else {
-		e.outBuf = e.outBuf[:sz]
-	}
+	return e.send(s, timeout)
+}
 
-	binary.BigEndian.PutUint16(e.outBuf[:2], k)
-	binary.BigEndian.PutUint16(e.outBuf[2:4], uint16(ciByteCount))
-
-	_ = e.combIdx.FillBytes(e.outBuf[4:])
-
+func (e *CombinationEncoder) send(
+	s quic.SendStream,
+	timeout time.Duration,
+) error {
 	if err := s.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
 		return fmt.Errorf("failed to set write deadline: %w", err)
 	}

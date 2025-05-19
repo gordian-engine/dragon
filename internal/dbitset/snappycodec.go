@@ -1,7 +1,6 @@
 package dbitset
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -14,19 +13,27 @@ import (
 
 type SnappyEncoder struct {
 	// The byte slice representative of the bitset's Words.
+	// If encoded through the AdaptiveEncoder,
+	// it also has a 1-byte prefix of the [rawEncoding] header.
 	wordBuf []byte
 
-	// The snappy-encoded version of wordBuf.
+	// The snappy-encoded version of wordBuf,
+	// prefixed with a big endian uint16 length.
+	// If encoded through the AdaptiveEncoder,
+	// it has a 3-byte prefix: 1 byte for the [snappyEncoding] header
+	// and a uint16 length.
 	encBuf []byte
 }
 
-func (e *SnappyEncoder) SendBitset(
-	s quic.SendStream,
-	timeout time.Duration,
+func (e *SnappyEncoder) encode(
 	bs *bitset.BitSet,
-) error {
+	adaptive bool,
+) {
 	words := bs.Words()
 	nBytes := 8 * len(words)
+	if adaptive {
+		nBytes++
+	}
 
 	if cap(e.wordBuf) < nBytes {
 		e.wordBuf = make([]byte, nBytes)
@@ -34,32 +41,66 @@ func (e *SnappyEncoder) SendBitset(
 		e.wordBuf = e.wordBuf[:nBytes]
 	}
 
-	maxEnc := snappy.MaxEncodedLen(len(e.wordBuf))
+	// +2 for the size uint16.
+	maxEnc := snappy.MaxEncodedLen(nBytes) + 2
+	if adaptive {
+		maxEnc++
+	}
+
 	if cap(e.encBuf) < maxEnc {
 		e.encBuf = make([]byte, maxEnc)
 	} else {
 		e.encBuf = e.encBuf[:maxEnc]
 	}
+	encBuf := e.encBuf
+	if adaptive {
+		encBuf[0] = snappyEncoding
+		encBuf = encBuf[1:]
+	}
 
 	// Copy the words first.
-	for i, w := range words {
-		binary.LittleEndian.PutUint64(e.wordBuf[i*8:], w)
+	wordBuf := e.wordBuf
+	if adaptive {
+		wordBuf[0] = rawEncoding
+		wordBuf = wordBuf[1:]
 	}
-	e.encBuf = snappy.Encode(e.encBuf, e.wordBuf)
+	for i, w := range words {
+		// We use big endian in most encodings for human readability,
+		// but in this case we use little endian
+		// since it is more likely to match a modern machine's endianness.
+		binary.LittleEndian.PutUint64(wordBuf[i*8:], w)
+	}
 
-	// If it were 65k bits,
-	// that would encode losslessly into 8k bytes.
-	// So even if this ends up with maximal snappy overhead,
-	// the length will still fit in a uint16.
-	var meta [2]byte
-	binary.BigEndian.PutUint16(meta[:], uint16(len(e.encBuf)))
+	// Figure out how large the snappy encoding is,
+	// then backfill the size header.
+	res := snappy.Encode(encBuf[2:], wordBuf)
+	binary.BigEndian.PutUint16(encBuf, uint16(len(res)))
 
+	// Need to have the correct size of e.encBuf,
+	// for when the bytes are sent.
+	if adaptive {
+		e.encBuf = e.encBuf[:3+len(res)]
+	} else {
+		e.encBuf = e.encBuf[:2+len(res)]
+	}
+}
+
+func (e *SnappyEncoder) SendBitset(
+	s quic.SendStream,
+	timeout time.Duration,
+	bs *bitset.BitSet,
+) error {
+	e.encode(bs, false)
+
+	return e.send(s, timeout)
+}
+
+func (e *SnappyEncoder) send(
+	s quic.SendStream,
+	timeout time.Duration,
+) error {
 	if err := s.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
 		return fmt.Errorf("failed to set write deadline: %w", err)
-	}
-
-	if _, err := s.Write(meta[:]); err != nil {
-		return fmt.Errorf("failed to write snappy bitset length: %w", err)
 	}
 
 	if _, err := s.Write(e.encBuf); err != nil {
@@ -124,7 +165,8 @@ func (d *SnappyDecoder) ReceiveBitset(
 		return fmt.Errorf("failed to calculate snappy-decoded bitset length: %w", err)
 	}
 
-	if len(bs.Words())*8 != decSz {
+	words := bs.Words()
+	if len(words)*8 != decSz {
 		return fmt.Errorf(
 			"calculated decoded size of %d bytes but expected %d",
 			decSz, len(bs.Words())*8,
@@ -140,17 +182,12 @@ func (d *SnappyDecoder) ReceiveBitset(
 		)
 	}
 
-	// wb could have been nil on error.
+	// wb could have been nil on error;
+	// that's why we used the temporary variable.
 	d.wordBuf = wb
 
-	if err := binary.Read(
-		bytes.NewReader(d.wordBuf),
-		binary.LittleEndian,
-		bs.Words(),
-	); err != nil {
-		return fmt.Errorf(
-			"failed to parse bytes for bitset: %w", err,
-		)
+	for i := range words {
+		words[i] = binary.LittleEndian.Uint64(d.wordBuf[i*8:])
 	}
 
 	return nil
