@@ -35,7 +35,7 @@ func TestRunOutgoingRelay_handshake(t *testing.T) {
 	broadcastID := []byte("test")
 	appHeader := []byte("dummy app header")
 
-	protoHeader := bci.NewProtocolHeader(protocolID, broadcastID, 0x01, appHeader)
+	protoHeader := bci.NewProtocolHeader(protocolID, broadcastID, appHeader)
 
 	fx := NewOutgoingRelayFixture(
 		t, ctx,
@@ -85,7 +85,7 @@ func TestRunOutgoingRelay_redundantDatagramNotSent(t *testing.T) {
 	broadcastID := []byte("test")
 	appHeader := []byte("dummy app header")
 
-	protoHeader := bci.NewProtocolHeader(protocolID, broadcastID, 0x01, appHeader)
+	protoHeader := bci.NewProtocolHeader(protocolID, broadcastID, appHeader)
 
 	fx := NewOutgoingRelayFixture(
 		t, ctx,
@@ -138,7 +138,7 @@ func TestRunOutgoingRelay_forwardNewDatagram(t *testing.T) {
 	broadcastID := []byte("test")
 	appHeader := []byte("dummy app header")
 
-	protoHeader := bci.NewProtocolHeader(protocolID, broadcastID, 0x01, appHeader)
+	protoHeader := bci.NewProtocolHeader(protocolID, broadcastID, appHeader)
 
 	fx := NewOutgoingRelayFixture(
 		t, ctx,
@@ -205,7 +205,7 @@ func TestRunOutgoingRelay_missedDatagramSentReliably(t *testing.T) {
 	broadcastID := []byte("test")
 	appHeader := []byte("dummy app header")
 
-	protoHeader := bci.NewProtocolHeader(protocolID, broadcastID, 0x01, appHeader)
+	protoHeader := bci.NewProtocolHeader(protocolID, broadcastID, appHeader)
 
 	fx := NewOutgoingRelayFixture(
 		t, ctx,
@@ -289,7 +289,7 @@ func TestRunOutgoingRelay_missedDatagrams_staggered(t *testing.T) {
 	broadcastID := []byte("test")
 	appHeader := []byte("dummy app header")
 
-	protoHeader := bci.NewProtocolHeader(protocolID, broadcastID, 0x01, appHeader)
+	protoHeader := bci.NewProtocolHeader(protocolID, broadcastID, appHeader)
 
 	fx := NewOutgoingRelayFixture(
 		t, ctx,
@@ -429,7 +429,7 @@ func TestOutgoingRelay_dataReady(t *testing.T) {
 	broadcastID := []byte("test")
 	appHeader := []byte("dummy app header")
 
-	protoHeader := bci.NewProtocolHeader(protocolID, broadcastID, 0x01, appHeader)
+	protoHeader := bci.NewProtocolHeader(protocolID, broadcastID, appHeader)
 
 	fx := NewOutgoingRelayFixture(
 		t, ctx,
@@ -559,10 +559,6 @@ func parseHeader(
 	_, err = io.ReadFull(s, bid)
 	require.NoError(t, err)
 
-	var rat [1]byte
-	_, err = io.ReadFull(s, rat[:])
-	require.NoError(t, err)
-
 	var sz [2]byte
 	_, err = io.ReadFull(s, sz[:])
 	require.NoError(t, err)
@@ -570,6 +566,10 @@ func parseHeader(
 
 	ah := make([]byte, gotSize)
 	_, err = io.ReadFull(s, ah)
+	require.NoError(t, err)
+
+	var rat [1]byte
+	_, err = io.ReadFull(s, rat[:])
 	require.NoError(t, err)
 
 	return pid[0], bid, ah, rat[0]
@@ -649,8 +649,8 @@ func (f *OutgoingRelayFixture) Run(
 
 	// Ensure that all provided packets have the correct prefix.
 	// If not, the tests can end up behaving differently from how production code works.
-	protoID := f.Cfg.ProtocolHeader[0]
-	bID := []byte(f.Cfg.ProtocolHeader[1 : len(f.Cfg.ProtocolHeader)-3])
+	protoID := f.Cfg.ProtocolHeader.ProtocolID()
+	bID := f.Cfg.ProtocolHeader.BroadcastID()
 	for u, ok := f.Cfg.InitialHavePackets.NextSet(0); ok; u, ok = f.Cfg.InitialHavePackets.NextSet(u + 1) {
 		p := f.Cfg.Packets[u]
 		require.Equal(t, protoID, p[0], "packet did not start with protocol ID")

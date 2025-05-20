@@ -163,7 +163,6 @@ func (o *BroadcastOperation) mainLoop(
 	protoHeader := bci.NewProtocolHeader(
 		o.protocolID,
 		o.broadcastID,
-		0xFF, // TODO: this shouldn't be hardcoded, as it will change during relaying.
 		o.appHeader,
 	)
 

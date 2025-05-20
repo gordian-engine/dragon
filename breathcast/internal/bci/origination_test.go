@@ -32,7 +32,7 @@ func TestRunOrigination_handshake(t *testing.T) {
 	broadcastID := []byte("test")
 	appHeader := []byte("dummy app header")
 
-	protoHeader := bci.NewProtocolHeader(protocolID, broadcastID, 0xFF, appHeader)
+	protoHeader := bci.NewProtocolHeader(protocolID, broadcastID, appHeader)
 
 	dgs := [][]byte{
 		[]byte("\xAAtest\x00\x00datagram0"),
@@ -55,10 +55,11 @@ func TestRunOrigination_handshake(t *testing.T) {
 	s, err := cClient.AcceptStream(ctx)
 	require.NoError(t, err)
 
-	pid, bid, gotAH, _ := parseHeader(t, s, len(broadcastID))
+	pid, bid, gotAH, ratio := parseHeader(t, s, len(broadcastID))
 	require.Equal(t, protocolID, pid)
 	require.Equal(t, broadcastID, bid)
 	require.Equal(t, appHeader, gotAH)
+	require.Equal(t, byte(0xff), ratio)
 }
 
 // If we try to send an origination to a peer who already has all the data,
@@ -78,7 +79,7 @@ func TestRunOrigination_cleanShutdownIfRejected(t *testing.T) {
 	broadcastID := []byte("test")
 	appHeader := []byte("dummy app header")
 
-	protoHeader := bci.NewProtocolHeader(protocolID, broadcastID, 0xFF, appHeader)
+	protoHeader := bci.NewProtocolHeader(protocolID, broadcastID, appHeader)
 
 	dgs := [][]byte{
 		[]byte("\xAAtest\x00\x00datagram0"),
@@ -122,7 +123,7 @@ func TestRunOrigination_missedAllUnreliableDatagrams(t *testing.T) {
 	broadcastID := []byte("test")
 	appHeader := []byte("dummy app header")
 
-	protoHeader := bci.NewProtocolHeader(protocolID, broadcastID, 0xFF, appHeader)
+	protoHeader := bci.NewProtocolHeader(protocolID, broadcastID, appHeader)
 
 	dgs := [][]byte{
 		[]byte("\xAAtest\x00\x00datagram0"),
@@ -147,10 +148,11 @@ func TestRunOrigination_missedAllUnreliableDatagrams(t *testing.T) {
 	s, err := cClient.AcceptStream(ctx)
 	require.NoError(t, err)
 
-	pid, bid, gotAH, _ := parseHeader(t, s, len(broadcastID))
+	pid, bid, gotAH, ratio := parseHeader(t, s, len(broadcastID))
 	require.Equal(t, protocolID, pid)
 	require.Equal(t, broadcastID, bid)
 	require.Equal(t, appHeader, gotAH)
+	require.Equal(t, byte(0xff), ratio)
 
 	// For the client side of the handshake,
 	// indicate that we have no datagrams.
@@ -249,8 +251,8 @@ func (f *OriginationFixture) Run(
 
 	// Ensure that all provided packets have the correct prefix.
 	// If not, the tests can end up behaving differently from how production code works.
-	protoID := f.Cfg.ProtocolHeader[0]
-	bID := []byte(f.Cfg.ProtocolHeader[1 : len(f.Cfg.ProtocolHeader)-3])
+	protoID := f.Cfg.ProtocolHeader.ProtocolID()
+	bID := f.Cfg.ProtocolHeader.BroadcastID()
 	for i, p := range f.Cfg.Packets {
 		require.Equal(t, protoID, p[0], "packet did not start with protocol ID")
 		require.Equal(t, bID, p[1:1+len(bID)], "packet had protocol ID but not broadcast ID")

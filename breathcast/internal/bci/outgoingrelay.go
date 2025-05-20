@@ -140,6 +140,8 @@ func openOutgoingRelayStream(
 
 		ProtocolHeader: cfg.ProtocolHeader,
 		AppHeader:      cfg.AppHeader,
+
+		Ratio: calculateRatio(cfg.InitialHavePackets),
 	})
 	if err != nil {
 		log.Info("Failed to open outgoing stream", "err", err)

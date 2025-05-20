@@ -107,9 +107,10 @@ func TestProtocol_allDatagramsSucceed(t *testing.T) {
 	require.Equal(t, []byte("xyz"), bid)
 
 	// The incoming stream has the right application header.
-	appHeader, err := breathcast.ExtractStreamApplicationHeader(s, nil)
+	appHeader, ratio, err := breathcast.ExtractStreamApplicationHeader(s, nil)
 	require.NoError(t, err)
 	require.Equal(t, []byte("fake app header"), appHeader)
+	require.Equal(t, byte(0xff), ratio)
 
 	// We accept the broadcast now that we've parsed the app header:
 	dtest.NotSending(t, bop1.DataReady())
@@ -257,9 +258,10 @@ func TestProtocol_onlyFirstDatagramDropped(t *testing.T) {
 	require.Equal(t, []byte("xyz"), bid)
 
 	// The incoming stream has the right application header.
-	appHeader, err := breathcast.ExtractStreamApplicationHeader(s, nil)
+	appHeader, ratio, err := breathcast.ExtractStreamApplicationHeader(s, nil)
 	require.NoError(t, err)
 	require.Equal(t, []byte("fake app header"), appHeader)
+	require.Equal(t, byte(0xff), ratio)
 
 	// We accept the broadcast now that we've parsed the app header:
 	dtest.NotSending(t, bop1.DataReady())
@@ -402,9 +404,10 @@ func TestProtocol_allDatagramsDropped(t *testing.T) {
 	require.Equal(t, []byte("xyz"), bid)
 
 	// The incoming stream has the right application header.
-	appHeader, err := breathcast.ExtractStreamApplicationHeader(s, nil)
+	appHeader, ratio, err := breathcast.ExtractStreamApplicationHeader(s, nil)
 	require.NoError(t, err)
 	require.Equal(t, []byte("fake app header"), appHeader)
+	require.Equal(t, byte(0xff), ratio)
 
 	// We accept the broadcast now that we've parsed the app header:
 	dtest.NotSending(t, bop1.DataReady())
@@ -522,9 +525,10 @@ func TestProtocol_Relay_datagramsForwarded(t *testing.T) {
 	require.Equal(t, []byte("xyz"), bid)
 
 	// The incoming stream has the right application header.
-	appHeader, err := breathcast.ExtractStreamApplicationHeader(s01, nil)
+	appHeader, ratio, err := breathcast.ExtractStreamApplicationHeader(s01, nil)
 	require.NoError(t, err)
 	require.Equal(t, []byte("fake app header"), appHeader)
+	require.Equal(t, byte(0xff), ratio)
 
 	// We've extracted the application header,
 	// so now this protocol instance can create the broadcast operation.
@@ -564,9 +568,10 @@ func TestProtocol_Relay_datagramsForwarded(t *testing.T) {
 	require.Equal(t, []byte("xyz"), bid)
 
 	// The incoming stream has the right application header.
-	appHeader, err = breathcast.ExtractStreamApplicationHeader(s12, nil)
+	appHeader, ratio, err = breathcast.ExtractStreamApplicationHeader(s12, nil)
 	require.NoError(t, err)
 	require.Equal(t, []byte("fake app header"), appHeader)
+	require.Zero(t, ratio) // Node 1 didn't receive any packets yet.
 
 	// We've extracted the application header,
 	// so now this protocol instance can create the broadcast operation.

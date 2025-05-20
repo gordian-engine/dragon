@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/bits-and-blooms/bitset"
 	"github.com/quic-go/quic-go"
 )
 
@@ -34,7 +35,6 @@ type ProtocolHeader []byte
 func NewProtocolHeader(
 	protocolID byte,
 	broadcastID []byte,
-	ratio byte,
 	appHeader []byte,
 ) ProtocolHeader {
 	if len(appHeader) >= (1 << 16) {
@@ -44,7 +44,7 @@ func NewProtocolHeader(
 		))
 	}
 
-	out := make([]byte, 1+len(broadcastID)+3)
+	out := make([]byte, 1+len(broadcastID)+2)
 
 	// The protocol ID is necessary so that a remote who receives the stream
 	// can identify which application-layer protocol the message belongs to.
@@ -55,13 +55,18 @@ func NewProtocolHeader(
 	// Within a protocol, the broadcastID is a fixed length.
 	copy(out[1:1+len(broadcastID)], broadcastID)
 
-	// The ratio indicates how much of the data we have already.
-	out[1+len(broadcastID)] = ratio
-
 	// The last two bytes are the application header size.
 	binary.BigEndian.PutUint16(out[len(out)-2:], uint16(len(appHeader)))
 
 	return out
+}
+
+func (h ProtocolHeader) ProtocolID() byte {
+	return h[0]
+}
+
+func (h ProtocolHeader) BroadcastID() []byte {
+	return h[1 : len(h)-2]
 }
 
 // OpenStreamConfig is the config for [OpenStream].
@@ -71,6 +76,8 @@ type OpenStreamConfig struct {
 
 	ProtocolHeader ProtocolHeader
 	AppHeader      []byte
+
+	Ratio byte
 }
 
 // OpenStream opens a new stream for the breathcast protocol.
@@ -99,9 +106,50 @@ func OpenStream(
 		return nil, fmt.Errorf("failed to write application header for outgoing stream: %w", err)
 	}
 
+	// And finally we need to write our ratio byte.
+	if _, err := s.Write([]byte{cfg.Ratio}); err != nil {
+		return nil, fmt.Errorf("failed to write ratio byte for outgoing stream: %w", err)
+	}
+
 	// At this point of the protocol, we've done our announcement to the peer.
 	// The peer must send us their "have" bitset before we can send anything else.
 	return s, nil
+}
+
+// calculateRatio calculates the single-byte ratio
+// indicating what fraction of the packets the current process has.
+//
+// While this is not yet used directly by a peer,
+// we are making it part of the protocol now
+// so that a peer has the capability to make decisions
+// about which remotes to prioritize.
+func calculateRatio(bs *bitset.BitSet) byte {
+	c := bs.Count()
+	if c == 0 {
+		return 0
+	}
+
+	n := bs.Len()
+	if c == n {
+		// This should probably never happen,
+		// but maybe it could if we cross the threshold as we start a relay.
+		return 0xff
+	}
+
+	r := float32(c) / float32(n)
+	r *= 256
+
+	rb := uint8(r)
+	switch rb {
+	case 0:
+		// Round up since we have more than zero.
+		return 1
+	case 0xff:
+		// Round down since we don't have everything.
+		return 0xfe
+	default:
+		return rb
+	}
 }
 
 // SendSyncPacket writes the packet over the given stream.

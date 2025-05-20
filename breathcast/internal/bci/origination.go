@@ -121,6 +121,9 @@ func openOriginationStream(
 
 		ProtocolHeader: pHeader,
 		AppHeader:      appHeader,
+
+		// In origination we already have 100% of the data.
+		Ratio: 0xFF,
 	})
 	if err != nil {
 		panic(fmt.Errorf(

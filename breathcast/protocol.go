@@ -442,28 +442,17 @@ func cutoffTierFromRootProofsLen(proofsLen uint16) (tier uint8, ok bool) {
 // It is assumed that the caller has already consumed both
 // the protocol ID byte matching [ProtocolConfig.ProtocolID],
 // and the broadcast ID via [*Protocol.ExtractStreamBroadcastID].
-func ExtractStreamApplicationHeader(r io.Reader, dst []byte) ([]byte, error) {
-	// First extract the have ratio and the header length.
-	var buf [3]byte
+func ExtractStreamApplicationHeader(r io.Reader, dst []byte) ([]byte, byte, error) {
+	// First extract the app header length.
+	var buf [2]byte
 	if _, err := io.ReadFull(r, buf[:]); err != nil {
-		return nil, fmt.Errorf(
-			"failed to read ratio and header length from origination protocol stream: %w",
+		return nil, 0, fmt.Errorf(
+			"failed to read app header length from origination protocol stream: %w",
 			err,
 		)
 	}
 
-	if buf[0] != 0xff {
-		// At the moment we are only accepting broadcast streams
-		// from peers who have 100% of the data.
-		// The 100% case is handled specially,
-		// and anything else is a relay-to-relay operation
-		// which has a bit more complexity.
-		panic(fmt.Errorf(
-			"TODO: handle relayed broadcast (got ratio byte 0x%x)", buf[0],
-		))
-	}
-
-	sz := binary.BigEndian.Uint16(buf[1:])
+	sz := binary.BigEndian.Uint16(buf[:])
 
 	if cap(dst) >= int(sz) {
 		dst = dst[:sz]
@@ -474,13 +463,20 @@ func ExtractStreamApplicationHeader(r io.Reader, dst []byte) ([]byte, error) {
 	if n, err := io.ReadFull(r, dst); err != nil {
 		// Seems unlikely that dst would be useful to the caller on error,
 		// but returning what we've read so far seems more proper anyway.
-		return dst[:n], fmt.Errorf(
+		return dst[:n], 0, fmt.Errorf(
 			"failed to read header from origination protocol stream: %w",
 			err,
 		)
 	}
 
-	return dst, nil
+	if _, err := io.ReadFull(r, buf[:1]); err != nil {
+		return dst, 0, fmt.Errorf(
+			"failed to read ratio byte from protocol stream: %w",
+			err,
+		)
+	}
+
+	return dst, buf[0], nil
 }
 
 // ExtractStreamBroadcastID extracts the broadcast ID
