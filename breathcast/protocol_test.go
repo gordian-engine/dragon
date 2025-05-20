@@ -692,3 +692,114 @@ func (w *lateBoundDatagramQCWrapper) SendDatagram(datagram []byte) error {
 
 	return nil
 }
+
+func TestProtocol_originatorToOriginator(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// In this setup, nodes 0 and 1 are both originators,
+	// and they attempt to connect to each other.
+	fx := breathcasttest.NewProtocolFixture(t, ctx, breathcasttest.ProtocolFixtureConfig{
+		Nodes: 2,
+
+		ProtocolID:        0xFE,
+		BroadcastIDLength: 3,
+	})
+	defer cancel()
+
+	// Now the connections are set up, and we can set up the sub-protocols.
+	data := dtest.RandomDataForTest(t, 16*1024)
+	nonce := []byte("nonce")
+	orig, err := breathcast.PrepareOrigination(data, breathcast.PrepareOriginationConfig{
+		MaxChunkSize:    1000,
+		ProtocolID:      0xFE,
+		BroadcastID:     []byte("xyz"),
+		ParityRatio:     0.2, // A bunch of parity shards so we can complete via datagrams.
+		HeaderProofTier: 1,
+		Hasher:          bcsha256.Hasher{},
+		HashSize:        bcsha256.HashSize,
+		Nonce:           nonce,
+	})
+	require.NoError(t, err)
+
+	origCfg := breathcast.OriginationConfig{
+		BroadcastID: []byte("xyz"),
+		AppHeader:   []byte("fake app header"),
+		Packets:     orig.Packets,
+
+		NData: uint16(orig.NumData),
+
+		TotalDataSize: len(data),
+		ChunkSize:     orig.ChunkSize,
+	}
+
+	bop0, err := fx.Protocols[0].NewOrigination(ctx, origCfg)
+	require.NoError(t, err)
+	defer bop0.Wait()
+	defer cancel()
+
+	bop1, err := fx.Protocols[1].NewOrigination(ctx, origCfg)
+	require.NoError(t, err)
+	defer bop1.Wait()
+	defer cancel()
+
+	c01, c10 := fx.ListenerSet.Dial(t, 0, 1)
+	fx.AddConnection(c01, 0, 1)
+	fx.AddConnection(c10, 1, 0)
+
+	// Each side accepts the stream from the other.
+	s01, err := c10.AcceptStream(ctx)
+	require.NoError(t, err)
+
+	s10, err := c01.AcceptStream(ctx)
+	require.NoError(t, err)
+
+	// They each have the right protocol ID.
+	var oneByte [1]byte
+	_, err = io.ReadFull(s01, oneByte[:])
+	require.NoError(t, err)
+	require.Equal(t, byte(0xFE), oneByte[0])
+
+	_, err = io.ReadFull(s10, oneByte[:])
+	require.NoError(t, err)
+	require.Equal(t, byte(0xFE), oneByte[0])
+
+	// They each have the right broadcast ID.
+	bid, err := fx.Protocols[1].ExtractStreamBroadcastID(s01, nil)
+	require.NoError(t, err)
+	require.Equal(t, []byte("xyz"), bid)
+
+	bid, err = fx.Protocols[0].ExtractStreamBroadcastID(s10, nil)
+	require.NoError(t, err)
+	require.Equal(t, []byte("xyz"), bid)
+
+	// And the right application header.
+	appHeader, ratio, err := breathcast.ExtractStreamApplicationHeader(s01, nil)
+	require.NoError(t, err)
+	require.Equal(t, []byte("fake app header"), appHeader)
+	require.Equal(t, byte(0xff), ratio)
+
+	appHeader, ratio, err = breathcast.ExtractStreamApplicationHeader(s10, nil)
+	require.NoError(t, err)
+	require.Equal(t, []byte("fake app header"), appHeader)
+	require.Equal(t, byte(0xff), ratio)
+
+	// Now the application would pass the stream to the broadcast operation.
+	require.NoError(t, bop0.AcceptBroadcast(
+		ctx,
+		dconn.Conn{
+			QUIC:  c10,
+			Chain: fx.ListenerSet.Leaves[1].Chain,
+		},
+		s10,
+	))
+
+	require.NoError(t, bop1.AcceptBroadcast(
+		ctx,
+		dconn.Conn{
+			QUIC:  c01,
+			Chain: fx.ListenerSet.Leaves[0].Chain,
+		},
+		s01,
+	))
+}

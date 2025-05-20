@@ -635,6 +635,18 @@ func (o *BroadcastOperation) AcceptBroadcast(
 	conn dconn.Conn,
 	stream quic.Stream,
 ) error {
+	if o.acceptBroadcastRequests == nil {
+		// Running in origination mode.
+		// We can simply close the given stream.
+		stream.CancelRead(bci.GotFullDataErrorCode)
+		_ = stream.Close()
+		stream.CancelWrite(bci.GotFullDataErrorCode)
+
+		// TODO: is nil most appropriate here,
+		// or should we have a particular error type?
+		return nil
+	}
+
 	req := acceptBroadcastRequest{
 		Conn:   conn,
 		Stream: stream,
