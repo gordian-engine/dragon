@@ -18,6 +18,10 @@ import (
 )
 
 // ActiveView handles the network interactions for an active peer set.
+//
+// The [dview.Manager] determines when to call
+// [*ActiveView.Add] and [*ActiveView.Remove];
+// the [*dk.Kernel] coordinates the two types.
 type ActiveView struct {
 	log *slog.Logger
 
@@ -44,6 +48,8 @@ type ActiveView struct {
 
 	addRequests    chan addRequest
 	removeRequests chan removeRequest
+
+	checkConnRequests chan checkConnRequest
 
 	forwardJoinsToNetwork   chan forwardJoinToNetwork
 	forwardJoinsFromNetwork chan<- dmsg.ForwardJoinFromNetwork
@@ -125,8 +131,9 @@ func NewActiveView(ctx context.Context, log *slog.Logger, cfg ActiveViewConfig) 
 		processors: map[caSPKI]*peerInboundProcessor{},
 
 		// Unbuffered because the caller blocks on these requests anyway.
-		addRequests:    make(chan addRequest),
-		removeRequests: make(chan removeRequest),
+		addRequests:       make(chan addRequest),
+		removeRequests:    make(chan removeRequest),
+		checkConnRequests: make(chan checkConnRequest),
 
 		// We don't want these to block.
 		// Unless otherwise noted, these are sized with arbitrary guesses.
@@ -206,6 +213,9 @@ func (a *ActiveView) mainLoop(ctx context.Context) {
 
 		case req := <-a.removeRequests:
 			a.handleRemoveRequest(ctx, req)
+
+		case req := <-a.checkConnRequests:
+			a.handleCheckConnRequest(req)
 
 		case fj := <-a.forwardJoinsToNetwork:
 			a.handleForwardJoinToNetwork(ctx, fj)
@@ -376,6 +386,63 @@ func (a *ActiveView) handleRemoveRequest(ctx context.Context, req removeRequest)
 	}
 
 	close(req.Resp)
+}
+
+// HasConnectionToAddress reports whether there is an existing active connection
+// that reports a RemoteAddr whose String output matches
+// the given netAddr parameter.
+//
+// This is used indirectly through [*dragon.Node.DialAndJoin]
+// to avoid the work of establishing a redundant connection.
+//
+// There are some reasons this could report a false negative:
+//   - there is a pending, incomplete connection beginning
+//   - the address passed to DialAndJoin is different from
+//     the reported address on the established connection
+//
+// In the event of a false negative, the identical CA certificate
+// discovered when dialing will cause the new connection to be closed.
+func (a *ActiveView) HasConnectionToAddress(
+	ctx context.Context,
+	netAddr string,
+) (has bool, err error) {
+	req := checkConnRequest{
+		NetAddr: netAddr,
+		Resp:    make(chan bool, 1),
+	}
+	select {
+	case <-ctx.Done():
+		return false, fmt.Errorf(
+			"context canceled while checking for connection to address: %w",
+			context.Cause(ctx),
+		)
+	case a.checkConnRequests <- req:
+		// Okay, wait for response.
+	}
+
+	select {
+	case <-ctx.Done():
+		return false, fmt.Errorf(
+			"context canceled while waiting for check connection response: %w",
+			context.Cause(ctx),
+		)
+	case has = <-req.Resp:
+		return has, nil
+	}
+}
+
+func (a *ActiveView) handleCheckConnRequest(
+	req checkConnRequest,
+) {
+	for _, c := range a.dconnByLeafSPKI {
+		if c.QUIC.RemoteAddr().String() == req.NetAddr {
+			req.Resp <- true
+			return
+		}
+
+	}
+
+	req.Resp <- false
 }
 
 func (a *ActiveView) ForwardJoinToNetwork(

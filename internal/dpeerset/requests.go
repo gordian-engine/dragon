@@ -19,6 +19,16 @@ type removeRequest struct {
 	Resp chan struct{}
 }
 
+// checkConnRequest is a request to see if there is an existing connection
+// matching the given NetAddr.
+type checkConnRequest struct {
+	// The String() portion of [net.Addr] to match.
+	NetAddr string
+
+	// Whether it was present.
+	Resp chan bool
+}
+
 type forwardJoinToNetwork struct {
 	Msg dprotoi.ForwardJoinMessage
 
