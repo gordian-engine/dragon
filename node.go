@@ -816,7 +816,7 @@ func (n *Node) handleIncomingNeighbor(
 // the returned error is nil.
 //
 // If the node already has a connection to the given address,
-// the method returns [AlreadyConnectedToNodeError].
+// the method returns [AlreadyConnectedToAddrError].
 //
 // If the contact node disconnects, we have no indication of whether
 // they chose to forward the join message to their peers.
@@ -835,7 +835,7 @@ func (n *Node) DialAndJoin(ctx context.Context, addr net.Addr) error {
 	hasConn, err := n.k.HasConnectionToAddress(ctx, addr.String())
 	if err != nil {
 		return fmt.Errorf(
-			"DialAndJoin: failed to check for existing connection: %w",
+			"DialAndJoin: failed to check for existing connection to address: %w",
 			err,
 		)
 	}
@@ -843,7 +843,7 @@ func (n *Node) DialAndJoin(ctx context.Context, addr net.Addr) error {
 	if hasConn {
 		return fmt.Errorf(
 			"DialAndJoin: refusing to connect: %w",
-			AlreadyConnectedToNodeError{Addr: addr.String()},
+			AlreadyConnectedToAddrError{Addr: addr.String()},
 		)
 	}
 
@@ -855,6 +855,20 @@ func (n *Node) DialAndJoin(ctx context.Context, addr net.Addr) error {
 	chain, err := dcert.NewChainFromTLSConnectionState(dr.Conn.ConnectionState().TLS)
 	if err != nil {
 		return fmt.Errorf("DialAndJoin: failed to extract certificate chain: %w", err)
+	}
+
+	hasConn, err = n.k.HasConnectionToChain(ctx, chain)
+	if err != nil {
+		return fmt.Errorf(
+			"DialAndJoin: failed to check for existing connection to chain: %w",
+			err,
+		)
+	}
+	if hasConn {
+		return fmt.Errorf(
+			"DialAndJoin: dropping connection whose chain matches existing connection: %w",
+			AlreadyConnectedToCertError{Chain: chain},
+		)
 	}
 
 	// TODO: start a new goroutine for a context.WithCancelCause paired with notify.

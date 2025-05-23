@@ -129,3 +129,65 @@ func TestActiveView_HasConnectionToAddress(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, has)
 }
+
+func TestActiveView_HasConnectionToChain(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	fx := dpeersettest.NewFixture(t)
+
+	av := fx.NewActiveView(ctx)
+	require.NotNil(t, av)
+	defer av.Wait()
+	defer cancel()
+
+	// Make a fake peer.
+	ca, err := dcerttest.GenerateCA(dcerttest.FastConfig())
+	require.NoError(t, err)
+	leaf, err := ca.CreateLeafCert(dcerttest.LeafConfig{
+		DNSNames: []string{"leaf.example"},
+	})
+	require.NoError(t, err)
+	aa, err := leaf.AddressAttestation("leaf.example")
+	require.NoError(t, err)
+
+	connAddr := "192.168.2.1:12345"
+	conn := &dquictest.StubConnection{
+		RemoteAddrValue: dquictest.StubNetAddr{
+			StringValue: connAddr,
+		},
+	}
+
+	peer := dpeerset.Peer{
+		Conn: conn,
+
+		AA:    aa,
+		Chain: leaf.Chain,
+
+		Admission: dquictest.NewStubStream(ctx),
+	}
+
+	require.NoError(t, av.Add(ctx, peer))
+
+	// Have to drain this channel for the later remove to complete,
+	// as the connection changes are 1-buffered.
+	_ = dtest.ReceiveSoon(t, fx.ConnectionChanges)
+
+	// We report a connection on the address reported by the underlying connection.
+	has, err := av.HasConnectionToChain(ctx, peer.Chain)
+	require.NoError(t, err)
+	require.True(t, has)
+
+	// We do not attempt to match DNS names.
+	has, err = av.HasConnectionToAddress(ctx, "leaf.example:12345")
+	require.NoError(t, err)
+	require.False(t, has)
+
+	// After removing the peer, we no longer report a connection.
+	require.NoError(t, av.Remove(ctx, dpeerset.PeerCertIDFromChain(peer.Chain)))
+	has, err = av.HasConnectionToAddress(ctx, connAddr)
+	require.NoError(t, err)
+	require.False(t, has)
+}

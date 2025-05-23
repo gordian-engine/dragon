@@ -1,6 +1,7 @@
 package dpeerset
 
 import (
+	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/internal/dprotoi"
 )
 
@@ -19,11 +20,20 @@ type removeRequest struct {
 	Resp chan struct{}
 }
 
-// checkConnRequest is a request to see if there is an existing connection
+// checkConnAddrRequest is a request to see if there is an existing connection
 // matching the given NetAddr.
-type checkConnRequest struct {
+type checkConnAddrRequest struct {
 	// The String() portion of [net.Addr] to match.
 	NetAddr string
+
+	// Whether it was present.
+	Resp chan bool
+}
+
+// checkConnChainRequest is a request to see if there is an existing connection
+// matching the given chain.
+type checkConnChainRequest struct {
+	Chain dcert.Chain
 
 	// Whether it was present.
 	Resp chan bool

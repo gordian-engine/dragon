@@ -49,7 +49,8 @@ type ActiveView struct {
 	addRequests    chan addRequest
 	removeRequests chan removeRequest
 
-	checkConnRequests chan checkConnRequest
+	checkConnAddrRequests  chan checkConnAddrRequest
+	checkConnChainRequests chan checkConnChainRequest
 
 	forwardJoinsToNetwork   chan forwardJoinToNetwork
 	forwardJoinsFromNetwork chan<- dmsg.ForwardJoinFromNetwork
@@ -131,9 +132,10 @@ func NewActiveView(ctx context.Context, log *slog.Logger, cfg ActiveViewConfig) 
 		processors: map[caSPKI]*peerInboundProcessor{},
 
 		// Unbuffered because the caller blocks on these requests anyway.
-		addRequests:       make(chan addRequest),
-		removeRequests:    make(chan removeRequest),
-		checkConnRequests: make(chan checkConnRequest),
+		addRequests:            make(chan addRequest),
+		removeRequests:         make(chan removeRequest),
+		checkConnAddrRequests:  make(chan checkConnAddrRequest),
+		checkConnChainRequests: make(chan checkConnChainRequest),
 
 		// We don't want these to block.
 		// Unless otherwise noted, these are sized with arbitrary guesses.
@@ -214,8 +216,11 @@ func (a *ActiveView) mainLoop(ctx context.Context) {
 		case req := <-a.removeRequests:
 			a.handleRemoveRequest(ctx, req)
 
-		case req := <-a.checkConnRequests:
-			a.handleCheckConnRequest(req)
+		case req := <-a.checkConnAddrRequests:
+			a.handleCheckConnAddrRequest(req)
+
+		case req := <-a.checkConnChainRequests:
+			a.handleCheckConnChainRequest(req)
 
 		case fj := <-a.forwardJoinsToNetwork:
 			a.handleForwardJoinToNetwork(ctx, fj)
@@ -406,7 +411,7 @@ func (a *ActiveView) HasConnectionToAddress(
 	ctx context.Context,
 	netAddr string,
 ) (has bool, err error) {
-	req := checkConnRequest{
+	req := checkConnAddrRequest{
 		NetAddr: netAddr,
 		Resp:    make(chan bool, 1),
 	}
@@ -416,14 +421,14 @@ func (a *ActiveView) HasConnectionToAddress(
 			"context canceled while checking for connection to address: %w",
 			context.Cause(ctx),
 		)
-	case a.checkConnRequests <- req:
+	case a.checkConnAddrRequests <- req:
 		// Okay, wait for response.
 	}
 
 	select {
 	case <-ctx.Done():
 		return false, fmt.Errorf(
-			"context canceled while waiting for check connection response: %w",
+			"context canceled while waiting for check connection to address response: %w",
 			context.Cause(ctx),
 		)
 	case has = <-req.Resp:
@@ -431,8 +436,8 @@ func (a *ActiveView) HasConnectionToAddress(
 	}
 }
 
-func (a *ActiveView) handleCheckConnRequest(
-	req checkConnRequest,
+func (a *ActiveView) handleCheckConnAddrRequest(
+	req checkConnAddrRequest,
 ) {
 	for _, c := range a.dconnByLeafSPKI {
 		if c.QUIC.RemoteAddr().String() == req.NetAddr {
@@ -443,6 +448,47 @@ func (a *ActiveView) handleCheckConnRequest(
 	}
 
 	req.Resp <- false
+}
+
+// HasConnectionToChain reports whether there is an existing active connection
+// matching the given chain.
+//
+// This is used indirectly through [*dragon.Node.DialAndJoin]
+// to drop a new connection that would duplicate an existing one.
+func (a *ActiveView) HasConnectionToChain(
+	ctx context.Context,
+	chain dcert.Chain,
+) (has bool, err error) {
+	req := checkConnChainRequest{
+		Chain: chain,
+		Resp:  make(chan bool, 1),
+	}
+	select {
+	case <-ctx.Done():
+		return false, fmt.Errorf(
+			"context canceled while checking for connection to chain: %w",
+			context.Cause(ctx),
+		)
+	case a.checkConnChainRequests <- req:
+		// Okay, wait for response.
+	}
+
+	select {
+	case <-ctx.Done():
+		return false, fmt.Errorf(
+			"context canceled while waiting for check connection to chain response: %w",
+			context.Cause(ctx),
+		)
+	case has = <-req.Resp:
+		return has, nil
+	}
+}
+
+func (a *ActiveView) handleCheckConnChainRequest(
+	req checkConnChainRequest,
+) {
+	_, ok := a.dconnByLeafSPKI[leafSPKI(req.Chain.Leaf.RawSubjectPublicKeyInfo)]
+	req.Resp <- ok
 }
 
 func (a *ActiveView) ForwardJoinToNetwork(

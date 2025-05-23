@@ -263,9 +263,104 @@ func TestNode_DialAndJoin_rejectDuplicateConnectionByAddr(t *testing.T) {
 	addr1 := nw.Nodes[1].UDP.LocalAddr()
 	err := nw.Nodes[0].Node.DialAndJoin(ctx, addr1)
 	require.Error(t, err)
-	require.ErrorIs(t, err, dragon.AlreadyConnectedToNodeError{
+	require.ErrorIs(t, err, dragon.AlreadyConnectedToAddrError{
 		Addr: addr1.String(),
 	})
+}
+
+func TestNode_DialAndJoin_rejectDuplicateConnectionByCert(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// The setup for this test is a bit tricky.
+	// We are starting three nodes,
+	// but we want the last two nodes to have identical TLS configuration,
+	// only differing on their listening port.
+	// We are trying to emulate a single host that could be listening
+	// on two separate hostnames, or perhaps the client node
+	// is trying to connect to both the hostname and the direct IP address.
+	// We shouldn't rely on DNS in this test,
+	// and we probably shouldn't rely on IPv6 for that matter,
+	// hence the approach of two listeners with identical TLS settings.
+	cfg0 := dcerttest.FastConfig()
+	cfg12 := dcerttest.FastConfig()
+
+	// And mock view managers so we can intercept
+	// exactly what the view managers are doing.
+	vm0 := dviewtest.NewAsyncManagerMock()
+	vm1 := dviewtest.NewAsyncManagerMock()
+	vm2 := dviewtest.NewAsyncManagerMock()
+
+	var tls1Dup *tls.Config
+
+	nw := dragontest.NewNetwork(
+		t, ctx,
+		[]dcerttest.CAConfig{cfg0, cfg12, cfg12},
+		func(i int, c dragontest.NodeConfig) dragon.NodeConfig {
+			out := c.ToDragonNodeConfig()
+			switch i {
+			case 0:
+				out.ViewManager = vm0
+			case 1:
+				out.ViewManager = vm1
+				tls1Dup = out.TLS.Clone()
+			case 2:
+				out.ViewManager = vm2
+				out.TLS = tls1Dup
+			}
+
+			return out
+		},
+	)
+	defer nw.Wait()
+	defer cancel()
+
+	// Node 0 joins Node 1 first.
+	// Start this in the background so we can work with the view managers.
+	dialErrCh := make(chan error, 1)
+	go func() {
+		dialErrCh <- nw.Nodes[0].Node.DialAndJoin(ctx, nw.Nodes[1].UDP.LocalAddr())
+	}()
+
+	// Node 1 accepts the join request.
+	// (The corresponding work for Node 0 was in DialAndJoin.)
+	cjReq := dtest.ReceiveSoon(t, vm1.ConsiderJoinCh)
+	dtest.SendSoon(t, cjReq.Resp, dview.AcceptJoinDecision)
+
+	// Both nodes have to confirm adding the active peer.
+	aaReq := dtest.ReceiveSoon(t, vm0.AddActivePeerCh)
+	dtest.SendSoon(t, aaReq.Resp, nil)
+
+	aaReq = dtest.ReceiveSoon(t, vm1.AddActivePeerCh)
+	dtest.SendSoon(t, aaReq.Resp, nil)
+
+	require.NoError(t, dtest.ReceiveSoon(t, dialErrCh))
+
+	// Sync on the connection change, on both nodes.
+	c := dtest.ReceiveSoon(t, nw.ConnectionChanges[0])
+	require.True(t, c.Adding)
+
+	c = dtest.ReceiveSoon(t, nw.ConnectionChanges[1])
+	require.True(t, c.Adding)
+
+	// Now the fun part.
+	// Node 0 attempt to connect to Node 2.
+	// Node 2 is listening on a different port
+	// (and in fact it is a wholly separate "process" from 1),
+	// but it is presenting an identical TLS certificate.
+	go func() {
+		dialErrCh <- nw.Nodes[0].Node.DialAndJoin(ctx, nw.Nodes[2].UDP.LocalAddr())
+	}()
+
+	err := dtest.ReceiveSoon(t, dialErrCh)
+	require.Error(t, err)
+
+	// Can't directly use ErrorIs for this assertion, due to chain equality.
+	var certErr dragon.AlreadyConnectedToCertError
+	require.ErrorAs(t, err, &certErr)
+	require.True(t, certErr.Chain.Leaf.Equal(nw.Chains[1].Leaf))
 }
 
 func TestNode_forwardJoin(t *testing.T) {

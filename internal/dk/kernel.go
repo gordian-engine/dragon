@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/dview"
 	"github.com/gordian-engine/dragon/internal/dmsg"
@@ -453,4 +454,19 @@ func (k *Kernel) HasConnectionToAddress(
 	netAddr string,
 ) (has bool, err error) {
 	return k.av.HasConnectionToAddress(ctx, netAddr)
+}
+
+// HasConnectionToChain consults [*dpeerset.ActiveView.HasConnectionToChain]
+// to determine whether there is an existing connection
+// matching the given chain.
+//
+// This is exposed on the Kernel so that the [*dragon.Node]
+// does not need to be directly aware of the ActiveView.
+//
+// See the ActiveView method documentation for details on edge cases.
+func (k *Kernel) HasConnectionToChain(
+	ctx context.Context,
+	chain dcert.Chain,
+) (has bool, err error) {
+	return k.av.HasConnectionToChain(ctx, chain)
 }
