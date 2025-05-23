@@ -239,6 +239,35 @@ func TestNode_DialAndJoin_accept_intermediates(t *testing.T) {
 	require.Equal(t, 1, nw.Nodes[1].Node.ActiveViewSize())
 }
 
+func TestNode_DialAndJoin_rejectDuplicateConnectionByAddr(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	nw := dragontest.NewDefaultNetwork(
+		t, ctx,
+		dcerttest.FastConfig(), dcerttest.FastConfig(),
+	)
+	defer nw.Wait()
+	defer cancel()
+
+	// Node 0 joins Node 1 first.
+	require.NoError(t, nw.Nodes[0].Node.DialAndJoin(ctx, nw.Nodes[1].UDP.LocalAddr()))
+
+	// Sync on the connection change.
+	c := dtest.ReceiveSoon(t, nw.ConnectionChanges[0])
+	require.True(t, c.Adding)
+
+	// Then attempting to join again in the same direction is rejected.
+	addr1 := nw.Nodes[1].UDP.LocalAddr()
+	err := nw.Nodes[0].Node.DialAndJoin(ctx, addr1)
+	require.Error(t, err)
+	require.ErrorIs(t, err, dragon.AlreadyConnectedToNodeError{
+		Addr: addr1.String(),
+	})
+}
+
 func TestNode_forwardJoin(t *testing.T) {
 	t.Parallel()
 

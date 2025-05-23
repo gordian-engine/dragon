@@ -815,11 +815,38 @@ func (n *Node) handleIncomingNeighbor(
 // If the contact node makes a neighbor request back and we successfully peer,
 // the returned error is nil.
 //
+// If the node already has a connection to the given address,
+// the method returns [AlreadyConnectedToNodeError].
+//
 // If the contact node disconnects, we have no indication of whether
 // they chose to forward the join message to their peers.
 // TODO: we should have DisconnectedError or something to specifically indicate
 // that semi-expected disconnect.
 func (n *Node) DialAndJoin(ctx context.Context, addr net.Addr) error {
+	// DialAndJoin should be a very rare call -- maybe a couple times during startup,
+	// and then the p2p mesh should be stable.
+	// Nonetheless, if we had some initial list of say 5 nodes to connect to,
+	// it is possible that by attempting to join the first node,
+	// we could naturally make a connection to one of the later nodes in the list.
+	// So, we have a few extra checks to avoid duplicating connections.
+
+	// Before even dialing, ask the kernel if there is
+	// existing connection with the given address.
+	hasConn, err := n.k.HasConnectionToAddress(ctx, addr.String())
+	if err != nil {
+		return fmt.Errorf(
+			"DialAndJoin: failed to check for existing connection: %w",
+			err,
+		)
+	}
+
+	if hasConn {
+		return fmt.Errorf(
+			"DialAndJoin: refusing to connect: %w",
+			AlreadyConnectedToNodeError{Addr: addr.String()},
+		)
+	}
+
 	dr, err := n.dialer.Dial(ctx, addr)
 	if err != nil {
 		return fmt.Errorf("DialAndJoin: dial failed: %w", err)

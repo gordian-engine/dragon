@@ -439,3 +439,18 @@ func (k *Kernel) GetActiveViewSize() int {
 	k.activeViewSizeCheck <- ch
 	return <-ch
 }
+
+// HasConnectionToAddress consults [*dpeerset.ActiveView.HasConnectionToAddress]
+// to determine whether there is an existing connection
+// matching the given netAddr.
+//
+// This is exposed on the Kernel so that the [*dragon.Node]
+// does not need to be directly aware of the ActiveView.
+//
+// See the ActiveView method documentation for details on edge cases.
+func (k *Kernel) HasConnectionToAddress(
+	ctx context.Context,
+	netAddr string,
+) (has bool, err error) {
+	return k.av.HasConnectionToAddress(ctx, netAddr)
+}
