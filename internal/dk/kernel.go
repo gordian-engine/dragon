@@ -186,16 +186,6 @@ func (k *Kernel) NeighborDecisionRequests() chan<- NeighborDecisionRequest {
 	return k.neighborDecisionRequests
 }
 
-// Deprecated: use JoinRequests, NeighborDecisionRequests,
-// or AddActivePeerRequests methods directly.
-func (k *Kernel) Requests() Requests {
-	return Requests{
-		JoinRequests:             k.joinRequests,
-		NeighborDecisionRequests: k.neighborDecisionRequests,
-		AddActivePeerRequests:    k.addActivePeerRequests,
-	}
-}
-
 // handleJoinRequest handles an incoming join request,
 // by consulting the PeerEvaluator,
 // and then informing the requester whether to disconnect or accept.

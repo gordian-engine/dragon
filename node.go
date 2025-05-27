@@ -328,7 +328,7 @@ func NewNode(ctx context.Context, log *slog.Logger, cfg NodeConfig) (*Node, erro
 
 		NeighborRequests: neighborRequestsCh,
 
-		NewPeeringRequests: n.k.Requests().AddActivePeerRequests,
+		NewPeeringRequests: n.k.AddActivePeerRequests(),
 
 		AdvertiseAddr: n.advertiseAddr,
 
@@ -583,7 +583,7 @@ func (n *Node) handleIncomingJoin(
 		return fmt.Errorf(
 			"context cancelled while sending join request to kernel: %w", context.Cause(ctx),
 		)
-	case n.k.Requests().JoinRequests <- req:
+	case n.k.JoinRequests() <- req:
 		// Okay.
 	}
 
@@ -660,7 +660,7 @@ func (n *Node) handleIncomingJoin(
 			context.Cause(ctx),
 		)
 
-	case n.k.Requests().AddActivePeerRequests <- pReq:
+	case n.k.AddActivePeerRequests() <- pReq:
 		// Okay.
 	}
 
@@ -710,7 +710,7 @@ func (n *Node) handleIncomingNeighbor(
 			"context canceled while sending neighbor decision request to kernel: %w",
 			context.Cause(ctx),
 		)
-	case n.k.Requests().NeighborDecisionRequests <- req:
+	case n.k.NeighborDecisionRequests() <- req:
 		// Okay.
 	}
 
@@ -785,7 +785,7 @@ func (n *Node) handleIncomingNeighbor(
 			context.Cause(ctx),
 		)
 
-	case n.k.Requests().AddActivePeerRequests <- pReq:
+	case n.k.AddActivePeerRequests() <- pReq:
 		// Okay.
 	}
 
@@ -895,7 +895,7 @@ func (n *Node) DialAndJoin(ctx context.Context, addr net.Addr) error {
 	case <-ctx.Done():
 		return context.Cause(ctx)
 
-	case n.k.Requests().AddActivePeerRequests <- req:
+	case n.k.AddActivePeerRequests() <- req:
 		// Okay.
 	}
 
