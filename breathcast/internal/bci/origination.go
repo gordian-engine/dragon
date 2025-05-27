@@ -126,9 +126,11 @@ func openOriginationStream(
 		Ratio: 0xFF,
 	})
 	if err != nil {
-		panic(fmt.Errorf(
-			"TODO: handle error opening origination stream: %w", err,
-		))
+		log.Info(
+			"Failed to open origination stream",
+			"err", err,
+		)
+		return
 	}
 
 	// We could let the bitset receiving goroutine accept the first bitset,

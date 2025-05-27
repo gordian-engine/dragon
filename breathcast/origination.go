@@ -98,7 +98,7 @@ func PrepareOrigination(
 	}
 	if cfg.HashSize <= 0 {
 		panic(fmt.Errorf(
-			"BUG: MerkleHashSize must be positive (got %d)", cfg.HashSize,
+			"BUG: HashSize must be positive (got %d)", cfg.HashSize,
 		))
 	}
 

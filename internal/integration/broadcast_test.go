@@ -3,11 +3,14 @@ package integration
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/rand/v2"
 	"net"
 	"testing"
 
 	"github.com/gordian-engine/dragon"
+	"github.com/gordian-engine/dragon/breathcast"
+	"github.com/gordian-engine/dragon/breathcast/bcmerkle/bcsha256"
 	"github.com/gordian-engine/dragon/dcert/dcerttest"
 	"github.com/gordian-engine/dragon/dragontest"
 	"github.com/gordian-engine/dragon/dview/dviewrand"
@@ -57,6 +60,7 @@ func TestBroadcast(t *testing.T) {
 	// Each node alternates connecting to node 0 or 1,
 	// so they don't all dial the same peer,
 	// but they dial a small set of nodes which should propagate correctly.
+	apps := make([]*IntegrationApp, nNodes)
 	for i := range nNodes {
 		var target net.Addr
 		if i&1 == 1 {
@@ -89,7 +93,77 @@ func TestBroadcast(t *testing.T) {
 				"failed to dial from node %d", i,
 			)
 		}
+
+		apps[i] = NewIntegrationApp(
+			t, ctx,
+			log.With("app_idx", i),
+			dNet.ConnectionChanges[i],
+		)
 	}
 
-	t.Skip("TODO: create some broadcasts and assert all nodes receive them")
+	// The nodes are all dialed.
+	// We need to set up an "application" for each node.
+	for i := range nNodes {
+		randData := dtest.RandomDataForTest(t, 16*1024+(10*i))
+
+		broadcastID := fmt.Appendf(nil, "bc%02d", i)
+
+		po, err := breathcast.PrepareOrigination(randData, breathcast.PrepareOriginationConfig{
+			MaxChunkSize: 1200,
+
+			ProtocolID: breathcastProtocolID,
+
+			BroadcastID: broadcastID,
+
+			ParityRatio: 0.15,
+
+			HeaderProofTier: 1,
+
+			Hasher: bcsha256.Hasher{},
+
+			HashSize: bcsha256.HashSize,
+
+			Nonce: fmt.Appendf(nil, "nonce %d", i),
+		})
+		require.NoError(t, err)
+
+		bop, err := apps[i].Breathcast.NewOrigination(ctx, breathcast.OriginationConfig{
+			BroadcastID: broadcastID,
+
+			AppHeader: []byte("TODO: app header"),
+
+			Packets: po.Packets,
+
+			NData: uint16(po.NumData),
+
+			TotalDataSize: len(randData),
+
+			ChunkSize: po.ChunkSize,
+		})
+		require.NoError(t, err)
+
+		// TODO: how to close out the broadcast operation?
+		// It's associated with the entire protocol's context,
+		// and it doesn't have a Stop or Cancel method (yet).
+		_ = bop
+
+		// The originator will begin the broadcast to its active peers,
+		// but we can't predict which those are.
+		// So we can use a multicast here to indicate to all the goroutines
+		// what the current valid broadcast ID is,
+		// in order to have every node accept (and forward) the broadcast.
+		// That ought to allow the broadcast to propagate through the entire network.
+		t.Skip("TODO: not every node immediately receives broadcast, yet")
+
+		for j := range nNodes {
+			if j == i {
+				continue
+			}
+
+			incoming := dtest.ReceiveSoon(t, apps[j].IncomingBroadcasts)
+			_ = incoming
+		}
+
+		break
+	}
 }
