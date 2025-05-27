@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dconn"
@@ -129,6 +130,10 @@ func (k *Kernel) Wait() {
 func (k *Kernel) mainLoop(ctx context.Context) {
 	defer close(k.done)
 
+	// Only used in handleForwardJoinFromNetwork,
+	// but needs to persist across calls.
+	var fjc forwardJoinCache
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -145,7 +150,7 @@ func (k *Kernel) mainLoop(ctx context.Context) {
 			k.handleAddActivePeerRequest(ctx, req)
 
 		case req := <-k.forwardJoinsFromNetwork:
-			k.handleForwardJoinFromNetwork(ctx, req)
+			k.handleForwardJoinFromNetwork(ctx, req, &fjc)
 
 		case sfp := <-k.shufflesFromPeers:
 			k.handleShuffleFromPeer(ctx, sfp)
@@ -169,6 +174,20 @@ func (k *Kernel) mainLoop(ctx context.Context) {
 	}
 }
 
+func (k *Kernel) AddActivePeerRequests() chan<- AddActivePeerRequest {
+	return k.addActivePeerRequests
+}
+
+func (k *Kernel) JoinRequests() chan<- JoinRequest {
+	return k.joinRequests
+}
+
+func (k *Kernel) NeighborDecisionRequests() chan<- NeighborDecisionRequest {
+	return k.neighborDecisionRequests
+}
+
+// Deprecated: use JoinRequests, NeighborDecisionRequests,
+// or AddActivePeerRequests methods directly.
 func (k *Kernel) Requests() Requests {
 	return Requests{
 		JoinRequests:             k.joinRequests,
@@ -311,9 +330,20 @@ func (k *Kernel) handleAddActivePeerRequest(ctx context.Context, req AddActivePe
 	}
 }
 
-func (k *Kernel) handleForwardJoinFromNetwork(ctx context.Context, req dmsg.ForwardJoinFromNetwork) {
-	fjm := req.Msg
-	d, err := k.vm.ConsiderForwardJoin(ctx, fjm.AA, fjm.Chain)
+func (k *Kernel) handleForwardJoinFromNetwork(
+	ctx context.Context,
+	req dmsg.ForwardJoinFromNetwork,
+	fjc *forwardJoinCache,
+) {
+	// If this chain's forward join was recently seen, don't forward it again.
+	fjc.Purge()
+
+	m := req.Msg
+	if fjc.Has(m.Chain) {
+		return
+	}
+
+	d, err := k.vm.ConsiderForwardJoin(ctx, m.AA, m.Chain)
 	if err != nil {
 		k.log.Warn(
 			"Received error from view manager when considering forward join",
@@ -322,16 +352,21 @@ func (k *Kernel) handleForwardJoinFromNetwork(ctx context.Context, req dmsg.Forw
 		return
 	}
 
-	if d.ContinueForwarding && req.Msg.TTL > 1 {
-		req.Msg.TTL--
+	// Arbitrary duration. Could be configurable.
+	fjc.Set(m.Chain, 1500*time.Millisecond)
 
-		// TODO: we should have some kind of TTL cache
-		// so that we exclude cycles if we have received this message from multiple peers.
+	if d.ContinueForwarding && m.TTL > 1 {
+		m.TTL--
+
+		// We currently prevent forwarding to the sender of the message,
+		// but we could possibly adjust the cache
+		// so that we track which peers have already seen a particular forward join.
+		// Unclear at this point if that would be an improvement.
 		exclude := map[string]struct{}{
 			string(req.ForwarderCert.RawSubjectPublicKeyInfo): {},
 		}
 
-		if err := k.av.ForwardJoinToNetwork(ctx, req.Msg, exclude); err != nil {
+		if err := k.av.ForwardJoinToNetwork(ctx, m, exclude); err != nil {
 			k.log.Error("Failed to forward join", "err", err)
 			// We don't stop here, because even if forwarding fails for some reason,
 			// we may still want to make a neighbor request to the other peer.
@@ -339,7 +374,7 @@ func (k *Kernel) handleForwardJoinFromNetwork(ctx context.Context, req dmsg.Forw
 	}
 
 	if d.MakeNeighborRequest {
-		addr := fjm.AA.Addr
+		addr := m.AA.Addr
 		select {
 		case k.neighborRequests <- addr:
 			// Okay.

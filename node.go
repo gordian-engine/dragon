@@ -906,7 +906,7 @@ func (n *Node) DialAndJoin(ctx context.Context, addr net.Addr) error {
 	case resp := <-pResp:
 		if resp.RejectReason != "" {
 			// Last minute issue with adding the connection.
-			if err := dr.Conn.CloseWithError(1, "TODO: peering rejected: "+resp.RejectReason); err != nil {
+			if err := dr.Conn.CloseWithError(2, "TODO: peering rejected: "+resp.RejectReason); err != nil {
 				n.log.Debug("Failed to close connection", "err", err)
 			}
 

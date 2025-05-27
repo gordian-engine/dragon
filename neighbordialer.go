@@ -73,6 +73,7 @@ func (d *neighborDialer) dialAndNeighbor(ctx context.Context, addr string) {
 			"addr", addr,
 			"err", err,
 		)
+		return
 	}
 
 	chain, err := dcert.NewChainFromTLSConnectionState(dr.Conn.ConnectionState().TLS)
