@@ -33,7 +33,7 @@ func (h acceptIncomingStreamHandler) Handle(
 
 	s, err := c.AcceptStream(acceptCtx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to accept stream: %w", err)
+		return nil, fmt.Errorf("failed to accept inbound bootstrap stream: %w", err)
 	}
 	cancel() // Release cancellation resource now since we are done with it.
 

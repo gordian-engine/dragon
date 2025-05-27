@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"math/rand/v2"
 	"net"
 	"testing"
@@ -15,8 +16,6 @@ import (
 )
 
 func TestBroadcast(t *testing.T) {
-	t.Skip("working through bugs preventing this test from passing")
-
 	if testing.Short() {
 		t.Skip("skipping due to short mode")
 	}
@@ -59,13 +58,6 @@ func TestBroadcast(t *testing.T) {
 	// so they don't all dial the same peer,
 	// but they dial a small set of nodes which should propagate correctly.
 	for i := range nNodes {
-		if i == 0 {
-			// Node 1 will dial Node 0,
-			// so skip 0->1 so that 1->0 is not rejected
-			// due to already being connected.
-			continue
-		}
-
 		var target net.Addr
 		if i&1 == 1 {
 			target = dNet.Nodes[0].UDP.LocalAddr()
@@ -73,9 +65,31 @@ func TestBroadcast(t *testing.T) {
 			target = dNet.Nodes[1].UDP.LocalAddr()
 		}
 
-		require.NoErrorf(
-			t, dNet.Nodes[i].Node.DialAndJoin(ctx, target),
-			"failed to dial from node %d", i,
-		)
+		err := dNet.Nodes[i].Node.DialAndJoin(ctx, target)
+		if i == 1 {
+			// Node 1 will dial Node 0,
+			// but Node 0 should have already dialed Node 1.
+			// We almost always get the already-connected-to-certificate error,
+			// but once in a while we get the address error.
+			// Either one is acceptable in this case.
+			require.Error(t, err)
+			var certErr dragon.AlreadyConnectedToCertError
+			var addrErr dragon.AlreadyConnectedToAddrError
+			switch {
+			case errors.As(err, &certErr):
+				require.True(t, certErr.Chain.Leaf.Equal(dNet.Chains[0].Leaf))
+			case errors.As(err, &addrErr):
+				require.Equal(t, target.String(), addrErr.Addr)
+			default:
+				t.Fatalf("got unexpected error type %T (%v)", err, err)
+			}
+		} else {
+			require.NoErrorf(
+				t, err,
+				"failed to dial from node %d", i,
+			)
+		}
 	}
+
+	t.Skip("TODO: create some broadcasts and assert all nodes receive them")
 }

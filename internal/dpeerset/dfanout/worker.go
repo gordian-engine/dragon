@@ -30,7 +30,7 @@ func RunWorker(
 			return
 
 		case fj := <-work.ForwardJoins:
-			handleWorkForwardJoin(fj)
+			handleWorkForwardJoin(log, fj)
 
 		case os := <-work.OutboundShuffles:
 			handleWorkOutboundShuffle(ctx, log, os, out.ShuffleRepliesFromPeers)
@@ -43,21 +43,24 @@ func RunWorker(
 	}
 }
 
-func handleWorkForwardJoin(fj WorkForwardJoin) {
+func handleWorkForwardJoin(log *slog.Logger, fj WorkForwardJoin) {
 	// TODO: make time.Now a parameter intead of hardcoding it?
 	if err := fj.Stream.SetWriteDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
-		panic(fmt.Errorf(
-			"TODO: handle error setting write deadline for forward join: %w",
-			err,
-		))
+		log.Warn(
+			"Failed to set write deadline for forward join",
+			"err", err,
+		)
+		return
 	}
 	if _, err := fj.Stream.Write(fj.Raw); err != nil {
 		// We probably need a way to feed back up the information that
 		// this stream is not working as intended.
-		panic(fmt.Errorf(
-			"TODO: handle error when writing forward join to stream: %w",
-			err,
-		))
+		// TODO: consider when this is a [*quic.ApplicationError]
+		// with code == dmsg.RemovingFromActiveView.
+		log.Warn(
+			"Failed to write forward join to stream",
+			"err", err,
+		)
 	}
 }
 

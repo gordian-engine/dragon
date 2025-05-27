@@ -380,6 +380,19 @@ func (a *ActiveView) handleRemoveRequest(ctx context.Context, req removeRequest)
 	dc := a.dconnByLeafSPKI[req.PCI.leafSPKI]
 	delete(a.dconnByLeafSPKI, req.PCI.leafSPKI)
 
+	// Begin closing the connection before announcing its removal.
+	// This will unblock any local outstanding reads or writes on any stream,
+	// and it should force the remote to prune the connection.
+	if err := dc.QUIC.CloseWithError(
+		dmsg.RemovingFromActiveView,
+		"removing from active view",
+	); err != nil {
+		a.log.Info(
+			"Error closing removed connection",
+			"err", err,
+		)
+	}
+
 	select {
 	case <-ctx.Done():
 	// We are closing, so it's fine that we don't send the change.

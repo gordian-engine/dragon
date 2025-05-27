@@ -8,6 +8,12 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
+const (
+	// Application error code used when closing a connection
+	// due to it being removed from the active view.
+	RemovingFromActiveView quic.ApplicationErrorCode = 0x188E59FF
+)
+
 // ForwardJoinFromNetwork is a request for a forward join
 // that gets passed back to the kernel.
 //
