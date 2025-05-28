@@ -2,6 +2,7 @@ package breathcast_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"sync/atomic"
 	"testing"
@@ -694,6 +695,8 @@ func (w *lateBoundDatagramQCWrapper) SendDatagram(datagram []byte) error {
 }
 
 func TestProtocol_originatorToOriginator(t *testing.T) {
+	t.Parallel()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -802,4 +805,69 @@ func TestProtocol_originatorToOriginator(t *testing.T) {
 		},
 		s01,
 	))
+}
+
+// There used to be a data race with the protocol's connection map,
+// which was passed directly to each broadcast operation.
+func TestProtocol_broadcastOperations_connectionMapRace(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	fx := breathcasttest.NewProtocolFixture(t, ctx, breathcasttest.ProtocolFixtureConfig{
+		Nodes: 4,
+
+		ProtocolID:        0xFE,
+		BroadcastIDLength: 3,
+	})
+	defer cancel()
+
+	// Start 3 originations before we add any of the other connections.
+	for i := range 3 {
+		data := dtest.RandomDataForTest(t, 16*1024+(256*i))
+		bid := fmt.Appendf(nil, "b%d", i)
+		orig, err := breathcast.PrepareOrigination(
+			data,
+			breathcast.PrepareOriginationConfig{
+				MaxChunkSize:    1000,
+				ProtocolID:      0xFE,
+				BroadcastID:     bid,
+				ParityRatio:     0.1,
+				HeaderProofTier: 1,
+				Hasher:          bcsha256.Hasher{},
+				HashSize:        bcsha256.HashSize,
+				Nonce:           []byte("nonce"),
+			},
+		)
+		require.NoError(t, err)
+
+		bop, err := fx.Protocols[0].NewOrigination(ctx, breathcast.OriginationConfig{
+			BroadcastID: bid,
+			AppHeader:   fmt.Appendf(nil, "app header %d", i),
+			Packets:     orig.Packets,
+
+			NData: uint16(orig.NumData),
+
+			TotalDataSize: len(data),
+			ChunkSize:     orig.ChunkSize,
+		})
+		require.NoError(t, err)
+		defer bop.Wait()
+		defer cancel()
+	}
+
+	// Now set up the other connections.
+	// If the data race is present,
+	// the independent broadcast operations will
+	// concurrently edit the map and trigger the race detector.
+	c10, c01 := fx.ListenerSet.Dial(t, 1, 0)
+	fx.AddConnection(c10, 1, 0)
+	fx.AddConnection(c01, 0, 1)
+
+	c20, c02 := fx.ListenerSet.Dial(t, 2, 0)
+	fx.AddConnection(c20, 2, 0)
+	fx.AddConnection(c02, 0, 2)
+
+	c30, c03 := fx.ListenerSet.Dial(t, 3, 0)
+	fx.AddConnection(c30, 3, 0)
+	fx.AddConnection(c03, 0, 3)
 }

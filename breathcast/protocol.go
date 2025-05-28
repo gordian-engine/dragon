@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"math/bits"
 	"sync"
 
@@ -148,6 +149,16 @@ func (p *Protocol) mainLoop(ctx context.Context, conns map[string]dconn.Conn) {
 
 		case req := <-p.newBroadcastRequests:
 			p.handleNewBroadcastRequest(ctx, req, conns)
+
+		case <-p.connChanges.Ready:
+			// We have to keep our copy of the conns map updated,
+			// as we hand out copies of it to new BroadcastOperation instances.
+			cc := p.connChanges.Val
+			if cc.Adding {
+				conns[string(cc.Conn.Chain.Leaf.RawSubjectPublicKeyInfo)] = cc.Conn
+			} else {
+				delete(conns, string(cc.Conn.Chain.Leaf.RawSubjectPublicKeyInfo))
+			}
 		}
 	}
 }
@@ -163,7 +174,7 @@ func (p *Protocol) handleNewBroadcastRequest(
 	conns map[string]dconn.Conn,
 ) {
 	p.wg.Add(1)
-	go req.Op.mainLoop(ctx, conns, p.connChanges, &p.wg, req.IS)
+	go req.Op.mainLoop(ctx, maps.Clone(conns), p.connChanges, &p.wg, req.IS)
 	close(req.Resp)
 }
 
