@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -107,6 +108,7 @@ func TestBroadcast(t *testing.T) {
 		randData := dtest.RandomDataForTest(t, 16*1024+(10*i))
 
 		broadcastID := fmt.Appendf(nil, "bc%02d", i)
+		nonce := fmt.Appendf(nil, "nonce %d", i)
 
 		po, err := breathcast.PrepareOrigination(randData, breathcast.PrepareOriginationConfig{
 			MaxChunkSize: 1200,
@@ -123,14 +125,28 @@ func TestBroadcast(t *testing.T) {
 
 			HashSize: bcsha256.HashSize,
 
-			Nonce: fmt.Appendf(nil, "nonce %d", i),
+			Nonce: nonce,
+		})
+		require.NoError(t, err)
+
+		jah, err := json.Marshal(BroadcastAppHeader{
+			NData:   uint16(po.NumData),
+			NParity: uint16(po.NumParity),
+
+			TotalDataSize: len(randData),
+
+			HashNonce: nonce,
+
+			RootProofs: po.RootProof,
+
+			ChunkSize: uint16(po.ChunkSize),
 		})
 		require.NoError(t, err)
 
 		bop, err := apps[i].Breathcast.NewOrigination(ctx, breathcast.OriginationConfig{
 			BroadcastID: broadcastID,
 
-			AppHeader: []byte("TODO: app header"),
+			AppHeader: jah,
 
 			Packets: po.Packets,
 
@@ -153,7 +169,6 @@ func TestBroadcast(t *testing.T) {
 		// what the current valid broadcast ID is,
 		// in order to have every node accept (and forward) the broadcast.
 		// That ought to allow the broadcast to propagate through the entire network.
-		t.Skip("TODO: not every node immediately receives broadcast, yet")
 
 		for j := range nNodes {
 			if j == i {
@@ -164,6 +179,7 @@ func TestBroadcast(t *testing.T) {
 			_ = incoming
 		}
 
+		t.Skip("TODO: confirm received incoming broadcast")
 		break
 	}
 }

@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/gordian-engine/dragon/breathcast"
+	"github.com/gordian-engine/dragon/breathcast/bcmerkle/bcsha256"
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/internal/dchan"
 	"github.com/quic-go/quic-go"
@@ -130,25 +132,41 @@ func (a *IntegrationApp) acceptStreams(
 			if err != nil {
 				panic(err)
 			}
-			appHeader, _, err := breathcast.ExtractStreamApplicationHeader(s, nil)
+			jah, _, err := breathcast.ExtractStreamApplicationHeader(s, nil)
 			if err != nil {
 				panic(err)
 			}
 
+			var appHeader BroadcastAppHeader
+			if err := json.Unmarshal(jah, &appHeader); err != nil {
+				panic(err)
+			}
+
+			// Announce we are receiving an incoming broadcast.
 			select {
 			case <-ctx.Done():
-				// Nothing to do.
+				// Quit.
 				return
 			case a.IncomingBroadcasts <- IncomingBroadcast{
 				BroadcastID: bid,
-				AppHeader:   appHeader,
+				AppHeader:   jah,
 				Stream:      s,
 			}:
-				a.log.Warn("Sent incoming broadcast")
-				// Done.
-				return
-
+				// Keep going.
 			}
+
+			// Now accept the incoming broadcast.
+			bop, err := a.Breathcast.NewIncomingBroadcast(
+				ctx, appHeader.ToIncomingBroadcastConfig(bid, jah),
+			)
+			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					return
+				}
+				panic(err)
+			}
+			_ = bop
+
 		default:
 			panic(fmt.Errorf(
 				"unrecognized protocol ID 0x%x", protoByte[0],
@@ -160,4 +178,43 @@ func (a *IntegrationApp) acceptStreams(
 type IncomingBroadcast struct {
 	BroadcastID, AppHeader []byte
 	Stream                 quic.Stream
+}
+
+// BroadcastAppHeader is the app header used for broadcasts.
+// This is simply JSON encoded for the test.
+// Production code would likely use a more efficient encoding,
+// and it would include more fields for application-level decisions.
+type BroadcastAppHeader struct {
+	NData, NParity uint16
+
+	TotalDataSize int
+
+	HashNonce []byte
+
+	RootProofs [][]byte
+
+	ChunkSize uint16
+}
+
+func (h BroadcastAppHeader) ToIncomingBroadcastConfig(
+	broadcastID, appHeader []byte,
+) breathcast.IncomingBroadcastConfig {
+	return breathcast.IncomingBroadcastConfig{
+		BroadcastID: broadcastID,
+
+		AppHeader: appHeader,
+
+		NData:   h.NData,
+		NParity: h.NParity,
+
+		TotalDataSize: h.TotalDataSize,
+
+		Hasher:    bcsha256.Hasher{},
+		HashSize:  bcsha256.HashSize,
+		HashNonce: h.HashNonce,
+
+		RootProofs: h.RootProofs,
+
+		ChunkSize: h.ChunkSize,
+	}
 }
