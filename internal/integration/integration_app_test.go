@@ -286,9 +286,6 @@ func (a *IntegrationApp) acceptDatagrams(
 			}
 
 			panic(err)
-			// panic(fmt.Errorf(
-			// 	"error type %T %#v", err, err,
-			// ))
 		}
 
 		bid := a.Breathcast.ExtractPacketBroadcastID(b)

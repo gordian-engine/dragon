@@ -74,6 +74,10 @@ func RunOutgoingRelay(
 		log.With("step", "open_stream"),
 		cfg,
 		bsdCh, ssStartCh, initialPeerHas,
+
+		// Have to calculate the ratio here to avoid a read-write data race
+		// from relayNewDatagrams writing to the bitset.
+		calculateRatio(cfg.InitialHavePackets),
 	)
 	go receiveBitsetDeltas(
 		ctx,
@@ -121,6 +125,7 @@ func openOutgoingRelayStream(
 	bsdCh chan<- bsdState,
 	ssCh chan<- quic.SendStream,
 	initialPeerHas chan<- *bitset.BitSet,
+	haveRatio byte,
 ) {
 	defer cfg.WG.Done()
 
@@ -141,7 +146,7 @@ func openOutgoingRelayStream(
 		ProtocolHeader: cfg.ProtocolHeader,
 		AppHeader:      cfg.AppHeader,
 
-		Ratio: calculateRatio(cfg.InitialHavePackets),
+		Ratio: haveRatio,
 	})
 	if err != nil {
 		log.Info("Failed to open outgoing stream", "err", err)
