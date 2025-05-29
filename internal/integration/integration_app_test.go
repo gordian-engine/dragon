@@ -22,7 +22,18 @@ type IntegrationApp struct {
 
 	Breathcast *breathcast.Protocol
 
+	// Channel for tests to read, indicating a new broadcast operation.
 	IncomingBroadcasts chan IncomingBroadcast
+
+	// Internal channel for parsed streams.
+	// The main loop has to decide whether to create a new operation
+	// or return an existing one.
+	incoming chan incomingBroadcastRequest
+}
+
+type incomingBroadcastRequest struct {
+	AppHeader BroadcastAppHeader
+	Resp      chan *breathcast.BroadcastOperation
 }
 
 const breathcastProtocolID = 0x90
@@ -61,6 +72,9 @@ func NewIntegrationApp(
 		),
 
 		IncomingBroadcasts: make(chan IncomingBroadcast, 1),
+
+		// Arbitrary size -- ought to be sufficiently large this way.
+		incoming: make(chan incomingBroadcastRequest, 8),
 	}
 
 	go app.mainLoop(ctx, appDone, connChanges, connMulticast)
@@ -80,6 +94,8 @@ func (a *IntegrationApp) mainLoop(
 
 	conns := map[string]quic.Connection{}
 
+	ops := map[string]*breathcast.BroadcastOperation{}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -90,13 +106,30 @@ func (a *IntegrationApp) mainLoop(
 			if cc.Adding {
 				conns[string(cc.Conn.Chain.Leaf.RawSubjectPublicKeyInfo)] = cc.Conn.QUIC
 				wg.Add(1)
-				go a.acceptStreams(ctx, &wg, cc.Conn.QUIC)
+				go a.acceptStreams(ctx, &wg, cc.Conn)
 			} else {
 				delete(conns, string(cc.Conn.Chain.Leaf.RawSubjectPublicKeyInfo))
 			}
 
 			mc.Set(cc)
 			mc = mc.Next
+
+		case req := <-a.incoming:
+			ah := req.AppHeader
+			op, ok := ops[string(ah.BroadcastID)]
+			if !ok {
+				var err error
+				op, err = a.Breathcast.NewIncomingBroadcast(
+					ctx, ah.ToIncomingBroadcastConfig(),
+				)
+				if err != nil {
+					panic(err)
+				}
+				ops[string(ah.BroadcastID)] = op
+			}
+
+			// Safe to assume response channel is buffered.
+			req.Resp <- op
 		}
 	}
 }
@@ -104,12 +137,12 @@ func (a *IntegrationApp) mainLoop(
 func (a *IntegrationApp) acceptStreams(
 	ctx context.Context,
 	wg *sync.WaitGroup,
-	conn quic.Connection,
+	conn dconn.Conn,
 ) {
 	defer wg.Done()
 
 	for {
-		s, err := conn.AcceptStream(ctx)
+		s, err := conn.QUIC.AcceptStream(ctx)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return
@@ -141,8 +174,41 @@ func (a *IntegrationApp) acceptStreams(
 			if err := json.Unmarshal(jah, &appHeader); err != nil {
 				panic(err)
 			}
+			appHeader.Raw = jah
+			appHeader.BroadcastID = bid
 
-			// Announce we are receiving an incoming broadcast.
+			// We need to send the app header back to the main loop,
+			// and the main loop will return a broadcast operation.
+			resp := make(chan *breathcast.BroadcastOperation, 1)
+			select {
+			case <-ctx.Done():
+				return
+			case a.incoming <- incomingBroadcastRequest{
+				AppHeader: appHeader,
+				Resp:      resp,
+			}:
+				// Okay, keep going.
+			}
+
+			var bop *breathcast.BroadcastOperation
+			select {
+			case <-ctx.Done():
+				return
+			case bop = <-resp:
+				// Okay.
+			}
+
+			// And accept the broadcast.
+			if err := bop.AcceptBroadcast(
+				ctx, conn, s,
+			); err != nil {
+				if errors.Is(err, context.Canceled) {
+					return
+				}
+				panic(err)
+			}
+
+			// Announce we have received an incoming broadcast.
 			select {
 			case <-ctx.Done():
 				// Quit.
@@ -151,21 +217,11 @@ func (a *IntegrationApp) acceptStreams(
 				BroadcastID: bid,
 				AppHeader:   jah,
 				Stream:      s,
+
+				Op: bop,
 			}:
 				// Keep going.
 			}
-
-			// Now accept the incoming broadcast.
-			bop, err := a.Breathcast.NewIncomingBroadcast(
-				ctx, appHeader.ToIncomingBroadcastConfig(bid, jah),
-			)
-			if err != nil {
-				if errors.Is(err, context.Canceled) {
-					return
-				}
-				panic(err)
-			}
-			_ = bop
 
 		default:
 			panic(fmt.Errorf(
@@ -178,6 +234,8 @@ func (a *IntegrationApp) acceptStreams(
 type IncomingBroadcast struct {
 	BroadcastID, AppHeader []byte
 	Stream                 quic.Stream
+
+	Op *breathcast.BroadcastOperation
 }
 
 // BroadcastAppHeader is the app header used for broadcasts.
@@ -185,6 +243,10 @@ type IncomingBroadcast struct {
 // Production code would likely use a more efficient encoding,
 // and it would include more fields for application-level decisions.
 type BroadcastAppHeader struct {
+	BroadcastID []byte
+
+	Raw []byte
+
 	NData, NParity uint16
 
 	TotalDataSize int
@@ -196,13 +258,11 @@ type BroadcastAppHeader struct {
 	ChunkSize uint16
 }
 
-func (h BroadcastAppHeader) ToIncomingBroadcastConfig(
-	broadcastID, appHeader []byte,
-) breathcast.IncomingBroadcastConfig {
+func (h BroadcastAppHeader) ToIncomingBroadcastConfig() breathcast.IncomingBroadcastConfig {
 	return breathcast.IncomingBroadcastConfig{
-		BroadcastID: broadcastID,
+		BroadcastID: h.BroadcastID,
 
-		AppHeader: appHeader,
+		AppHeader: h.Raw,
 
 		NData:   h.NData,
 		NParity: h.NParity,

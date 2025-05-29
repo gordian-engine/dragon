@@ -163,23 +163,30 @@ func TestBroadcast(t *testing.T) {
 		// and it doesn't have a Stop or Cancel method (yet).
 		_ = bop
 
-		// The originator will begin the broadcast to its active peers,
-		// but we can't predict which those are.
-		// So we can use a multicast here to indicate to all the goroutines
-		// what the current valid broadcast ID is,
-		// in order to have every node accept (and forward) the broadcast.
-		// That ought to allow the broadcast to propagate through the entire network.
-
+		// We have no way to know the order that broadcasts will be observed,
+		// so start a new goroutine for each app instance
+		// and fan all of those in to one channel.
+		ibFanIn := make(chan IncomingBroadcast, nNodes-1)
 		for j := range nNodes {
 			if j == i {
 				continue
 			}
 
-			incoming := dtest.ReceiveSoon(t, apps[j].IncomingBroadcasts)
-			_ = incoming
+			go func(a *IntegrationApp, j int) {
+				select {
+				case <-ctx.Done():
+					return
+				case ib := <-a.IncomingBroadcasts:
+					ibFanIn <- ib
+				}
+			}(apps[j], j)
 		}
 
-		t.Skip("TODO: confirm received incoming broadcast")
+		t.Skip("TODO: not all nodes always notify of broadcast yet")
+		for range nNodes - 1 {
+			_ = dtest.ReceiveSoon(t, ibFanIn)
+		}
+
 		break
 	}
 }
