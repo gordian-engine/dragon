@@ -14,6 +14,7 @@ import (
 	"github.com/gordian-engine/dragon/breathcast/bcmerkle/bcsha256"
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/internal/dchan"
+	"github.com/gordian-engine/dragon/internal/dmsg"
 	"github.com/quic-go/quic-go"
 )
 
@@ -29,11 +30,19 @@ type IntegrationApp struct {
 	// The main loop has to decide whether to create a new operation
 	// or return an existing one.
 	incoming chan incomingBroadcastRequest
+
+	// Channel for datagram packets.
+	newPackets chan newPacketRequest
 }
 
 type incomingBroadcastRequest struct {
 	AppHeader BroadcastAppHeader
 	Resp      chan *breathcast.BroadcastOperation
+}
+
+type newPacketRequest struct {
+	BroadcastID string
+	Raw         []byte
 }
 
 const breathcastProtocolID = 0x90
@@ -75,6 +84,8 @@ func NewIntegrationApp(
 
 		// Arbitrary size -- ought to be sufficiently large this way.
 		incoming: make(chan incomingBroadcastRequest, 8),
+
+		newPackets: make(chan newPacketRequest, 16),
 	}
 
 	go app.mainLoop(ctx, appDone, connChanges, connMulticast)
@@ -105,8 +116,9 @@ func (a *IntegrationApp) mainLoop(
 		case cc := <-changes:
 			if cc.Adding {
 				conns[string(cc.Conn.Chain.Leaf.RawSubjectPublicKeyInfo)] = cc.Conn.QUIC
-				wg.Add(1)
+				wg.Add(2)
 				go a.acceptStreams(ctx, &wg, cc.Conn)
+				go a.acceptDatagrams(ctx, &wg, cc.Conn)
 			} else {
 				delete(conns, string(cc.Conn.Chain.Leaf.RawSubjectPublicKeyInfo))
 			}
@@ -123,6 +135,11 @@ func (a *IntegrationApp) mainLoop(
 					ctx, ah.ToIncomingBroadcastConfig(),
 				)
 				if err != nil {
+					if errors.Is(err, context.Canceled) {
+						// Handle on next iteration.
+						continue
+					}
+
 					panic(err)
 				}
 				ops[string(ah.BroadcastID)] = op
@@ -130,6 +147,19 @@ func (a *IntegrationApp) mainLoop(
 
 			// Safe to assume response channel is buffered.
 			req.Resp <- op
+
+		case req := <-a.newPackets:
+			op := ops[req.BroadcastID]
+			if op == nil {
+				panic(fmt.Errorf(
+					"BUG: got a packet for an unknown broadcast ID %q",
+					req.BroadcastID,
+				))
+			}
+
+			if err := op.HandlePacket(ctx, req.Raw); err != nil {
+				panic(err)
+			}
 		}
 	}
 }
@@ -163,6 +193,11 @@ func (a *IntegrationApp) acceptStreams(
 		case breathcastProtocolID:
 			bid, err := a.Breathcast.ExtractStreamBroadcastID(s, nil)
 			if err != nil {
+				var appError *quic.ApplicationError
+				if errors.As(err, &appError) && appError.ErrorCode == dmsg.RemovingFromActiveView {
+					return
+				}
+
 				panic(err)
 			}
 			jah, _, err := breathcast.ExtractStreamApplicationHeader(s, nil)
@@ -227,6 +262,48 @@ func (a *IntegrationApp) acceptStreams(
 			panic(fmt.Errorf(
 				"unrecognized protocol ID 0x%x", protoByte[0],
 			))
+		}
+	}
+}
+
+func (a *IntegrationApp) acceptDatagrams(
+	ctx context.Context,
+	wg *sync.WaitGroup,
+	conn dconn.Conn,
+) {
+	defer wg.Done()
+
+	for {
+		b, err := conn.QUIC.ReceiveDatagram(ctx)
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return
+			}
+
+			var appError *quic.ApplicationError
+			if errors.As(err, &appError) && appError.ErrorCode == dmsg.RemovingFromActiveView {
+				return
+			}
+
+			panic(err)
+			// panic(fmt.Errorf(
+			// 	"error type %T %#v", err, err,
+			// ))
+		}
+
+		bid := a.Breathcast.ExtractPacketBroadcastID(b)
+		if len(bid) == 0 {
+			continue
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case a.newPackets <- newPacketRequest{
+			BroadcastID: string(bid),
+			Raw:         b,
+		}:
+			// Okay.
 		}
 	}
 }
