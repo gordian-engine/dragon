@@ -250,7 +250,7 @@ func (p *peerInboundProcessor) handleDynamicStreams(
 					context.Cause(ctx),
 				))
 				return
-			case p.appStreams <- dquicwrap.NewStream(s, res.ApplicationProtocolID):
+			case p.appStreams <- dquicwrap.NewInboundStream(s, res.ApplicationProtocolID):
 				continue
 			}
 		}

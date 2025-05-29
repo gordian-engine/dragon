@@ -17,10 +17,10 @@ type Stream struct {
 	// because we don't do any intercepting on receive streams.
 	quic.ReceiveStream
 
-	// Also embed the wrapped send stream,
+	// Also embed the wrapped send stream.
 	sendStream
 
-	// Still need a reference q directly for SetDeadline.
+	// Still need a reference to q directly for SetDeadline.
 	q quic.Stream
 
 	// Only accessed from Read,
@@ -30,22 +30,48 @@ type Stream struct {
 	prependProtocolID byte
 }
 
-// NewStream returns a new Stream based on the given quic.Stream.
-// If protocolID is >= [dconn.MinAppProtocolID], that byte value
-// will be prepended to the first read;
-// this is an implementation detail in the way dynamic streams are handled.
-func NewStream(q quic.Stream, protocolID byte) *Stream {
+// NewOutboundStream returns a wrapped stream
+// that requires that the first outbound byte
+// is >= [dconn.MinAppProtocolID].
+func NewOutboundStream(q quic.Stream) *Stream {
 	return &Stream{
 		ReceiveStream: q,
 		sendStream: sendStream{
 			q: q,
 		},
 
-		prependProtocolID: protocolID,
+		// Since this is an outbound stream,
+		// set hasRead true to avoid any special behavior in Read.
+		hasRead: true,
+	}
+}
 
-		// Setting this true to avoid a branch in Read,
-		// if this wrapped stream is somehow not an application stream.
-		hasRead: protocolID < dconn.MinAppProtocolID,
+// NewInboundStream returns a wrapped stream
+// that prepends the first read with the given
+// alreadyConsumedProtocolID byte.
+//
+// This is used when dragon internals intercept an incoming stream
+// and then inspect the first byte,
+// to decide whether the stream should be routed
+// to the application layer or remain in the p2p protocol layer.
+func NewInboundStream(
+	q quic.Stream,
+	alreadyConsumedProtocolID byte,
+) *Stream {
+	return &Stream{
+		ReceiveStream: q,
+
+		sendStream: sendStream{
+			q: q,
+
+			// Set this true to avoid a protocol byte check.
+			// Since it's an inbound stream,
+			// our first write will be a reply
+			// and we can write whatever first byte we'd like.
+			writtenBefore: true,
+		},
+
+		prependProtocolID: alreadyConsumedProtocolID,
 	}
 }
 

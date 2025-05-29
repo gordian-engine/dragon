@@ -19,6 +19,14 @@ type Conn struct {
 	streams <-chan *Stream
 }
 
+// NewConn returns a Conn wrapping the given plain quic.Connection.
+//
+// The incomingStreams channel determines the streams that reach AcceptStream.
+// There should be another goroutine that accepts the raw streams,
+// and then parses the first byte in order to determine
+// whether the stream should be routed to the "application layer" (here)
+// or remain in the protocol layer.
+// (In practice, the [*dpeerset.peerInboundProcessor] does this work.)
 func NewConn(q quic.Connection, incomingStreams <-chan *Stream) *Conn {
 	return &Conn{
 		q:       q,
@@ -63,7 +71,7 @@ func (c *Conn) OpenStream() (quic.Stream, error) {
 		return nil, err
 	}
 
-	return NewStream(s, 0), nil
+	return NewOutboundStream(s), nil
 }
 
 // OpenStreamSync implements [quic.Connection].
@@ -74,7 +82,7 @@ func (c *Conn) OpenStreamSync(ctx context.Context) (quic.Stream, error) {
 		return nil, err
 	}
 
-	return NewStream(s, 0), nil
+	return NewOutboundStream(s), nil
 }
 
 // OpenUniStream implements [quic.Connection].
