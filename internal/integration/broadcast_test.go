@@ -1,13 +1,17 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"net"
+	"sort"
 	"testing"
+	"time"
 
 	"github.com/gordian-engine/dragon"
 	"github.com/gordian-engine/dragon/breathcast"
@@ -29,7 +33,9 @@ func TestBroadcast(t *testing.T) {
 
 	log := dtest.NewLogger(t)
 
-	const nNodes = 8
+	t.Log("WARNING: this test needs updated to work with more nodes than the active view size")
+	const nNodes = 3
+
 	caConfigs := make([]dcerttest.CAConfig, nNodes)
 	for i := range nNodes {
 		caConfigs[i] = dcerttest.FastConfig()
@@ -61,8 +67,11 @@ func TestBroadcast(t *testing.T) {
 	// Each node alternates connecting to node 0 or 1,
 	// so they don't all dial the same peer,
 	// but they dial a small set of nodes which should propagate correctly.
+	nodeIDsBySPKI := make(map[string]int, nNodes)
 	apps := make([]*IntegrationApp, nNodes)
 	for i := range nNodes {
+		nodeIDsBySPKI[string(dNet.Chains[i].Leaf.RawSubjectPublicKeyInfo)] = i
+
 		var target net.Addr
 		if i&1 == 1 {
 			target = dNet.Nodes[0].UDP.LocalAddr()
@@ -99,7 +108,20 @@ func TestBroadcast(t *testing.T) {
 			t, ctx,
 			log.With("app_idx", i),
 			dNet.ConnectionChanges[i],
+			nodeIDsBySPKI,
 		)
+	}
+
+	// Short sleep to give network time to stabilize.
+	time.Sleep(20 * time.Millisecond)
+
+	const dumpConnectedNodes = !false
+	if dumpConnectedNodes {
+		for i, a := range apps {
+			c := a.ConnectedNodes()
+			sort.Ints(c)
+			t.Logf("!!! node %d connected to %v", i, c)
+		}
 	}
 
 	// The nodes are all dialed.
@@ -167,7 +189,7 @@ func TestBroadcast(t *testing.T) {
 		// so start a new goroutine for each app instance
 		// and fan all of those in to one channel.
 		ibFanIn := make(chan IncomingBroadcast, nNodes-1)
-		for j := range nNodes {
+		for j, app := range apps {
 			if j == i {
 				continue
 			}
@@ -179,14 +201,27 @@ func TestBroadcast(t *testing.T) {
 				case ib := <-a.IncomingBroadcasts:
 					ibFanIn <- ib
 				}
-			}(apps[j], j)
+			}(app, j)
 		}
 
-		t.Skip("TODO: not all nodes always notify of broadcast yet")
+		ibs := make([]IncomingBroadcast, 0, nNodes-1)
 		for range nNodes - 1 {
-			_ = dtest.ReceiveSoon(t, ibFanIn)
+			ib := dtest.ReceiveSoon(t, ibFanIn)
+			ibs = append(ibs, ib)
 		}
 
-		break
+		// Every node has reported the incoming broadcast,
+		// so now they should all have data ready, roughly immediately.
+		for _, ib := range ibs {
+			_ = dtest.ReceiveSoon(t, ib.Op.DataReady())
+
+			got, err := io.ReadAll(ib.Op.Data(ctx))
+			require.NoError(t, err)
+
+			if !bytes.Equal(randData, got) {
+				// TODO: this should be a fatal error.
+				t.Log("WARNING: application instance reported mismatched data")
+			}
+		}
 	}
 }

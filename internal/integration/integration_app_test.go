@@ -33,6 +33,8 @@ type IntegrationApp struct {
 
 	// Channel for datagram packets.
 	newPackets chan newPacketRequest
+
+	connectedNodesRequests chan (chan<- []int)
 }
 
 type incomingBroadcastRequest struct {
@@ -52,6 +54,7 @@ func NewIntegrationApp(
 	ctx context.Context,
 	log *slog.Logger,
 	connChanges <-chan dconn.Change,
+	nodeIDsBySPKI map[string]int,
 ) *IntegrationApp {
 	t.Helper()
 
@@ -86,9 +89,12 @@ func NewIntegrationApp(
 		incoming: make(chan incomingBroadcastRequest, 8),
 
 		newPackets: make(chan newPacketRequest, 16),
+
+		// Unbuffered is fine here, to synchronize on the ConnectedNodes method.
+		connectedNodesRequests: make(chan (chan<- []int)),
 	}
 
-	go app.mainLoop(ctx, appDone, connChanges, connMulticast)
+	go app.mainLoop(ctx, appDone, connChanges, connMulticast, nodeIDsBySPKI)
 
 	return app
 }
@@ -98,6 +104,7 @@ func (a *IntegrationApp) mainLoop(
 	done chan<- struct{},
 	changes <-chan dconn.Change,
 	mc *dchan.Multicast[dconn.Change],
+	nodeIDsBySPKI map[string]int,
 ) {
 	defer close(done)
 
@@ -158,10 +165,28 @@ func (a *IntegrationApp) mainLoop(
 			}
 
 			if err := op.HandlePacket(ctx, req.Raw); err != nil {
+				if errors.Is(err, context.Canceled) {
+					// Handle on next iteration.
+					continue
+				}
 				panic(err)
 			}
+
+		case req := <-a.connectedNodesRequests:
+			out := make([]int, 0, len(conns))
+			for k := range conns {
+				out = append(out, nodeIDsBySPKI[k])
+			}
+
+			req <- out
 		}
 	}
+}
+
+func (a *IntegrationApp) ConnectedNodes() []int {
+	req := make(chan []int, 1)
+	a.connectedNodesRequests <- req
+	return <-req
 }
 
 func (a *IntegrationApp) acceptStreams(
