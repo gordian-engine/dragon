@@ -475,10 +475,21 @@ func finishRelay(
 	var s quic.SendStream
 AWAIT_STREAM_CONTROL:
 	for {
+		var ok bool
 		select {
 		case <-ctx.Done():
 			return
-		case s = <-sCh:
+		case s, ok = <-sCh:
+			if !ok {
+				// The stream channel closed,
+				// indicating that the goroutine sending on that channel
+				// had to quit before sending a value.
+				// All we can do here is also quit.
+				return
+			}
+
+			// Otherwise we have a valid stream,
+			// so we can advance in this function.
 			break AWAIT_STREAM_CONTROL
 		case u := <-peerBitsetUpdates:
 			peerHas.InPlaceUnion(u)
