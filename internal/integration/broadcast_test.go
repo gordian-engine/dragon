@@ -1,7 +1,6 @@
 package integration
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -34,7 +33,10 @@ func TestBroadcast(t *testing.T) {
 	log := dtest.NewLogger(t)
 
 	t.Log("WARNING: this test needs updated to work with more nodes than the active view size")
-	const nNodes = 3
+	// With an active view size of 3,
+	// it looks like 4 nodes passes consistently,
+	// whereas 5 nodes passes often but not all the time.
+	const nNodes = 4
 
 	caConfigs := make([]dcerttest.CAConfig, nNodes)
 	for i := range nNodes {
@@ -115,7 +117,7 @@ func TestBroadcast(t *testing.T) {
 	// Short sleep to give network time to stabilize.
 	time.Sleep(20 * time.Millisecond)
 
-	const dumpConnectedNodes = !false
+	const dumpConnectedNodes = false
 	if dumpConnectedNodes {
 		for i, a := range apps {
 			c := a.ConnectedNodes()
@@ -183,7 +185,7 @@ func TestBroadcast(t *testing.T) {
 		// TODO: how to close out the broadcast operation?
 		// It's associated with the entire protocol's context,
 		// and it doesn't have a Stop or Cancel method (yet).
-		_ = bop
+		require.NoError(t, apps[i].RegisterOrigination(ctx, string(broadcastID), bop))
 
 		// We have no way to know the order that broadcasts will be observed,
 		// so start a new goroutine for each app instance
@@ -218,10 +220,7 @@ func TestBroadcast(t *testing.T) {
 			got, err := io.ReadAll(ib.Op.Data(ctx))
 			require.NoError(t, err)
 
-			if !bytes.Equal(randData, got) {
-				// TODO: this should be a fatal error.
-				t.Log("WARNING: application instance reported mismatched data")
-			}
+			require.Equal(t, randData, got)
 		}
 	}
 }

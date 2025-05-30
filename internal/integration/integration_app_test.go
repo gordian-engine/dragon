@@ -35,16 +35,28 @@ type IntegrationApp struct {
 	newPackets chan newPacketRequest
 
 	connectedNodesRequests chan (chan<- []int)
+
+	originations chan originationRegistration
 }
 
 type incomingBroadcastRequest struct {
 	AppHeader BroadcastAppHeader
-	Resp      chan *breathcast.BroadcastOperation
+	Resp      chan incomingBroadcastResponse
+}
+
+type incomingBroadcastResponse struct {
+	Op    *breathcast.BroadcastOperation
+	IsNew bool
 }
 
 type newPacketRequest struct {
 	BroadcastID string
 	Raw         []byte
+}
+
+type originationRegistration struct {
+	BroadcastID string
+	Op          *breathcast.BroadcastOperation
 }
 
 const breathcastProtocolID = 0x90
@@ -92,6 +104,8 @@ func NewIntegrationApp(
 
 		// Unbuffered is fine here, to synchronize on the ConnectedNodes method.
 		connectedNodesRequests: make(chan (chan<- []int)),
+
+		originations: make(chan originationRegistration),
 	}
 
 	go app.mainLoop(ctx, appDone, connChanges, connMulticast, nodeIDsBySPKI)
@@ -153,7 +167,10 @@ func (a *IntegrationApp) mainLoop(
 			}
 
 			// Safe to assume response channel is buffered.
-			req.Resp <- op
+			req.Resp <- incomingBroadcastResponse{
+				Op:    op,
+				IsNew: !ok,
+			}
 
 		case req := <-a.newPackets:
 			op := ops[req.BroadcastID]
@@ -179,7 +196,34 @@ func (a *IntegrationApp) mainLoop(
 			}
 
 			req <- out
+
+		case reg := <-a.originations:
+			if _, ok := ops[reg.BroadcastID]; ok {
+				panic(fmt.Errorf(
+					"BUG: attempted to register origination for existing broadcast ID %q",
+					reg.BroadcastID,
+				))
+			}
+
+			ops[reg.BroadcastID] = reg.Op
 		}
+	}
+}
+
+func (a *IntegrationApp) RegisterOrigination(
+	ctx context.Context,
+	bid string,
+	op *breathcast.BroadcastOperation,
+) error {
+	select {
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	case a.originations <- originationRegistration{
+		BroadcastID: bid,
+		Op:          op,
+	}:
+		// Unbuffered channel, no acknowledgement required.
+		return nil
 	}
 }
 
@@ -239,27 +283,27 @@ func (a *IntegrationApp) acceptStreams(
 
 			// We need to send the app header back to the main loop,
 			// and the main loop will return a broadcast operation.
-			resp := make(chan *breathcast.BroadcastOperation, 1)
+			respCh := make(chan incomingBroadcastResponse, 1)
 			select {
 			case <-ctx.Done():
 				return
 			case a.incoming <- incomingBroadcastRequest{
 				AppHeader: appHeader,
-				Resp:      resp,
+				Resp:      respCh,
 			}:
 				// Okay, keep going.
 			}
 
-			var bop *breathcast.BroadcastOperation
+			var resp incomingBroadcastResponse
 			select {
 			case <-ctx.Done():
 				return
-			case bop = <-resp:
+			case resp = <-respCh:
 				// Okay.
 			}
 
 			// And accept the broadcast.
-			if err := bop.AcceptBroadcast(
+			if err := resp.Op.AcceptBroadcast(
 				ctx, conn, s,
 			); err != nil {
 				if errors.Is(err, context.Canceled) {
@@ -268,19 +312,22 @@ func (a *IntegrationApp) acceptStreams(
 				panic(err)
 			}
 
-			// Announce we have received an incoming broadcast.
-			select {
-			case <-ctx.Done():
-				// Quit.
-				return
-			case a.IncomingBroadcasts <- IncomingBroadcast{
-				BroadcastID: bid,
-				AppHeader:   jah,
-				Stream:      s,
+			// Announce we have received an incoming broadcast,
+			// only if this was a new broadcast operation.
+			if resp.IsNew {
+				select {
+				case <-ctx.Done():
+					// Quit.
+					return
+				case a.IncomingBroadcasts <- IncomingBroadcast{
+					BroadcastID: bid,
+					AppHeader:   jah,
+					Stream:      s,
 
-				Op: bop,
-			}:
-				// Keep going.
+					Op: resp.Op,
+				}:
+					// Keep going.
+				}
 			}
 
 		default:
