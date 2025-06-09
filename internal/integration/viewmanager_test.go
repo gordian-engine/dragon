@@ -30,10 +30,10 @@ func TestRandViewManager(t *testing.T) {
 
 		active, passive int
 	}{
-		// This is just an arbitrary selection that seems to pass consistently.
-		// TODO: this needs more cases, but there are some combinations
-		// that seem to tickle edge cases where the network graph isn't fully connected.
+		// This are just some arbitrary selections that seem to pass consistently.
 		{nNodes: 5, active: 4, passive: 6},
+		{nNodes: 8, active: 3, passive: 6},
+		{nNodes: 10, active: 12, passive: 3},
 	} {
 		name := fmt.Sprintf(
 			"nNodes=%d active=%d passive=%d",
@@ -150,6 +150,7 @@ func testRandViewManager(
 	groups := make([]*bitset.BitSet, nNodes)
 	for i, o := range connObservers {
 		bs := bitset.MustNew(uint(nNodes))
+		bs.Set(uint(i))
 		groups[i] = bs
 
 		cn := o.ConnectedNodes()
@@ -163,10 +164,25 @@ func testRandViewManager(
 		// over any previously created bitset.
 		for _, ci := range cn {
 			if groups[ci] == nil {
-				continue
+				// Connected to a node whose bitset we haven't created yet.
+				break
 			}
 			bs.InPlaceUnion(groups[ci])
 			groups[ci] = bs
+		}
+
+		// One last adjustment:
+		// merge any other groups that we weren't directly connected to.
+		for j := range i {
+			if groups[j] == bs {
+				// Already merged.
+				continue
+			}
+
+			if groups[j].IntersectionCardinality(bs) > 0 {
+				bs.InPlaceUnion(groups[j])
+				groups[j] = bs
+			}
 		}
 	}
 
