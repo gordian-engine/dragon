@@ -115,7 +115,7 @@ func TestBroadcast(t *testing.T) {
 	}
 
 	// Short sleep to give network time to stabilize.
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 
 	const dumpConnectedNodes = false
 	if dumpConnectedNodes {
