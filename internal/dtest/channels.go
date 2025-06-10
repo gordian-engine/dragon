@@ -40,7 +40,7 @@ func ReceiveOrTimeout[T any](tb TestingFatalHelper, ch <-chan T, timeout ScaledD
 	select {
 	case <-timer.C:
 		tb.Fatalf(
-			"timed out while blocked receiving from channel %T %v; if this is flaky on only one machine, set the environment variable GORDIAN_TEST_TIME_FACTOR to a value greater than the current value of %d",
+			"timed out while blocked receiving from channel %T %v; if this is flaky on only one machine, set the environment variable DRAGON_TEST_TIME_FACTOR to a value greater than the current value of %d",
 			ch, ch, TimeFactor,
 		)
 		// t.Fatalf would typically stop the testing goroutine,
@@ -79,7 +79,7 @@ func SendOrTimeout[T any](tb TestingFatalHelper, ch chan<- T, x T, timeout Scale
 	select {
 	case <-timer.C:
 		tb.Fatalf(
-			"timed out while blocked sending to channel %T %v; if this is flaky on only one machine, set the environment variable GORDIAN_TEST_TIME_FACTOR to a value greater than the current value of %d",
+			"timed out while blocked sending to channel %T %v; if this is flaky on only one machine, set the environment variable DRAGON_TEST_TIME_FACTOR to a value greater than the current value of %d",
 			ch, ch, TimeFactor,
 		)
 		panic("unreachable")
