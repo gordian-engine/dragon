@@ -276,6 +276,15 @@ func synchronizeMissedPackets(
 	if err := sendSyncPackets(
 		s, packets, nData, peerHas, peerBitsetUpdates,
 	); err != nil {
+		var streamErr *quic.StreamError
+		if errors.As(err, &streamErr) {
+			if streamErr.ErrorCode == GotFullDataErrorCode ||
+				streamErr.ErrorCode == InterruptedErrorCode {
+				// Silently stop here.
+				return
+			}
+		}
+
 		log.Info(
 			"Failure when sending synchronous packets",
 			"err", err,

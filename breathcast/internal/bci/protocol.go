@@ -20,8 +20,16 @@ const (
 
 // Constants for stream cancellation error codes.
 const (
+	// The local process closes both the read and write
+	// sides of the stream when the it has the full data.
 	GotFullDataErrorCode quic.StreamErrorCode = 0x607
 
+	// The local process canceled the stream due to an interruption,
+	// typically due to a context cancellation higher in the stack.
+	// Stream reads and writes may not observe a context cancellation,
+	// but a call to [quic.ReceiveStream.CancelRead]
+	// or [quic.SendStream.CancelWrite]
+	// will immediately end the corresponding read or write.
 	InterruptedErrorCode quic.StreamErrorCode = 0x11117
 )
 

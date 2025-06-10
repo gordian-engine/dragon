@@ -46,8 +46,7 @@ type Protocol struct {
 
 	// Multicast for connection changes,
 	// so that broadcast operations can observe it directly.
-	connChanges  *dchan.Multicast[dconn.Change]
-	currentConns []dconn.Conn
+	connChanges *dchan.Multicast[dconn.Change]
 
 	newBroadcastRequests chan newBroadcastRequest
 
@@ -154,6 +153,7 @@ func (p *Protocol) mainLoop(ctx context.Context, conns map[string]dconn.Conn) {
 			// We have to keep our copy of the conns map updated,
 			// as we hand out copies of it to new BroadcastOperation instances.
 			cc := p.connChanges.Val
+			p.connChanges = p.connChanges.Next
 			if cc.Adding {
 				conns[string(cc.Conn.Chain.Leaf.RawSubjectPublicKeyInfo)] = cc.Conn
 			} else {

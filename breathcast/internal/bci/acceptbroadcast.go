@@ -318,6 +318,15 @@ UNFINISHED:
 			dh,
 			readSyncTimeout,
 		); err != nil {
+			var streamErr *quic.StreamError
+			if errors.As(err, &streamErr) {
+				if streamErr.ErrorCode == GotFullDataErrorCode ||
+					streamErr.ErrorCode == InterruptedErrorCode {
+					// Silently stop here.
+					return
+				}
+			}
+
 			log.Info(
 				"Failed to read synchronous missed datagram",
 				"err", err,
