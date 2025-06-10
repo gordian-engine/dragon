@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -139,9 +140,16 @@ func openOriginationStream(
 	peerHas := bitset.MustNew(uint(len(packets)))
 	dec := new(dbitset.AdaptiveDecoder)
 
+	// I would prefer the timeout for receiving the bitset to be lower,
+	// but at 10 milliseconds the broadcast integration test
+	// fails unacceptably frequently.
+	// I don't yet have an explanation on why
+	// the first bitset receive would possibly take that long.
+	const receiveBitsetTimeout = 20 * time.Millisecond
+
 	if err := dec.ReceiveBitset(
 		s,
-		10*time.Millisecond,
+		receiveBitsetTimeout,
 		peerHas,
 	); err != nil {
 		log.Info(
@@ -297,10 +305,21 @@ func synchronizeMissedPackets(
 	// The quic-go docs make it look like the Close method
 	// is a clean close that allows previously written data to finish sending.
 	if err := s.Close(); err != nil {
-		log.Info("Failed to close stream", "err", err)
+		if !isCloseOfCanceledStreamError(err) {
+			log.Info("Failed to close stream", "err", err)
+		}
 	}
 
 	// TODO: need to somehow signal that we are no longer accepting reads either.
+}
+
+// isCloseOfCanceledStreamError reports whether the given error
+// is due to calling Close on a stream that has already been canceled.
+func isCloseOfCanceledStreamError(e error) bool {
+	// As of writing, quic-go does not have a typed error for this,
+	// so we have to resort to string checking:
+	// https://github.com/quic-go/quic-go/blob/01921ede97c3cdda7adacd4bb1b21826942ac34c/send_stream.go#L408-L410
+	return strings.HasPrefix(e.Error(), "close called for canceled stream ")
 }
 
 // sendUnreliableDatagrams sends all the missing datagrams to the peer,
