@@ -13,6 +13,7 @@ import (
 
 	"github.com/gordian-engine/dragon/breathcast/internal/bci"
 	"github.com/gordian-engine/dragon/breathcast/internal/merkle/cbmt"
+	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/internal/dchan"
 	"github.com/quic-go/quic-go"
@@ -152,7 +153,7 @@ func (o *BroadcastOperation) Data(ctx context.Context) io.Reader {
 
 func (o *BroadcastOperation) mainLoop(
 	ctx context.Context,
-	conns map[string]dconn.Conn,
+	conns map[dcert.LeafCertHandle]dconn.Conn,
 	connChanges *dchan.Multicast[dconn.Change],
 	wg *sync.WaitGroup,
 	is *incomingState,
@@ -189,7 +190,7 @@ func (o *BroadcastOperation) mainLoop(
 // has the full set of data.
 func (o *BroadcastOperation) originationMainLoop(
 	ctx context.Context,
-	conns map[string]dconn.Conn,
+	conns map[dcert.LeafCertHandle]dconn.Conn,
 	connChanges *dchan.Multicast[dconn.Change],
 	protoHeader bci.ProtocolHeader,
 ) {
@@ -234,13 +235,13 @@ func (o *BroadcastOperation) runOrigination(
 
 func (o *BroadcastOperation) handleOriginationConnChange(
 	ctx context.Context,
-	conns map[string]dconn.Conn,
+	conns map[dcert.LeafCertHandle]dconn.Conn,
 	connChanges *dchan.Multicast[dconn.Change],
 	protoHeader bci.ProtocolHeader,
 ) *dchan.Multicast[dconn.Change] {
 	cc := connChanges.Val
 	if cc.Adding {
-		conns[string(cc.Conn.Chain.Leaf.RawSubjectPublicKeyInfo)] = cc.Conn
+		conns[cc.Conn.Chain.LeafHandle] = cc.Conn
 
 		o.runOrigination(
 			ctx,
@@ -252,7 +253,7 @@ func (o *BroadcastOperation) handleOriginationConnChange(
 			protoHeader,
 		)
 	} else {
-		delete(conns, string(cc.Conn.Chain.Leaf.RawSubjectPublicKeyInfo))
+		delete(conns, cc.Conn.Chain.LeafHandle)
 		// TODO: do we need to stop the in-progress operations in this case?
 	}
 
@@ -298,7 +299,7 @@ func (o *BroadcastOperation) runAcceptBroadcast(
 // does not have the full set of data.
 func (o *BroadcastOperation) relayMainLoop(
 	ctx context.Context,
-	conns map[string]dconn.Conn,
+	conns map[dcert.LeafCertHandle]dconn.Conn,
 	connChanges *dchan.Multicast[dconn.Change],
 	protoHeader bci.ProtocolHeader,
 	is *incomingState,
@@ -340,18 +341,18 @@ func (o *BroadcastOperation) relayMainLoop(
 
 func (o *BroadcastOperation) handleRelayConnChange(
 	ctx context.Context,
-	conns map[string]dconn.Conn,
+	conns map[dcert.LeafCertHandle]dconn.Conn,
 	connChanges *dchan.Multicast[dconn.Change],
 	protoHeader bci.ProtocolHeader,
 	is *incomingState,
 ) *dchan.Multicast[dconn.Change] {
 	cc := connChanges.Val
 	if cc.Adding {
-		conns[string(cc.Conn.Chain.Leaf.RawSubjectPublicKeyInfo)] = cc.Conn
+		conns[cc.Conn.Chain.LeafHandle] = cc.Conn
 
 		o.runOutgoingRelay(ctx, cc.Conn.QUIC, protoHeader, is)
 	} else {
-		delete(conns, string(cc.Conn.Chain.Leaf.RawSubjectPublicKeyInfo))
+		delete(conns, cc.Conn.Chain.LeafHandle)
 		// TODO: do we need to stop the in-progress operations in this case?
 	}
 
@@ -623,7 +624,9 @@ func (o *BroadcastOperation) restorePackets(
 }
 
 func (o *BroadcastOperation) initOrigination(
-	ctx context.Context, conns map[string]dconn.Conn, protoHeader bci.ProtocolHeader,
+	ctx context.Context,
+	conns map[dcert.LeafCertHandle]dconn.Conn,
+	protoHeader bci.ProtocolHeader,
 ) {
 	for _, conn := range conns {
 		o.runOrigination(

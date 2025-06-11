@@ -27,8 +27,8 @@ func (p Peer) toInternal() iPeer {
 
 		Admission: p.Admission,
 
-		CASPKI:   caSPKI(p.Chain.Root.RawSubjectPublicKeyInfo),
-		LeafSPKI: leafSPKI(p.Chain.Leaf.RawSubjectPublicKeyInfo),
+		CACertHandle:   p.Chain.RootHandle,
+		LeafCertHandle: p.Chain.LeafHandle,
 	}
 }
 
@@ -42,8 +42,8 @@ type iPeer struct {
 
 	Admission quic.Stream
 
-	CASPKI   caSPKI
-	LeafSPKI leafSPKI
+	CACertHandle   dcert.CACertHandle
+	LeafCertHandle dcert.LeafCertHandle
 }
 
 func (ip iPeer) ToPeer() Peer {
@@ -58,13 +58,13 @@ func (ip iPeer) ToPeer() Peer {
 }
 
 type PeerCertID struct {
-	leafSPKI leafSPKI
-	caSPKI   caSPKI
+	leafHandle dcert.LeafCertHandle
+	caHandle   dcert.CACertHandle
 }
 
 func PeerCertIDFromChain(chain dcert.Chain) PeerCertID {
 	return PeerCertID{
-		leafSPKI: leafSPKI(chain.Leaf.RawSubjectPublicKeyInfo),
-		caSPKI:   caSPKI(chain.Root.RawSubjectPublicKeyInfo),
+		leafHandle: chain.LeafHandle,
+		caHandle:   chain.RootHandle,
 	}
 }

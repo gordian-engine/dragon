@@ -10,6 +10,7 @@ import (
 	"io"
 	"iter"
 	"slices"
+	"unique"
 )
 
 // A [Chain] may have up to 7 intermediate entries,
@@ -21,24 +22,58 @@ import (
 // if we need to pack that length with anything else.
 const MaxIntermediateLen = 7
 
+// CACertHandle is a handle representing a certificate.
+// The handle can be used as map keys or for other trivial comparisons.
+// This is a separate type from [LeafCertHandle]
+// to reduce the likelihood of mistakenly swapping the two types.
+type CACertHandle unique.Handle[string]
+
+func (h CACertHandle) String() string {
+	return (unique.Handle[string])(h).Value()
+}
+
+// LeafCertHandle is a handle representing a certificate.
+// The handle can be used as map keys or for other trivial comparisons.
+// This is a separate type from [CACertHandle]
+// to reduce the likelihood of mistakenly swapping the two types.
+type LeafCertHandle unique.Handle[string]
+
+func (h LeafCertHandle) String() string {
+	return (unique.Handle[string])(h).Value()
+}
+
 // Chain represents a certificate chain,
 // with slightly stronger typing contextual to dragon
 // compared to a simple slice of *x509.Certificate.
+// It also contains a "handle" to the leaf and root certificates
+// which are intended to be used as map keys,
+// as many use cases involve retaining a map of connections
+// keyed by certificate.
 //
 // A Chain in dragon is required to have a non-nil leaf and root,
 // but intermediate may have up to seven entries.
 //
-// Since a Chain only contains three reference values,
+// Since a Chain itself only contains reference values,
 // a Chain is typically passed by value, not by reference.
+//
+// Due to the handle fields, callers should use
+// [NewChainFromCerts] or [NewChainFromTLSConnectionState]
+// to create a Chain.
+// Alternatively, set the Leaf and Root fields
+// and optionally the Intermediate field
+// and then call [*Chain.BuildHandles] before using the Chain.
 type Chain struct {
 	Leaf *x509.Certificate
 
 	Intermediate []*x509.Certificate
 
 	Root *x509.Certificate
+
+	LeafHandle LeafCertHandle
+	RootHandle CACertHandle
 }
 
-// NewChainFromCerts returns a Chain from the given list of certificates.
+// NewChainFromCerts returns a Chain from the given slice of certificates.
 func NewChainFromCerts(certs []*x509.Certificate) (Chain, error) {
 	if len(certs) < 2 {
 		return Chain{}, fmt.Errorf(
@@ -56,6 +91,8 @@ func NewChainFromCerts(certs []*x509.Certificate) (Chain, error) {
 		Leaf: certs[0],
 		Root: certs[len(certs)-1],
 	}
+
+	chain.BuildHandles()
 
 	if len(certs) > 2 {
 		// We want chain.Intermediate to be nil, not an empty slice,
@@ -80,6 +117,8 @@ func (c Chain) Validate() error {
 	var err error
 	if c.Leaf == nil {
 		err = errors.Join(err, errors.New("Chain.Leaf must not be nil"))
+	} else if c.LeafHandle == (LeafCertHandle{}) {
+		err = errors.Join(err, errors.New("Chain.LeafHandle must be initialized"))
 	}
 
 	if len(c.Intermediate) > MaxIntermediateLen {
@@ -91,9 +130,21 @@ func (c Chain) Validate() error {
 
 	if c.Root == nil {
 		err = errors.Join(err, errors.New("Chain.Root must not be nil"))
+	} else if c.RootHandle == (CACertHandle{}) {
+		err = errors.Join(err, errors.New("Chain.RootHandle must be initialized"))
 	}
 
 	return err
+}
+
+// BuildHandles sets the LeafHandle and RootHandle fields.
+// This is only required to call if manually creating a chain
+// by setting the Leaf and Root fields;
+// it happens automatically if using
+// [NewChainFromCerts] or [NewChainFromTLSConnectionState].
+func (c *Chain) BuildHandles() {
+	c.LeafHandle = LeafCertHandle(unique.Make(string(c.Leaf.RawSubjectPublicKeyInfo)))
+	c.RootHandle = CACertHandle(unique.Make(string(c.Root.RawSubjectPublicKeyInfo)))
 }
 
 // Len returns the total number of certificates in the chain.
@@ -255,6 +306,8 @@ func (c *Chain) Decode(r io.Reader) error {
 		mc.Set(cert)
 		i++
 	}
+
+	c.BuildHandles()
 
 	if err := c.Validate(); err != nil {
 		return fmt.Errorf("parsed invalid chain: %w", err)

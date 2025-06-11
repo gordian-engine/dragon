@@ -55,3 +55,38 @@ func TestChain_roundTrip(t *testing.T) {
 
 	// TODO: with intermediates.
 }
+
+func TestChain_handles(t *testing.T) {
+	ca, err := dcerttest.GenerateCA(dcerttest.FastConfig())
+	require.NoError(t, err)
+	leaf, err := ca.CreateLeafCert(dcerttest.LeafConfig{
+		DNSNames: []string{"leaf.example"},
+	})
+	require.NoError(t, err)
+
+	chain1, err := dcert.NewChainFromCerts(
+		[]*x509.Certificate{leaf.Cert, ca.Cert},
+	)
+	require.NoError(t, err)
+
+	chain2, err := dcert.NewChainFromCerts(
+		[]*x509.Certificate{leaf.Cert, ca.Cert},
+	)
+	require.NoError(t, err)
+
+	require.Equal(t, chain1.LeafHandle, chain2.LeafHandle)
+	require.Equal(t, chain1.RootHandle, chain2.RootHandle)
+
+	otherLeaf, err := ca.CreateLeafCert(dcerttest.LeafConfig{
+		DNSNames: []string{"otherleaf.example"},
+	})
+	require.NoError(t, err)
+
+	otherChain, err := dcert.NewChainFromCerts(
+		[]*x509.Certificate{otherLeaf.Cert, ca.Cert},
+	)
+	require.NoError(t, err)
+
+	require.NotEqual(t, otherChain.LeafHandle, chain1.LeafHandle)
+	require.Equal(t, otherChain.RootHandle, chain1.RootHandle)
+}

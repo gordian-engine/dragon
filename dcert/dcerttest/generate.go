@@ -447,6 +447,7 @@ func (ca *CA) CreateLeafCert(cfg LeafConfig) (*LeafCert, error) {
 		Leaf: leaf.Cert,
 		Root: ca.Cert,
 	}
+	leaf.Chain.BuildHandles()
 
 	return leaf, nil
 }
@@ -469,6 +470,7 @@ func (i Intermediate) CreateLeafCert(cfg LeafConfig) (*LeafCert, error) {
 		Intermediate: iChain,
 		Root:         i.Parents[len(i.Parents)-1],
 	}
+	leaf.Chain.BuildHandles()
 
 	return leaf, nil
 }

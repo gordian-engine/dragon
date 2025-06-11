@@ -13,6 +13,7 @@ import (
 
 	"github.com/gordian-engine/dragon/breathcast/bcmerkle"
 	"github.com/gordian-engine/dragon/breathcast/internal/merkle/cbmt"
+	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/internal/dchan"
 	"github.com/klauspost/reedsolomon"
@@ -121,9 +122,9 @@ func NewProtocol(ctx context.Context, log *slog.Logger, cfg ProtocolConfig) *Pro
 		mainLoopDone: make(chan struct{}),
 	}
 
-	conns := make(map[string]dconn.Conn, len(cfg.InitialConnections))
+	conns := make(map[dcert.LeafCertHandle]dconn.Conn, len(cfg.InitialConnections))
 	for _, c := range cfg.InitialConnections {
-		conns[string(c.Chain.Leaf.RawSubjectPublicKeyInfo)] = c
+		conns[c.Chain.LeafHandle] = c
 	}
 
 	go p.mainLoop(ctx, conns)
@@ -131,7 +132,7 @@ func NewProtocol(ctx context.Context, log *slog.Logger, cfg ProtocolConfig) *Pro
 	return p
 }
 
-func (p *Protocol) mainLoop(ctx context.Context, conns map[string]dconn.Conn) {
+func (p *Protocol) mainLoop(ctx context.Context, conns map[dcert.LeafCertHandle]dconn.Conn) {
 	defer close(p.mainLoopDone)
 
 	for {
@@ -155,9 +156,9 @@ func (p *Protocol) mainLoop(ctx context.Context, conns map[string]dconn.Conn) {
 			cc := p.connChanges.Val
 			p.connChanges = p.connChanges.Next
 			if cc.Adding {
-				conns[string(cc.Conn.Chain.Leaf.RawSubjectPublicKeyInfo)] = cc.Conn
+				conns[cc.Conn.Chain.LeafHandle] = cc.Conn
 			} else {
-				delete(conns, string(cc.Conn.Chain.Leaf.RawSubjectPublicKeyInfo))
+				delete(conns, cc.Conn.Chain.LeafHandle)
 			}
 		}
 	}
@@ -171,7 +172,7 @@ func (p *Protocol) Wait() {
 func (p *Protocol) handleNewBroadcastRequest(
 	ctx context.Context,
 	req newBroadcastRequest,
-	conns map[string]dconn.Conn,
+	conns map[dcert.LeafCertHandle]dconn.Conn,
 ) {
 	p.wg.Add(1)
 	go req.Op.mainLoop(ctx, maps.Clone(conns), p.connChanges, &p.wg, req.IS)

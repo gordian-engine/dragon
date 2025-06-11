@@ -42,11 +42,13 @@ type checkConnChainRequest struct {
 type forwardJoinToNetwork struct {
 	Msg dprotoi.ForwardJoinMessage
 
-	// Exclude peers by their CA certificate's SPKI.
+	// Exclude peers by their CA certificate raw subject public key info.
+	// TODO: switch this to dcert.CACertHandle.
 	Exclude map[string]struct{}
 }
 
 type initiatedShuffle struct {
-	DstCASPKI string
-	Entries   []dprotoi.ShuffleEntry
+	DstCACertHandle dcert.CACertHandle
+
+	Entries []dprotoi.ShuffleEntry
 }

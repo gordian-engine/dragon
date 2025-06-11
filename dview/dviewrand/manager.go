@@ -21,8 +21,8 @@ type Manager struct {
 
 	aLimit, pLimit int
 
-	aByCAPKI map[string]*dview.ActivePeer
-	pByCAPKI map[string]*dview.PassivePeer
+	aByCA map[dcert.CACertHandle]*dview.ActivePeer
+	pByCA map[dcert.CACertHandle]*dview.PassivePeer
 }
 
 type Config struct {
@@ -61,8 +61,8 @@ func New(log *slog.Logger, cfg Config) *Manager {
 
 		// These are both +1 to account for bursting an additional peer.
 		// They should only need +1 due to methods being called serially.
-		aByCAPKI: make(map[string]*dview.ActivePeer, cfg.ActiveViewSize+1),
-		pByCAPKI: make(map[string]*dview.PassivePeer, cfg.PassiveViewSize+1),
+		aByCA: make(map[dcert.CACertHandle]*dview.ActivePeer, cfg.ActiveViewSize+1),
+		pByCA: make(map[dcert.CACertHandle]*dview.PassivePeer, cfg.PassiveViewSize+1),
 	}
 }
 
@@ -71,8 +71,7 @@ func New(log *slog.Logger, cfg Config) *Manager {
 func (m *Manager) ConsiderJoin(
 	_ context.Context, p dview.ActivePeer,
 ) (dview.JoinDecision, error) {
-	caCert := p.Chain.Root
-	if _, ok := m.aByCAPKI[string(caCert.RawSubjectPublicKeyInfo)]; ok {
+	if _, ok := m.aByCA[p.Chain.RootHandle]; ok {
 		// We already have an active peer from this CA.
 		return dview.DisconnectAndForwardJoinDecision, nil
 	}
@@ -86,8 +85,7 @@ func (m *Manager) ConsiderJoin(
 func (m *Manager) ConsiderNeighborRequest(
 	_ context.Context, p dview.ActivePeer,
 ) (bool, error) {
-	caCert := p.Chain.Root
-	_, have := m.aByCAPKI[string(caCert.RawSubjectPublicKeyInfo)]
+	_, have := m.aByCA[p.Chain.RootHandle]
 
 	// Acceptable if we don't already have an active peer from this CA.
 	return !have, nil
@@ -99,7 +97,7 @@ func (m *Manager) ConsiderNeighborRequest(
 func (m *Manager) ConsiderForwardJoin(
 	_ context.Context, aa daddr.AddressAttestation, chain dcert.Chain,
 ) (dview.ForwardJoinDecision, error) {
-	_, alreadyHaveCA := m.aByCAPKI[string(chain.Root.RawSubjectPublicKeyInfo)]
+	_, alreadyHaveCA := m.aByCA[chain.RootHandle]
 
 	return dview.ForwardJoinDecision{
 		ContinueForwarding:  true,
@@ -111,31 +109,30 @@ func (m *Manager) AddActivePeer(
 	_ context.Context, p dview.ActivePeer,
 ) (evicted *dview.ActivePeer, err error) {
 	// Make sure we don't have an active peer with the same CA.
-	caCert := p.Chain.Root
-	if _, ok := m.aByCAPKI[string(caCert.RawSubjectPublicKeyInfo)]; ok {
+	if _, ok := m.aByCA[p.Chain.RootHandle]; ok {
 		// We already have an active peer from this CA.
 		return nil, dview.ErrAlreadyActiveCA
 	}
 
-	// We don't have an active peer, so we can afford it.
+	// We don't have an active peer with the same CA,
+	// so we can afford to add it.
 	// If we are under the active limit, we need to pick a peer to evict, though.
-	var deleteActiveKey string
-	if len(m.aByCAPKI) == m.aLimit {
+	var deleteActiveKey dcert.CACertHandle
+	if len(m.aByCA) >= m.aLimit {
 		deleteActiveKey, evicted = m.randomActivePeer()
 	}
 
-	m.aByCAPKI[string(caCert.RawSubjectPublicKeyInfo)] = &p
-	delete(m.aByCAPKI, deleteActiveKey)
+	m.aByCA[p.Chain.RootHandle] = &p
+	delete(m.aByCA, deleteActiveKey)
 
 	// We can just attempt to delete the passive peer if one exists,
 	// without doing a lookup first.
-	delete(m.pByCAPKI, string(caCert.RawSubjectPublicKeyInfo))
+	delete(m.pByCA, p.Chain.RootHandle)
 	return evicted, nil
 }
 
 func (m *Manager) RemoveActivePeer(_ context.Context, p dview.ActivePeer) {
-	caCert := p.Chain.Root
-	if _, ok := m.aByCAPKI[string(caCert.RawSubjectPublicKeyInfo)]; !ok {
+	if _, ok := m.aByCA[p.Chain.RootHandle]; !ok {
 		// Wasn't in the active set.
 		// We'll panic here for now at least.
 		// Seems like the kernel should prevent this from happening.
@@ -144,14 +141,14 @@ func (m *Manager) RemoveActivePeer(_ context.Context, p dview.ActivePeer) {
 		))
 	}
 
-	delete(m.aByCAPKI, string(caCert.RawSubjectPublicKeyInfo))
+	delete(m.aByCA, p.Chain.RootHandle)
 }
 
-func (m *Manager) randomActivePeer() (string, *dview.ActivePeer) {
+func (m *Manager) randomActivePeer() (dcert.CACertHandle, *dview.ActivePeer) {
 	// Map iteration order simply is unspecified, not random,
 	// so use the RNG to pick.
-	more := m.rng.IntN(len(m.aByCAPKI))
-	for k, p := range m.aByCAPKI {
+	more := m.rng.IntN(len(m.aByCA))
+	for k, p := range m.aByCA {
 		if more == 0 {
 			return k, p
 		}
@@ -159,14 +156,14 @@ func (m *Manager) randomActivePeer() (string, *dview.ActivePeer) {
 	}
 
 	// Map was empty.
-	return "", nil
+	return dcert.CACertHandle{}, nil
 }
 
-func (m *Manager) randomPassivePeer() (string, *dview.PassivePeer) {
+func (m *Manager) randomPassivePeer() (dcert.CACertHandle, *dview.PassivePeer) {
 	// Map iteration order simply is unspecified, not random,
 	// so use the RNG to pick.
-	more := m.rng.IntN(len(m.aByCAPKI))
-	for k, p := range m.pByCAPKI {
+	more := m.rng.IntN(len(m.aByCA))
+	for k, p := range m.pByCA {
 		if more == 0 {
 			return k, p
 		}
@@ -174,7 +171,7 @@ func (m *Manager) randomPassivePeer() (string, *dview.PassivePeer) {
 	}
 
 	// Map was empty.
-	return "", nil
+	return dcert.CACertHandle{}, nil
 }
 
 func (m *Manager) MakeOutboundShuffle(ctx context.Context) (dview.OutboundShuffle, error) {
@@ -194,9 +191,9 @@ func (m *Manager) HandleShuffleResponse(
 }
 
 func (m *Manager) NActivePeers() int {
-	return len(m.aByCAPKI)
+	return len(m.aByCA)
 }
 
 func (m *Manager) NPassivePeers() int {
-	return len(m.pByCAPKI)
+	return len(m.pByCA)
 }

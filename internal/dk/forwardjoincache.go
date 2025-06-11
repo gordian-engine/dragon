@@ -15,7 +15,7 @@ type forwardJoinCache struct {
 	// so that we can simplify shrinking the Recent map as part of Purge
 	// if we need to in the future.
 
-	Recent map[string]recentForwardJoin
+	Recent map[dcert.LeafCertHandle]recentForwardJoin
 }
 
 type recentForwardJoin struct {
@@ -37,20 +37,20 @@ func (s *forwardJoinCache) Purge() {
 	}
 
 	if s.Recent == nil {
-		s.Recent = make(map[string]recentForwardJoin, 4) // Arbitrary size.
+		s.Recent = make(map[dcert.LeafCertHandle]recentForwardJoin, 4) // Arbitrary size.
 	}
 }
 
 // Has reports whether s has recently seen a forward join
 // for the given chain.
 func (s forwardJoinCache) Has(chain dcert.Chain) bool {
-	_, ok := s.Recent[string(chain.Leaf.RawSubjectPublicKeyInfo)]
+	_, ok := s.Recent[chain.LeafHandle]
 	return ok
 }
 
 // Set marks the forward join as recently seen.
 func (s forwardJoinCache) Set(chain dcert.Chain, expireDur time.Duration) {
-	s.Recent[string(chain.Leaf.RawSubjectPublicKeyInfo)] = recentForwardJoin{
+	s.Recent[chain.LeafHandle] = recentForwardJoin{
 		ExpireAt: time.Now().Add(expireDur).UnixMilli(),
 		Chain:    chain,
 	}

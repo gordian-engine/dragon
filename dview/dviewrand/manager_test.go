@@ -5,7 +5,6 @@ import (
 	"math/rand/v2"
 	"testing"
 
-	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dcert/dcerttest"
 	"github.com/gordian-engine/dragon/dview"
 	"github.com/gordian-engine/dragon/dview/dviewrand"
@@ -42,10 +41,7 @@ func TestManager_ConsiderJoin(t *testing.T) {
 		// Some internal knowledge here that the dviewrand.Manager
 		// only inspects this one field of TLS,
 		// and does not inspect either address.
-		Chain: dcert.Chain{
-			Leaf: leaf1.Cert,
-			Root: ca.Cert,
-		},
+		Chain: leaf1.Chain,
 
 		AA: l1aa,
 	}
@@ -60,10 +56,7 @@ func TestManager_ConsiderJoin(t *testing.T) {
 	require.Nil(t, evicted) // There was nothing to evict.
 
 	p2 := dview.ActivePeer{
-		Chain: dcert.Chain{
-			Leaf: leaf2.Cert,
-			Root: ca.Cert,
-		},
+		Chain: leaf2.Chain,
 
 		AA: l2aa,
 	}

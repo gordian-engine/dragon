@@ -1,7 +1,6 @@
 package dpeerset
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -37,14 +36,14 @@ type ActiveView struct {
 	// Allow looking up a peer by its CA or its own SPKI.
 	// Since an iPeer only contains references,
 	// we can deal with the peer by value.
-	byCASPKI   map[caSPKI]iPeer
-	byLeafSPKI map[leafSPKI]iPeer
+	byCA   map[dcert.CACertHandle]iPeer
+	byLeaf map[dcert.LeafCertHandle]iPeer
 
 	// Track the dconn.Conn values we send through the connectionChanges channel,
 	// so that we can send proper remove messages.
-	dconnByLeafSPKI map[leafSPKI]dconn.Conn
+	dconnByLeafCert map[dcert.LeafCertHandle]dconn.Conn
 
-	processors map[caSPKI]*peerInboundProcessor
+	processors map[dcert.CACertHandle]*peerInboundProcessor
 
 	addRequests    chan addRequest
 	removeRequests chan removeRequest
@@ -68,12 +67,6 @@ type ActiveView struct {
 	seedChannels dfanout.SeedChannels
 	workChannels dfanout.WorkChannels
 }
-
-// Type aliases to avoid mistakenly accessing a map incorrectly.
-type (
-	caSPKI   string
-	leafSPKI string
-)
 
 type ActiveViewConfig struct {
 	// Number of seed goroutines to run.
@@ -124,12 +117,12 @@ func NewActiveView(ctx context.Context, log *slog.Logger, cfg ActiveViewConfig) 
 		log: log,
 
 		// Not trying to pre-size these, for now at least.
-		byCASPKI:   map[caSPKI]iPeer{},
-		byLeafSPKI: map[leafSPKI]iPeer{},
+		byCA:   map[dcert.CACertHandle]iPeer{},
+		byLeaf: map[dcert.LeafCertHandle]iPeer{},
 
-		dconnByLeafSPKI: map[leafSPKI]dconn.Conn{},
+		dconnByLeafCert: map[dcert.LeafCertHandle]dconn.Conn{},
 
-		processors: map[caSPKI]*peerInboundProcessor{},
+		processors: map[dcert.CACertHandle]*peerInboundProcessor{},
 
 		// Unbuffered because the caller blocks on these requests anyway.
 		addRequests:            make(chan addRequest),
@@ -204,7 +197,7 @@ func (a *ActiveView) mainLoop(ctx context.Context) {
 			// There is probably a better place to do all of this,
 			// but for now in tests,
 			// this ensures that all wait groups finish correctly.
-			for _, p := range a.byCASPKI {
+			for _, p := range a.byCA {
 				p.Conn.CloseWithError(1, "TODO: ungraceful shutdown due to context cancellation: "+context.Cause(ctx).Error())
 			}
 
@@ -264,23 +257,23 @@ func (a *ActiveView) Add(ctx context.Context, p Peer) error {
 }
 
 func (a *ActiveView) handleAddRequest(ctx context.Context, req addRequest) {
-	if _, ok := a.byCASPKI[req.IPeer.CASPKI]; ok {
+	if _, ok := a.byCA[req.IPeer.CACertHandle]; ok {
 		// We might not want to panic here if and when allowing active connections
 		// to "cousin" peers (who have the same CA and are highly trusted).
 		panic(fmt.Errorf(
 			"BUG: attempted to add peer with CA SPKI %q when one already existed",
-			req.IPeer.CASPKI,
+			req.IPeer.CACertHandle,
 		))
 	}
 
 	// Channel for the peerInboundProcessor to send to the application connection.
 	appStreams := make(chan *dquicwrap.Stream, 4) // TODO: what is the right size?
 
-	a.byCASPKI[req.IPeer.CASPKI] = req.IPeer
-	a.byLeafSPKI[req.IPeer.LeafSPKI] = req.IPeer
+	a.byCA[req.IPeer.CACertHandle] = req.IPeer
+	a.byLeaf[req.IPeer.LeafCertHandle] = req.IPeer
 
 	a.processorWG.Add(1)
-	a.processors[req.IPeer.CASPKI] = newPeerInboundProcessor(
+	a.processors[req.IPeer.CACertHandle] = newPeerInboundProcessor(
 		ctx,
 		a.log.With("peer_inbound_processor", req.IPeer.Conn.RemoteAddr().String()),
 		pipConfig{
@@ -309,7 +302,7 @@ func (a *ActiveView) handleAddRequest(ctx context.Context, req addRequest) {
 
 		Chain: req.IPeer.Chain,
 	}
-	a.dconnByLeafSPKI[req.IPeer.LeafSPKI] = newConn
+	a.dconnByLeafCert[req.IPeer.LeafCertHandle] = newConn
 	select {
 	case <-ctx.Done():
 		a.log.Warn(
@@ -359,26 +352,26 @@ func (a *ActiveView) Remove(ctx context.Context, pid PeerCertID) error {
 }
 
 func (a *ActiveView) handleRemoveRequest(ctx context.Context, req removeRequest) {
-	if _, ok := a.byCASPKI[req.PCI.caSPKI]; !ok {
+	if _, ok := a.byCA[req.PCI.caHandle]; !ok {
 		panic(fmt.Errorf(
 			"BUG: attempted to remove peer with CA SPKI %q when none existed",
-			req.PCI.caSPKI,
+			req.PCI.caHandle.String(),
 		))
 	}
 
-	delete(a.byCASPKI, req.PCI.caSPKI)
-	delete(a.byLeafSPKI, req.PCI.leafSPKI)
+	delete(a.byCA, req.PCI.caHandle)
+	delete(a.byLeaf, req.PCI.leafHandle)
 
 	// We delete the processor from the map we manage,
 	// but we still indirectly ensure the processor finishes its work
 	// by waiting on a.processorWG in a.Wait.
 	//
 	// TODO: we may need some distinct methods beyond just Cancel.
-	a.processors[req.PCI.caSPKI].Cancel()
-	delete(a.processors, req.PCI.caSPKI)
+	a.processors[req.PCI.caHandle].Cancel()
+	delete(a.processors, req.PCI.caHandle)
 
-	dc := a.dconnByLeafSPKI[req.PCI.leafSPKI]
-	delete(a.dconnByLeafSPKI, req.PCI.leafSPKI)
+	dc := a.dconnByLeafCert[req.PCI.leafHandle]
+	delete(a.dconnByLeafCert, req.PCI.leafHandle)
 
 	// Begin closing the connection before announcing its removal.
 	// This will unblock any local outstanding reads or writes on any stream,
@@ -452,7 +445,7 @@ func (a *ActiveView) HasConnectionToAddress(
 func (a *ActiveView) handleCheckConnAddrRequest(
 	req checkConnAddrRequest,
 ) {
-	for _, c := range a.dconnByLeafSPKI {
+	for _, c := range a.dconnByLeafCert {
 		if c.QUIC.RemoteAddr().String() == req.NetAddr {
 			req.Resp <- true
 			return
@@ -500,7 +493,7 @@ func (a *ActiveView) HasConnectionToChain(
 func (a *ActiveView) handleCheckConnChainRequest(
 	req checkConnChainRequest,
 ) {
-	_, ok := a.dconnByLeafSPKI[leafSPKI(req.Chain.Leaf.RawSubjectPublicKeyInfo)]
+	_, ok := a.dconnByLeafCert[req.Chain.LeafHandle]
 	req.Resp <- ok
 }
 
@@ -525,13 +518,13 @@ func (a *ActiveView) ForwardJoinToNetwork(
 }
 
 func (a *ActiveView) handleForwardJoinToNetwork(ctx context.Context, fj forwardJoinToNetwork) {
-	streams := make([]quic.Stream, 0, len(a.byCASPKI))
-	for spki, p := range a.byCASPKI {
-		if _, ok := fj.Exclude[string(spki)]; ok {
+	streams := make([]quic.Stream, 0, len(a.byCA))
+	for spki, p := range a.byCA {
+		if _, ok := fj.Exclude[spki.String()]; ok {
 			// Don't send it back to the node who sent it to us.
 			continue
 		}
-		if bytes.Equal(p.Chain.Leaf.RawSubjectPublicKeyInfo, fj.Msg.Chain.Leaf.RawSubjectPublicKeyInfo) {
+		if p.Chain.LeafHandle == fj.Msg.Chain.LeafHandle {
 			// Also don't send it to the node who originated it.
 			// Note that we are matching the leaf, not the root, for this.
 			// This way, it is possible for two peers from the same CA
@@ -573,8 +566,9 @@ func (a *ActiveView) InitiateShuffle(
 			context.Cause(ctx),
 		)
 	case a.initiatedShuffles <- initiatedShuffle{
-		DstCASPKI: string(dstChain.Root.RawSubjectPublicKeyInfo),
-		Entries:   entries,
+		DstCACertHandle: dstChain.RootHandle,
+
+		Entries: entries,
 	}:
 		// Okay.
 		return nil
@@ -582,7 +576,7 @@ func (a *ActiveView) InitiateShuffle(
 }
 
 func (a *ActiveView) handleInitiatedShuffle(ctx context.Context, is initiatedShuffle) {
-	p, ok := a.byCASPKI[caSPKI(is.DstCASPKI)]
+	p, ok := a.byCA[is.DstCACertHandle]
 	if !ok {
 		a.log.Warn(
 			"No peer found for shuffle destination",

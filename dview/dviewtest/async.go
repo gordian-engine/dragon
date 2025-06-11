@@ -17,9 +17,8 @@ type AsyncManagerMock struct {
 	MakeShuffleResponseCh     chan MakeShuffleResponseRequest
 	HandleShuffleResponseCh   chan HandleShuffleResponseRequest
 
-	// Keys are the CA cert SPKI for both of these maps.
-	ActivePeers  map[string]dview.ActivePeer
-	PassivePeers map[string]dview.PassivePeer
+	ActivePeers  map[dcert.CACertHandle]dview.ActivePeer
+	PassivePeers map[dcert.CACertHandle]dview.PassivePeer
 }
 
 func NewAsyncManagerMock() *AsyncManagerMock {
@@ -32,8 +31,8 @@ func NewAsyncManagerMock() *AsyncManagerMock {
 		MakeShuffleResponseCh:     make(chan MakeShuffleResponseRequest),
 		HandleShuffleResponseCh:   make(chan HandleShuffleResponseRequest),
 
-		ActivePeers:  map[string]dview.ActivePeer{},
-		PassivePeers: map[string]dview.PassivePeer{},
+		ActivePeers:  map[dcert.CACertHandle]dview.ActivePeer{},
+		PassivePeers: map[dcert.CACertHandle]dview.PassivePeer{},
 	}
 }
 
@@ -128,7 +127,7 @@ func (m *AsyncManagerMock) RemoveActivePeer(
 	ctx context.Context, p dview.ActivePeer,
 ) {
 	// No side channel for this one, at least not yet.
-	delete(m.PassivePeers, string(p.Chain.Root.RawSubjectPublicKeyInfo))
+	delete(m.PassivePeers, p.Chain.RootHandle)
 }
 
 func (m *AsyncManagerMock) NActivePeers() int {
