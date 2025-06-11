@@ -303,6 +303,11 @@ func (o *BroadcastOperation) relayMainLoop(
 	protoHeader bci.ProtocolHeader,
 	is *incomingState,
 ) {
+	// Before any other work, start relays for existing connections.
+	for _, conn := range conns {
+		o.runOutgoingRelay(ctx, conn.QUIC, protoHeader, is)
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -344,31 +349,40 @@ func (o *BroadcastOperation) handleRelayConnChange(
 	if cc.Adding {
 		conns[string(cc.Conn.Chain.Leaf.RawSubjectPublicKeyInfo)] = cc.Conn
 
-		bci.RunOutgoingRelay(
-			ctx,
-			o.log.With(
-				"btype", "outgoing_relay",
-				"remote", cc.Conn.QUIC.RemoteAddr(),
-			),
-			bci.OutgoingRelayConfig{
-				WG:                  &o.wg,
-				Conn:                cc.Conn.QUIC,
-				ProtocolHeader:      protoHeader,
-				AppHeader:           o.appHeader,
-				Packets:             o.packets,
-				InitialHavePackets:  is.pt.HaveLeaves().Clone(),
-				NewAvailablePackets: is.addedLeafIndices,
-				DataReady:           o.dataReady,
-				NData:               o.nData,
-				NParity:             o.nChunks - o.nData,
-			},
-		)
+		o.runOutgoingRelay(ctx, cc.Conn.QUIC, protoHeader, is)
 	} else {
 		delete(conns, string(cc.Conn.Chain.Leaf.RawSubjectPublicKeyInfo))
 		// TODO: do we need to stop the in-progress operations in this case?
 	}
 
 	return connChanges.Next
+}
+
+func (o *BroadcastOperation) runOutgoingRelay(
+	ctx context.Context,
+	conn quic.Connection,
+	protoHeader bci.ProtocolHeader,
+	is *incomingState,
+) {
+	bci.RunOutgoingRelay(
+		ctx,
+		o.log.With(
+			"btype", "outgoing_relay",
+			"remote", conn.RemoteAddr(),
+		),
+		bci.OutgoingRelayConfig{
+			WG:                  &o.wg,
+			Conn:                conn,
+			ProtocolHeader:      protoHeader,
+			AppHeader:           o.appHeader,
+			Packets:             o.packets,
+			InitialHavePackets:  is.pt.HaveLeaves().Clone(),
+			NewAvailablePackets: is.addedLeafIndices,
+			DataReady:           o.dataReady,
+			NData:               o.nData,
+			NParity:             o.nChunks - o.nData,
+		},
+	)
 }
 
 func (o *BroadcastOperation) handleCheckPacketRequest(
