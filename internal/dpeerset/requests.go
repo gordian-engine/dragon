@@ -43,8 +43,7 @@ type forwardJoinToNetwork struct {
 	Msg dprotoi.ForwardJoinMessage
 
 	// Exclude peers by their CA certificate raw subject public key info.
-	// TODO: switch this to dcert.CACertHandle.
-	Exclude map[string]struct{}
+	Exclude map[dcert.CACertHandle]struct{}
 }
 
 type initiatedShuffle struct {

@@ -326,9 +326,9 @@ func (k *Kernel) handleForwardJoinFromNetwork(
 	fjc *forwardJoinCache,
 ) {
 	// If this chain's forward join was recently seen, don't forward it again.
-	fjc.Purge()
-
+	// This avoids a feedback loop of A -> B -> C -> A.
 	m := req.Msg
+	fjc.Purge()
 	if fjc.Has(m.Chain) {
 		return
 	}
@@ -348,12 +348,13 @@ func (k *Kernel) handleForwardJoinFromNetwork(
 	if d.ContinueForwarding && m.TTL > 1 {
 		m.TTL--
 
-		// We currently prevent forwarding to the sender of the message,
-		// but we could possibly adjust the cache
+		// We currently prevent forwarding to the sender of the message
+		// (and any nodes belonging to the same CA).
+		// We could possibly adjust the cache
 		// so that we track which peers have already seen a particular forward join.
 		// Unclear at this point if that would be an improvement.
-		exclude := map[string]struct{}{
-			string(req.ForwarderCert.RawSubjectPublicKeyInfo): {},
+		exclude := map[dcert.CACertHandle]struct{}{
+			req.ForwarderChain.RootHandle: {},
 		}
 
 		if err := k.av.ForwardJoinToNetwork(ctx, m, exclude); err != nil {

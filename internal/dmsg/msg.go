@@ -1,8 +1,6 @@
 package dmsg
 
 import (
-	"crypto/x509"
-
 	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/internal/dprotoi"
 	"github.com/quic-go/quic-go"
@@ -25,9 +23,7 @@ type ForwardJoinFromNetwork struct {
 	// We received this request from an active peer,
 	// so we track who sent it to us,
 	// in order to not send it back to them.
-	//
-	// TODO: this should be a dcert.Chain instead.
-	ForwarderCert *x509.Certificate
+	ForwarderChain dcert.Chain
 }
 
 // ShuffleFromPeer is a shuffle message that a peer sent directly to us.

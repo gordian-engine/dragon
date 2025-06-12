@@ -33,7 +33,7 @@ type ActiveView struct {
 	// which can come and go during the lifecycle of the active peer set.
 	processorWG sync.WaitGroup
 
-	// Allow looking up a peer by its CA or its own SPKI.
+	// Allow looking up a peer by its CA or its own leaf certificate.
 	// Since an iPeer only contains references,
 	// we can deal with the peer by value.
 	byCA   map[dcert.CACertHandle]iPeer
@@ -261,8 +261,8 @@ func (a *ActiveView) handleAddRequest(ctx context.Context, req addRequest) {
 		// We might not want to panic here if and when allowing active connections
 		// to "cousin" peers (who have the same CA and are highly trusted).
 		panic(fmt.Errorf(
-			"BUG: attempted to add peer with CA SPKI %q when one already existed",
-			req.IPeer.CACertHandle,
+			"BUG: attempted to add peer with CA handle %q when one already existed",
+			req.IPeer.CACertHandle.String(),
 		))
 	}
 
@@ -354,7 +354,7 @@ func (a *ActiveView) Remove(ctx context.Context, pid PeerCertID) error {
 func (a *ActiveView) handleRemoveRequest(ctx context.Context, req removeRequest) {
 	if _, ok := a.byCA[req.PCI.caHandle]; !ok {
 		panic(fmt.Errorf(
-			"BUG: attempted to remove peer with CA SPKI %q when none existed",
+			"BUG: attempted to remove peer with CA handle %q when none existed",
 			req.PCI.caHandle.String(),
 		))
 	}
@@ -500,7 +500,7 @@ func (a *ActiveView) handleCheckConnChainRequest(
 func (a *ActiveView) ForwardJoinToNetwork(
 	ctx context.Context,
 	m dprotoi.ForwardJoinMessage,
-	excludeByCA map[string]struct{},
+	excludeByCA map[dcert.CACertHandle]struct{},
 ) error {
 	select {
 	case <-ctx.Done():
@@ -519,16 +519,19 @@ func (a *ActiveView) ForwardJoinToNetwork(
 
 func (a *ActiveView) handleForwardJoinToNetwork(ctx context.Context, fj forwardJoinToNetwork) {
 	streams := make([]quic.Stream, 0, len(a.byCA))
-	for spki, p := range a.byCA {
-		if _, ok := fj.Exclude[spki.String()]; ok {
-			// Don't send it back to the node who sent it to us.
+	for certHandle, p := range a.byCA {
+		if _, ok := fj.Exclude[certHandle]; ok {
+			// Don't send it to a peer matching the CA exclude list.
+			// We use CAs here, not the leaf certificate,
+			// because we aren't going to
 			continue
 		}
 		if p.Chain.LeafHandle == fj.Msg.Chain.LeafHandle {
 			// Also don't send it to the node who originated it.
 			// Note that we are matching the leaf, not the root, for this.
 			// This way, it is possible for two peers from the same CA
-			// to get a forward join from each other.
+			// to get a forward join from each other
+			// (where the forward join is for a peer from a different CA).
 			continue
 		}
 		streams = append(streams, p.Admission)
@@ -550,7 +553,7 @@ func (a *ActiveView) handleForwardJoinToNetwork(ctx context.Context, fj forwardJ
 }
 
 // InitiateShuffle enqueues a task to send the given shuffle entries
-// to the destination peer given by its CA SPKI.
+// to the destination peer indicated by its Chain.
 func (a *ActiveView) InitiateShuffle(
 	ctx context.Context,
 	dstChain dcert.Chain,

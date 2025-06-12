@@ -324,7 +324,6 @@ func (p *peerInboundProcessor) handleIncomingAdmission(ctx context.Context) {
 				))
 			}
 
-			forwarderCert := p.peer.Conn.ConnectionState().TLS.PeerCertificates[0]
 			select {
 			case <-ctx.Done():
 				p.fail(fmt.Errorf(
@@ -334,8 +333,8 @@ func (p *peerInboundProcessor) handleIncomingAdmission(ctx context.Context) {
 				return
 
 			case p.forwardJoinsFromNetwork <- dmsg.ForwardJoinFromNetwork{
-				Msg:           fjm,
-				ForwarderCert: forwarderCert,
+				Msg:            fjm,
+				ForwarderChain: p.peer.Chain,
 			}:
 				// Okay.
 				continue
