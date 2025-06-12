@@ -15,6 +15,7 @@ import (
 	"github.com/gordian-engine/dragon"
 	"github.com/gordian-engine/dragon/breathcast"
 	"github.com/gordian-engine/dragon/breathcast/bcmerkle/bcsha256"
+	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dcert/dcerttest"
 	"github.com/gordian-engine/dragon/dragontest"
 	"github.com/gordian-engine/dragon/dview/dviewrand"
@@ -69,10 +70,10 @@ func TestBroadcast(t *testing.T) {
 	// Each node alternates connecting to node 0 or 1,
 	// so they don't all dial the same peer,
 	// but they dial a small set of nodes which should propagate correctly.
-	nodeIDsBySPKI := make(map[string]int, nNodes)
+	nodeIDsByLeafCert := make(map[dcert.LeafCertHandle]int, nNodes)
 	apps := make([]*IntegrationApp, nNodes)
 	for i := range nNodes {
-		nodeIDsBySPKI[string(dNet.Chains[i].Leaf.RawSubjectPublicKeyInfo)] = i
+		nodeIDsByLeafCert[dNet.Chains[i].LeafHandle] = i
 
 		var target net.Addr
 		if i&1 == 1 {
@@ -110,7 +111,7 @@ func TestBroadcast(t *testing.T) {
 			t, ctx,
 			log.With("app_idx", i),
 			dNet.ConnectionChanges[i],
-			nodeIDsBySPKI,
+			nodeIDsByLeafCert,
 		)
 	}
 

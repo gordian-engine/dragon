@@ -12,6 +12,7 @@ import (
 
 	"github.com/bits-and-blooms/bitset"
 	"github.com/gordian-engine/dragon"
+	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dcert/dcerttest"
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/dragontest"
@@ -89,11 +90,11 @@ func testRandViewManager(
 
 	// First build up all the node IDs,
 	// because each connection observer needs this mapping.
-	nodeIDsBySPKI := make(map[string]int, nNodes)
+	nodeIDsByLeafCert := make(map[dcert.LeafCertHandle]int, nNodes)
 	connObservers := make([]*connObserver, nNodes)
 	for i := range nNodes {
-		nodeIDsBySPKI[string(dNet.Chains[i].Leaf.RawSubjectPublicKeyInfo)] = i
-		connObservers[i] = newConnObserver(t, nodeIDsBySPKI)
+		nodeIDsByLeafCert[dNet.Chains[i].LeafHandle] = i
+		connObservers[i] = newConnObserver(t, nodeIDsByLeafCert)
 	}
 
 	for i, o := range connObservers {
@@ -215,16 +216,19 @@ func testRandViewManager(
 type connObserver struct {
 	Done chan struct{}
 
-	nodeIDsBySPKI map[string]int
+	nodeIDsByLeafCert map[dcert.LeafCertHandle]int
 
 	nodeRequests chan chan []int
 }
 
-func newConnObserver(t *testing.T, nodeIDsBySPKI map[string]int) *connObserver {
+func newConnObserver(
+	t *testing.T,
+	nodeIDsByLeafCert map[dcert.LeafCertHandle]int,
+) *connObserver {
 	o := &connObserver{
 		Done: make(chan struct{}),
 
-		nodeIDsBySPKI: nodeIDsBySPKI,
+		nodeIDsByLeafCert: nodeIDsByLeafCert,
 
 		nodeRequests: make(chan chan []int),
 	}
@@ -245,7 +249,7 @@ func (o *connObserver) run(ctx context.Context, connChanges <-chan dconn.Change)
 			return
 
 		case cc := <-connChanges:
-			nodeID := o.nodeIDsBySPKI[string(cc.Conn.Chain.Leaf.RawSubjectPublicKeyInfo)]
+			nodeID := o.nodeIDsByLeafCert[cc.Conn.Chain.LeafHandle]
 			if cc.Adding {
 				connectedNodeIDs[nodeID] = struct{}{}
 			} else {

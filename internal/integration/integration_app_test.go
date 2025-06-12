@@ -12,6 +12,7 @@ import (
 
 	"github.com/gordian-engine/dragon/breathcast"
 	"github.com/gordian-engine/dragon/breathcast/bcmerkle/bcsha256"
+	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/internal/dchan"
 	"github.com/gordian-engine/dragon/internal/dmsg"
@@ -66,7 +67,7 @@ func NewIntegrationApp(
 	ctx context.Context,
 	log *slog.Logger,
 	connChanges <-chan dconn.Change,
-	nodeIDsBySPKI map[string]int,
+	nodeIDsByLeafCert map[dcert.LeafCertHandle]int,
 ) *IntegrationApp {
 	t.Helper()
 
@@ -108,7 +109,7 @@ func NewIntegrationApp(
 		originations: make(chan originationRegistration),
 	}
 
-	go app.mainLoop(ctx, appDone, connChanges, connMulticast, nodeIDsBySPKI)
+	go app.mainLoop(ctx, appDone, connChanges, connMulticast, nodeIDsByLeafCert)
 
 	return app
 }
@@ -118,13 +119,13 @@ func (a *IntegrationApp) mainLoop(
 	done chan<- struct{},
 	changes <-chan dconn.Change,
 	mc *dchan.Multicast[dconn.Change],
-	nodeIDsBySPKI map[string]int,
+	nodeIDsByLeafCert map[dcert.LeafCertHandle]int,
 ) {
 	defer close(done)
 
 	var wg sync.WaitGroup
 
-	conns := map[string]quic.Connection{}
+	conns := map[dcert.LeafCertHandle]quic.Connection{}
 
 	ops := map[string]*breathcast.BroadcastOperation{}
 
@@ -136,12 +137,12 @@ func (a *IntegrationApp) mainLoop(
 
 		case cc := <-changes:
 			if cc.Adding {
-				conns[string(cc.Conn.Chain.Leaf.RawSubjectPublicKeyInfo)] = cc.Conn.QUIC
+				conns[cc.Conn.Chain.LeafHandle] = cc.Conn.QUIC
 				wg.Add(2)
 				go a.acceptStreams(ctx, &wg, cc.Conn)
 				go a.acceptDatagrams(ctx, &wg, cc.Conn)
 			} else {
-				delete(conns, string(cc.Conn.Chain.Leaf.RawSubjectPublicKeyInfo))
+				delete(conns, cc.Conn.Chain.LeafHandle)
 			}
 
 			mc.Set(cc)
@@ -192,7 +193,7 @@ func (a *IntegrationApp) mainLoop(
 		case req := <-a.connectedNodesRequests:
 			out := make([]int, 0, len(conns))
 			for k := range conns {
-				out = append(out, nodeIDsBySPKI[k])
+				out = append(out, nodeIDsByLeafCert[k])
 			}
 
 			req <- out
