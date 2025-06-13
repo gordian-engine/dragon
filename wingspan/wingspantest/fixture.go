@@ -1,23 +1,20 @@
-package breathcasttest
+package wingspantest
 
 import (
 	"context"
 	"testing"
 
-	"github.com/gordian-engine/dragon/breathcast"
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/internal/dchan"
 	"github.com/gordian-engine/dragon/internal/dquic/dquictest"
 	"github.com/gordian-engine/dragon/internal/dtest"
+	"github.com/gordian-engine/dragon/wingspan"
 	"github.com/quic-go/quic-go"
 )
 
-// ProtocolFixture is a fixture for testing the breathcast protocol.
-//
-// Create an instance with [NewProtocolFixture].
 type ProtocolFixture struct {
 	ConnChanges []*dchan.Multicast[dconn.Change]
-	Protocols   []*breathcast.Protocol
+	Protocols   []*wingspan.Protocol
 
 	ListenerSet *dquictest.ListenerSet
 }
@@ -28,15 +25,9 @@ type ProtocolFixtureConfig struct {
 
 	ProtocolID byte
 
-	BroadcastIDLength uint8
+	SessionIDLength uint8
 }
 
-// NewProtocolFixture returns an initialized ProtocolFixture.
-//
-// The returned instance has no connections between any of the nodes.
-// Use [*dquictest.ListenerSet.Dial] to create connections between nodes,
-// and then use [*Fixture.AddConnection] to notify the protocol instances
-// of the new connections.
 func NewProtocolFixture(
 	t *testing.T, ctx context.Context, cfg ProtocolFixtureConfig,
 ) *ProtocolFixture {
@@ -46,16 +37,16 @@ func NewProtocolFixture(
 
 	f := &ProtocolFixture{
 		ConnChanges: make([]*dchan.Multicast[dconn.Change], cfg.Nodes),
-		Protocols:   make([]*breathcast.Protocol, cfg.Nodes),
+		Protocols:   make([]*wingspan.Protocol, cfg.Nodes),
 		ListenerSet: dquictest.NewListenerSet(t, ctx, cfg.Nodes),
 	}
 
 	for i := range cfg.Nodes {
 		cc := dchan.NewMulticast[dconn.Change]()
-		p := breathcast.NewProtocol(ctx, log.With("idx", i), breathcast.ProtocolConfig{
+		p := wingspan.NewProtocol(ctx, log.With("idx", i), wingspan.ProtocolConfig{
 			ConnectionChanges: cc,
 			ProtocolID:        cfg.ProtocolID,
-			BroadcastIDLength: cfg.BroadcastIDLength,
+			SessionIDLength:   cfg.SessionIDLength,
 		})
 		t.Cleanup(p.Wait)
 
