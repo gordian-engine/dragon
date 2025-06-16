@@ -19,7 +19,7 @@ func TestProtocol_outboundConnection(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		fx := wingspantest.NewProtocolFixture(t, ctx, wingspantest.ProtocolFixtureConfig{
+		fx := wingspantest.NewProtocolFixture[uint32](t, ctx, wingspantest.ProtocolFixtureConfig{
 			Nodes: 2,
 
 			ProtocolID:      0xd0,
@@ -37,8 +37,10 @@ func TestProtocol_outboundConnection(t *testing.T) {
 		// so instead just do a short sleep.
 		time.Sleep(4 * time.Millisecond)
 
+		s, m := wingspantest.NewCentralBitsetState(ctx, 8)
 		sess0, err := fx.Protocols[0].NewSession(
 			ctx, []byte("sid"), []byte("application hello"),
+			s, m,
 		)
 		require.NoError(t, err)
 
@@ -61,7 +63,7 @@ func TestProtocol_outboundConnection(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		fx := wingspantest.NewProtocolFixture(t, ctx, wingspantest.ProtocolFixtureConfig{
+		fx := wingspantest.NewProtocolFixture[uint32](t, ctx, wingspantest.ProtocolFixtureConfig{
 			Nodes: 2,
 
 			ProtocolID:      0xd0,
@@ -70,8 +72,10 @@ func TestProtocol_outboundConnection(t *testing.T) {
 		defer cancel()
 
 		// Make the session before doing any dialing.
+		s, m := wingspantest.NewCentralBitsetState(ctx, 8)
 		sess0, err := fx.Protocols[0].NewSession(
 			ctx, []byte("sid"), []byte("application hello"),
+			s, m,
 		)
 		require.NoError(t, err)
 
@@ -94,11 +98,11 @@ func TestProtocol_outboundConnection(t *testing.T) {
 	})
 }
 
-func testStreamHeaders(
+func testStreamHeaders[D any](
 	t *testing.T,
 	ctx context.Context,
 	conn quic.Connection,
-	p *wingspan.Protocol,
+	p *wingspan.Protocol[D],
 	expSessionID, expAppHeader []byte,
 ) {
 	t.Helper()

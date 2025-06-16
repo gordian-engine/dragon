@@ -13,6 +13,7 @@ import (
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/internal/dchan"
 	"github.com/gordian-engine/dragon/wingspan/internal/wsi"
+	"github.com/gordian-engine/dragon/wingspan/wspacket"
 )
 
 // Protocol controls all the operations of the "wingspan" protocol.
@@ -20,14 +21,14 @@ import (
 // The key method on Protocol is [*Protocol.NewSession].
 // A "session" has a session ID and is the agreed "topic"
 // for gossip among the network.
-type Protocol struct {
+type Protocol[D any] struct {
 	log *slog.Logger
 
 	// Multicast for connection changes,
 	// so that broadcast operations can observe it directly.
 	connChanges *dchan.Multicast[dconn.Change]
 
-	startSessionRequests chan sessionRequest
+	startSessionRequests chan sessionRequest[D]
 
 	// Application-decided protocol ID.
 	// Necessary for outgoing streams.
@@ -50,9 +51,9 @@ type Protocol struct {
 // The main loop starts the goroutine for the session
 // and sends a SessionHandle on the response channel,
 // so that [*Protocol.NewSession] can return a cancelable session.
-type sessionRequest struct {
-	Session *wsi.Session
-	Resp    chan SessionHandle
+type sessionRequest[D any] struct {
+	Session *wsi.Session[D]
+	Resp    chan SessionHandle[D]
 }
 
 // ProtocolConfig is the configuration passed to [NewProtocol].
@@ -74,7 +75,11 @@ type ProtocolConfig struct {
 	SessionIDLength uint8
 }
 
-func NewProtocol(ctx context.Context, log *slog.Logger, cfg ProtocolConfig) *Protocol {
+func NewProtocol[D any](
+	ctx context.Context,
+	log *slog.Logger,
+	cfg ProtocolConfig,
+) *Protocol[D] {
 	if cfg.SessionIDLength == 0 {
 		// It's plausible that there would be a use case
 		// for saving the space required for session IDs,
@@ -84,12 +89,12 @@ func NewProtocol(ctx context.Context, log *slog.Logger, cfg ProtocolConfig) *Pro
 		)
 	}
 
-	p := &Protocol{
+	p := &Protocol[D]{
 		log: log,
 
 		connChanges: cfg.ConnectionChanges,
 
-		startSessionRequests: make(chan sessionRequest),
+		startSessionRequests: make(chan sessionRequest[D]),
 
 		protocolID: cfg.ProtocolID,
 
@@ -108,7 +113,7 @@ func NewProtocol(ctx context.Context, log *slog.Logger, cfg ProtocolConfig) *Pro
 	return p
 }
 
-func (p *Protocol) mainLoop(ctx context.Context, conns map[dcert.LeafCertHandle]dconn.Conn) {
+func (p *Protocol[D]) mainLoop(ctx context.Context, conns map[dcert.LeafCertHandle]dconn.Conn) {
 	defer close(p.mainLoopDone)
 
 	for {
@@ -135,14 +140,14 @@ func (p *Protocol) mainLoop(ctx context.Context, conns map[dcert.LeafCertHandle]
 	}
 }
 
-func (p *Protocol) Wait() {
+func (p *Protocol[D]) Wait() {
 	<-p.mainLoopDone
 	p.wg.Wait()
 }
 
-func (p *Protocol) handleStartSessionRequest(
+func (p *Protocol[D]) handleStartSessionRequest(
 	ctx context.Context,
-	req sessionRequest,
+	req sessionRequest[D],
 	conns map[dcert.LeafCertHandle]dconn.Conn,
 ) {
 	ctx, cancel := context.WithCancelCause(ctx)
@@ -151,7 +156,7 @@ func (p *Protocol) handleStartSessionRequest(
 	go req.Session.Run(ctx, &p.wg, maps.Clone(conns), p.connChanges)
 
 	// Response channel is buffered.
-	req.Resp <- SessionHandle{
+	req.Resp <- SessionHandle[D]{
 		s:      req.Session,
 		cancel: cancel,
 	}
@@ -159,13 +164,15 @@ func (p *Protocol) handleStartSessionRequest(
 
 // NewSession creates a new session with the given session ID,
 // associating it with p.
-func (p *Protocol) NewSession(
+func (p *Protocol[D]) NewSession(
 	ctx context.Context,
 	id []byte,
 	appHeader []byte,
-) (SessionHandle, error) {
+	state wspacket.CentralState[D],
+	deltas *dchan.Multicast[D],
+) (SessionHandle[D], error) {
 	if len(id) != int(p.sessionIDLength) {
-		return SessionHandle{}, fmt.Errorf(
+		return SessionHandle[D]{}, fmt.Errorf(
 			"BUG: attempted to create session with invalid ID length %d (must be %d)",
 			len(id), p.sessionIDLength,
 		)
@@ -174,16 +181,17 @@ func (p *Protocol) NewSession(
 	s := wsi.NewSession(
 		p.log.With("sid", fmt.Sprintf("%x", id)), // TODO: hex log helper.
 		p.protocolID, id, appHeader,
+		state, deltas,
 	)
 
-	resp := make(chan SessionHandle, 1)
+	resp := make(chan SessionHandle[D], 1)
 	select {
 	case <-ctx.Done():
-		return SessionHandle{}, fmt.Errorf(
+		return SessionHandle[D]{}, fmt.Errorf(
 			"context canceled while making request to start session: %w",
 			context.Cause(ctx),
 		)
-	case p.startSessionRequests <- sessionRequest{
+	case p.startSessionRequests <- sessionRequest[D]{
 		Session: s,
 		Resp:    resp,
 	}:
@@ -192,7 +200,7 @@ func (p *Protocol) NewSession(
 
 	select {
 	case <-ctx.Done():
-		return SessionHandle{}, fmt.Errorf(
+		return SessionHandle[D]{}, fmt.Errorf(
 			"context canceled while waiting for response to start session: %w",
 			context.Cause(ctx),
 		)
@@ -202,13 +210,13 @@ func (p *Protocol) NewSession(
 }
 
 // SessionHandle is a handle into a session object.
-type SessionHandle struct {
-	s      *wsi.Session
+type SessionHandle[D any] struct {
+	s      *wsi.Session[D]
 	cancel context.CancelCauseFunc
 }
 
 // Cancel immediately stops the session.
-func (h SessionHandle) Cancel() {
+func (h SessionHandle[D]) Cancel() {
 	// TODO: use a sentinel error here.
 	h.cancel(nil)
 }
@@ -223,7 +231,7 @@ func (h SessionHandle) Cancel() {
 //
 // It is assumed that the caller has already consumed
 // the protocol ID byte matching [ProtocolConfig.ProtocolID].
-func (p *Protocol) ExtractStreamSessionID(
+func (p *Protocol[D]) ExtractStreamSessionID(
 	r io.Reader, dst []byte,
 ) ([]byte, error) {
 	if cap(dst) >= int(p.sessionIDLength) {
