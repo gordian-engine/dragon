@@ -49,11 +49,11 @@ type Protocol[D any] struct {
 
 // sessionRequest contains the details necessary to run a session.
 // The main loop starts the goroutine for the session
-// and sends a SessionHandle on the response channel,
+// and sends a Session on the response channel,
 // so that [*Protocol.NewSession] can return a cancelable session.
 type sessionRequest[D any] struct {
 	Session *wsi.Session[D]
-	Resp    chan SessionHandle[D]
+	Resp    chan Session[D]
 }
 
 // ProtocolConfig is the configuration passed to [NewProtocol].
@@ -156,7 +156,7 @@ func (p *Protocol[D]) handleStartSessionRequest(
 	go req.Session.Run(ctx, &p.wg, maps.Clone(conns), p.connChanges)
 
 	// Response channel is buffered.
-	req.Resp <- SessionHandle[D]{
+	req.Resp <- Session[D]{
 		s:      req.Session,
 		cancel: cancel,
 	}
@@ -170,9 +170,9 @@ func (p *Protocol[D]) NewSession(
 	appHeader []byte,
 	state wspacket.CentralState[D],
 	deltas *dchan.Multicast[D],
-) (SessionHandle[D], error) {
+) (Session[D], error) {
 	if len(id) != int(p.sessionIDLength) {
-		return SessionHandle[D]{}, fmt.Errorf(
+		return Session[D]{}, fmt.Errorf(
 			"BUG: attempted to create session with invalid ID length %d (must be %d)",
 			len(id), p.sessionIDLength,
 		)
@@ -184,10 +184,10 @@ func (p *Protocol[D]) NewSession(
 		state, deltas,
 	)
 
-	resp := make(chan SessionHandle[D], 1)
+	resp := make(chan Session[D], 1)
 	select {
 	case <-ctx.Done():
-		return SessionHandle[D]{}, fmt.Errorf(
+		return Session[D]{}, fmt.Errorf(
 			"context canceled while making request to start session: %w",
 			context.Cause(ctx),
 		)
@@ -200,25 +200,13 @@ func (p *Protocol[D]) NewSession(
 
 	select {
 	case <-ctx.Done():
-		return SessionHandle[D]{}, fmt.Errorf(
+		return Session[D]{}, fmt.Errorf(
 			"context canceled while waiting for response to start session: %w",
 			context.Cause(ctx),
 		)
 	case h := <-resp:
 		return h, nil
 	}
-}
-
-// SessionHandle is a handle into a session object.
-type SessionHandle[D any] struct {
-	s      *wsi.Session[D]
-	cancel context.CancelCauseFunc
-}
-
-// Cancel immediately stops the session.
-func (h SessionHandle[D]) Cancel() {
-	// TODO: use a sentinel error here.
-	h.cancel(nil)
 }
 
 // ExtractStreamSessionID extracts the session ID

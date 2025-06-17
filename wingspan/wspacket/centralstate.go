@@ -9,8 +9,11 @@ import (
 // CentralState is the state management that is central to a session,
 // related to but decoupled from any remote state.
 //
+// The type parameter D is the "delta" type
+// that the central state emits to notify remote states of updates.
+//
 // While this interface contains the methods necessary
-// for use with the [Manager],
+// for integration with the [wingspan.Protocol],
 // there is other functionality required outside of this interface.
 //
 // For instance, there must be a "deltas" [*dchan.Multicast]
