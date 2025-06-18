@@ -3,7 +3,9 @@ package wsi
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"sync"
 	"time"
@@ -27,7 +29,47 @@ type Session[D any] struct {
 
 	state  wspacket.CentralState[D]
 	deltas *dchan.Multicast[D]
+
+	acceptStreamRequests chan acceptStreamRequest
+	inboundDeltaArrivals chan inboundDeltaArrival[D]
 }
+
+// acceptStreamRequest contains the details necessary
+// to add an inbound stream to the [Session].
+type acceptStreamRequest struct {
+	Conn   dconn.Conn
+	Stream quic.ReceiveStream
+	Resp   chan struct{}
+}
+
+// inboundDeltaArrival is the value sent by an [InboundWorker]
+// to the [Session], when the worker's peer sends a packet.
+type inboundDeltaArrival[D any] struct {
+	Delta D
+	Resp  chan<- inboundDeltaResult
+}
+
+// inboundDeltaResult is the value the [Session] reports
+// back to an [InboundWorker], when the worker
+// receives a packet, parses it, and reports it back to central state.
+type inboundDeltaResult uint8
+
+const (
+	// Invalid zero value.
+	_ inboundDeltaResult = iota
+
+	// Apply the delta to local state.
+	inboundDeltaApply
+
+	// This was redundant information,
+	// so just drop the value.
+	inboundDeltaDrop
+
+	// Something was wrong with the value.
+	// Rejecting the value should be considered as
+	// the peer causing a protocol violation.
+	inboundDeltaReject
+)
 
 func NewSession[D any](
 	log *slog.Logger,
@@ -64,12 +106,17 @@ func NewSession[D any](
 
 		state:  state,
 		deltas: deltas,
+
+		// Unbuffered since caller blocks anyway.
+		acceptStreamRequests: make(chan acceptStreamRequest),
+		inboundDeltaArrivals: make(chan inboundDeltaArrival[D]),
 	}
 }
 
 func (s *Session[D]) Run(
 	ctx context.Context,
 	parentWG *sync.WaitGroup,
+	parsePacketFn func(io.Reader) (D, error),
 	conns map[dcert.LeafCertHandle]dconn.Conn,
 	connChanges *dchan.Multicast[dconn.Change],
 ) {
@@ -78,7 +125,7 @@ func (s *Session[D]) Run(
 	var wg sync.WaitGroup
 	defer wg.Wait()
 
-	ot := s.initializeConns(ctx, &wg, conns)
+	rs := s.initializeConns(ctx, &wg, conns, parsePacketFn)
 
 	for {
 		select {
@@ -91,20 +138,75 @@ func (s *Session[D]) Run(
 			lh := cc.Conn.Chain.LeafHandle
 			if cc.Adding {
 				conns[lh] = cc.Conn
-				ot[lh] = s.addOutboundWorker(ctx, &wg, cc.Conn.QUIC)
+				rs[lh] = s.addRemoteState(ctx, &wg, cc.Conn, parsePacketFn)
 			} else {
-				t := ot[lh]
-				t.Cancel(nil) // TODO: use sentinel error here.
+				rs[lh].Cancel(nil) // TODO: use sentinel error here.
 
-				delete(ot, lh)
+				delete(rs, lh)
 				delete(conns, lh)
 			}
+
+		case req := <-s.acceptStreamRequests:
+			// TODO: how should this handle a request
+			// whose connection is not in the conns map?
+			lh := req.Conn.Chain.LeafHandle
+
+			r := rs[lh]
+			if r.InboundStreamCh == nil {
+				panic(errors.New("TODO: handle multiple streams from same peer"))
+			}
+
+			// No select since this channel is one-buffered.
+			is, m, err := s.state.NewInboundRemoteState(ctx)
+			if err != nil {
+				panic(fmt.Errorf(
+					"TODO: handle error from NewInboundRemoteState: %w", err,
+				))
+			}
+
+			r.InboundStreamCh <- InboundStream[D]{
+				Stream: req.Stream,
+				State:  is,
+				Deltas: m,
+			}
+
+			close(req.Resp)
+
+			// Clear the InboundStreamCh so a second accept stream request will fail.
+			r.InboundStreamCh = nil
+			rs[lh] = r // Reassign due to map values not being references.
+
+		case req := <-s.inboundDeltaArrivals:
+			var res inboundDeltaResult
+			err := s.state.UpdateFromPeer(ctx, req.Delta)
+			switch {
+			case err == nil:
+				res = inboundDeltaApply
+			case errors.Is(err, wspacket.ErrRedundantUpdate):
+				res = inboundDeltaDrop
+			default:
+				s.log.Info(
+					"Failed to check update from remote",
+					"err", err,
+				)
+				res = inboundDeltaReject
+			}
+
+			// Response channel assumed to be buffered.
+			req.Resp <- res
 		}
 	}
 }
 
-type outboundTracker[D any] struct {
-	W *OutboundWorker[D]
+// remoteState is the centralized value used to track
+// [Session] state for a single network peer.
+type remoteState[D any] struct {
+	Conn dconn.Conn
+
+	OW *OutboundWorker[D]
+	IW *InboundWorker[D]
+
+	InboundStreamCh chan<- InboundStream[D]
 
 	Cancel context.CancelCauseFunc
 }
@@ -113,45 +215,85 @@ func (s *Session[D]) initializeConns(
 	ctx context.Context,
 	wg *sync.WaitGroup,
 	conns map[dcert.LeafCertHandle]dconn.Conn,
-) map[dcert.LeafCertHandle]outboundTracker[D] {
-	outbound := make(map[dcert.LeafCertHandle]outboundTracker[D], len(conns))
+	parsePacketFn func(io.Reader) (D, error),
+) map[dcert.LeafCertHandle]remoteState[D] {
+	rs := make(map[dcert.LeafCertHandle]remoteState[D], len(conns))
 
 	for h, conn := range conns {
-		outbound[h] = s.addOutboundWorker(
-			ctx, wg, conn.QUIC,
-		)
+		rs[h] = s.addRemoteState(ctx, wg, conn, parsePacketFn)
 	}
 
-	return outbound
+	return rs
 }
 
-func (s *Session[D]) addOutboundWorker(
+func (s *Session[D]) addRemoteState(
 	ctx context.Context,
 	wg *sync.WaitGroup,
-	conn quic.Connection,
-) outboundTracker[D] {
-	rs, m, err := s.state.NewRemoteState(ctx)
+	conn dconn.Conn,
+	parsePacketFn func(io.Reader) (D, error),
+) remoteState[D] {
+	rs, m, err := s.state.NewOutboundRemoteState(ctx)
 	if err != nil {
 		// TODO: probably should send back an error to the caller.
 		panic(err)
 	}
 
+	log := s.log.With("remote", conn.QUIC.RemoteAddr().String())
+
 	ow := NewOutboundWorker(
-		s.log.With("remote", conn.RemoteAddr().String()),
+		log.With("worker", "outbound"),
 		s.header,
 		rs,
 		m,
 	)
+	iw := NewInboundWorker(
+		log.With("worker", "inbound"),
+		s.inboundDeltaArrivals,
+	)
 
 	ctx, cancel := context.WithCancelCause(ctx)
-	t := outboundTracker[D]{
-		W:      ow,
+
+	wg.Add(2)
+	const headerTimeout = 5 * time.Millisecond
+	go ow.Run(ctx, wg, conn.QUIC, headerTimeout)
+
+	inboundStreamCh := make(chan InboundStream[D], 1)
+	go iw.Run(ctx, wg, parsePacketFn, inboundStreamCh)
+
+	return remoteState[D]{
+		Conn: conn,
+
+		OW: ow,
+		IW: iw,
+
+		InboundStreamCh: inboundStreamCh,
+
 		Cancel: cancel,
 	}
+}
 
-	wg.Add(1)
-	const headerTimeout = 5 * time.Millisecond
-	go ow.Run(ctx, wg, conn, headerTimeout)
+func (s *Session[D]) AcceptStream(
+	ctx context.Context,
+	conn dconn.Conn,
+	rs quic.ReceiveStream,
+) error {
+	req := acceptStreamRequest{
+		Conn:   conn,
+		Stream: rs,
+		Resp:   make(chan struct{}),
+	}
 
-	return t
+	select {
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	case s.acceptStreamRequests <- req:
+		// Okay.
+	}
+
+	select {
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	case <-req.Resp:
+		return nil
+	}
 }

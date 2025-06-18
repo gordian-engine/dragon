@@ -53,7 +53,10 @@ type Protocol[D any] struct {
 // so that [*Protocol.NewSession] can return a cancelable session.
 type sessionRequest[D any] struct {
 	Session *wsi.Session[D]
-	Resp    chan Session[D]
+
+	ParsePacketFn func(io.Reader) (D, error)
+
+	Resp chan Session[D]
 }
 
 // ProtocolConfig is the configuration passed to [NewProtocol].
@@ -153,7 +156,12 @@ func (p *Protocol[D]) handleStartSessionRequest(
 	ctx, cancel := context.WithCancelCause(ctx)
 
 	p.wg.Add(1)
-	go req.Session.Run(ctx, &p.wg, maps.Clone(conns), p.connChanges)
+	go req.Session.Run(
+		ctx, &p.wg,
+		req.ParsePacketFn,
+		maps.Clone(conns),
+		p.connChanges,
+	)
 
 	// Response channel is buffered.
 	req.Resp <- Session[D]{
@@ -162,14 +170,19 @@ func (p *Protocol[D]) handleStartSessionRequest(
 	}
 }
 
-// NewSession creates a new session with the given session ID,
-// associating it with p.
+// NewSession creates a new session with the given session ID
+// and application header, associating it with p.
+//
+// The parsePacketFn callback is used to read a packet
+// from the peer's network stream and convert it into a D value.
+// The function will be called concurrently.
 func (p *Protocol[D]) NewSession(
 	ctx context.Context,
 	id []byte,
 	appHeader []byte,
 	state wspacket.CentralState[D],
 	deltas *dchan.Multicast[D],
+	parsePacketFn func(io.Reader) (D, error),
 ) (Session[D], error) {
 	if len(id) != int(p.sessionIDLength) {
 		return Session[D]{}, fmt.Errorf(
@@ -192,8 +205,9 @@ func (p *Protocol[D]) NewSession(
 			context.Cause(ctx),
 		)
 	case p.startSessionRequests <- sessionRequest[D]{
-		Session: s,
-		Resp:    resp,
+		Session:       s,
+		ParsePacketFn: parsePacketFn,
+		Resp:          resp,
 	}:
 		// Okay.
 	}

@@ -2,7 +2,7 @@ package wspacket
 
 // Packet is an opaque view of a single outgoing packet.
 //
-// Packet values are accessed through [RemoteState.UnsentPackets].
+// Packet values are accessed through [OutboundRemoteState.UnsentPackets].
 type Packet interface {
 	// Bytes is the raw byte slice that needs to be sent
 	// to the peer over a QUIC stream.
@@ -14,7 +14,7 @@ type Packet interface {
 
 	// After sending a packet to a peer,
 	// Wingspan internals call MarkSent
-	// in order to update the [RemoteState],
-	// which will influence future calls to [RemoteState.UnsentPackets].
+	// in order to update the [OutboundRemoteState],
+	// which will influence future calls to [OutboundRemoteState.UnsentPackets].
 	MarkSent()
 }

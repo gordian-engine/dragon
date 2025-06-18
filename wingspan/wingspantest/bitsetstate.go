@@ -16,8 +16,9 @@ type CentralBitsetState struct {
 
 	m *dchan.Multicast[uint32]
 
-	updates    chan bitsetUpdate
-	newRemotes chan (chan<- newRemoteResult)
+	updates      chan bitsetUpdate
+	newOutbounds chan (chan<- newOutboundStateResult)
+	newInbounds  chan (chan<- newInboundStateResult)
 
 	done chan struct{}
 }
@@ -27,9 +28,14 @@ type bitsetUpdate struct {
 	Resp chan struct{}
 }
 
-type newRemoteResult struct {
-	Remote *RemoteBitsetState
-	M      *dchan.Multicast[uint32]
+type newOutboundStateResult struct {
+	State *OutboundBitsetState
+	M     *dchan.Multicast[uint32]
+}
+
+type newInboundStateResult struct {
+	State *InboundBitsetState
+	M     *dchan.Multicast[uint32]
 }
 
 func NewCentralBitsetState(
@@ -41,8 +47,9 @@ func NewCentralBitsetState(
 		bs: bs,
 		m:  m,
 
-		updates:    make(chan bitsetUpdate),
-		newRemotes: make(chan (chan<- newRemoteResult)),
+		updates:      make(chan bitsetUpdate),
+		newOutbounds: make(chan (chan<- newOutboundStateResult)),
+		newInbounds:  make(chan (chan<- newInboundStateResult)),
 
 		done: make(chan struct{}),
 	}
@@ -65,10 +72,18 @@ func (s *CentralBitsetState) mainLoop(ctx context.Context) {
 			s.m.Set(u.U)
 			s.m = s.m.Next
 
-		case req := <-s.newRemotes:
-			res := newRemoteResult{
-				Remote: newRemoteBitsetState(s.bs),
-				M:      s.m,
+		case req := <-s.newOutbounds:
+			res := newOutboundStateResult{
+				State: newRemoteBitsetState(s.bs),
+				M:     s.m,
+			}
+			// Unbuffered so we don't need to select.
+			req <- res
+
+		case req := <-s.newInbounds:
+			res := newInboundStateResult{
+				State: newInboundBitsetState(s.bs),
+				M:     s.m,
 			}
 			// Unbuffered so we don't need to select.
 			req <- res
@@ -80,7 +95,7 @@ func (s *CentralBitsetState) Wait() {
 	<-s.done
 }
 
-func (s *CentralBitsetState) UpdateFromRemote(ctx context.Context, d uint32) error {
+func (s *CentralBitsetState) UpdateFromPeer(ctx context.Context, d uint32) error {
 	resp := make(chan struct{})
 	select {
 	case <-ctx.Done():
@@ -99,14 +114,14 @@ func (s *CentralBitsetState) UpdateFromRemote(ctx context.Context, d uint32) err
 	}
 }
 
-func (s *CentralBitsetState) NewRemoteState(ctx context.Context) (
-	wspacket.RemoteState[uint32], *dchan.Multicast[uint32], error,
+func (s *CentralBitsetState) NewOutboundRemoteState(ctx context.Context) (
+	wspacket.OutboundRemoteState[uint32], *dchan.Multicast[uint32], error,
 ) {
-	ch := make(chan newRemoteResult, 1)
+	ch := make(chan newOutboundStateResult, 1)
 	select {
 	case <-ctx.Done():
 		return nil, nil, context.Cause(ctx)
-	case s.newRemotes <- ch:
+	case s.newOutbounds <- ch:
 		// Okay.
 	}
 
@@ -114,33 +129,54 @@ func (s *CentralBitsetState) NewRemoteState(ctx context.Context) (
 	case <-ctx.Done():
 		return nil, nil, context.Cause(ctx)
 	case res := <-ch:
-		return res.Remote, res.M, nil
+		return res.State, res.M, nil
 	}
 }
 
-type RemoteBitsetState struct {
+func (s *CentralBitsetState) NewInboundRemoteState(ctx context.Context) (
+	wspacket.InboundRemoteState[uint32], *dchan.Multicast[uint32], error,
+) {
+	ch := make(chan newInboundStateResult, 1)
+	select {
+	case <-ctx.Done():
+		return nil, nil, context.Cause(ctx)
+	case s.newInbounds <- ch:
+		// Okay.
+	}
+
+	select {
+	case <-ctx.Done():
+		return nil, nil, context.Cause(ctx)
+	case res := <-ch:
+		return res.State, res.M, nil
+	}
+}
+
+// OutboundBitsetState is an implementation of [wspacket.OutboundRemoteState]
+// for [CentralBitsetState].
+type OutboundBitsetState struct {
 	have, sent *bitset.BitSet
 }
 
-func newRemoteBitsetState(initial *bitset.BitSet) *RemoteBitsetState {
+func newRemoteBitsetState(initial *bitset.BitSet) *OutboundBitsetState {
 	sent := bitset.MustNew(initial.Len())
-	return &RemoteBitsetState{
+	return &OutboundBitsetState{
 		have: initial,
 		sent: sent,
 	}
 }
 
-func (s *RemoteBitsetState) ApplyUpdateFromLocal(d uint32) error {
+func (s *OutboundBitsetState) ApplyUpdateFromCentral(d uint32) error {
 	s.have.Set(uint(d))
 	return nil
 }
 
-func (s *RemoteBitsetState) ApplyUpdateFromRemote(d uint32) error {
+func (s *OutboundBitsetState) ApplyUpdateFromPeer(d uint32) error {
 	s.have.Set(uint(d))
 	return nil
 }
 
-func (s *RemoteBitsetState) UnsentPackets() iter.Seq[wspacket.Packet] {
+func (s *OutboundBitsetState) UnsentPackets() iter.Seq[wspacket.Packet] {
 	p := bitsetPacket{owner: s}
 	return func(yield func(wspacket.Packet) bool) {
 		// Slightly inefficient to create a new bitset each time here,
@@ -156,9 +192,50 @@ func (s *RemoteBitsetState) UnsentPackets() iter.Seq[wspacket.Packet] {
 	}
 }
 
+// InboundBitsetState is an implementation of [wspacket.InboundRemoteState]
+// for [CentralBitsetState].
+type InboundBitsetState struct {
+	have    *bitset.BitSet
+	checked *bitset.BitSet
+}
+
+func newInboundBitsetState(initial *bitset.BitSet) *InboundBitsetState {
+	return &InboundBitsetState{
+		have:    initial,
+		checked: bitset.MustNew(initial.Len()),
+	}
+}
+
+func (s *InboundBitsetState) ApplyUpdateFromCentral(d uint32) error {
+	// TODO: bounds check.
+	s.have.Set(uint(d))
+	return nil
+}
+
+func (s *InboundBitsetState) ApplyUpdateFromPeer(d uint32) error {
+	// TODO: bounds check.
+	s.have.Set(uint(d))
+	s.checked.Set(uint(d))
+	return nil
+}
+
+func (s *InboundBitsetState) CheckIncoming(d uint32) error {
+	if s.checked.Test(uint(d)) {
+		return wspacket.ErrDuplicateSentPacket
+	}
+
+	if s.have.Test(uint(d)) {
+		return wspacket.ErrAlreadyHavePacket
+	}
+
+	// TODO: bounds check.
+
+	return nil
+}
+
 type bitsetPacket struct {
 	b     uint32
-	owner *RemoteBitsetState
+	owner *OutboundBitsetState
 }
 
 func (p bitsetPacket) Bytes() []byte {

@@ -2,6 +2,7 @@ package wspacket
 
 import (
 	"context"
+	"errors"
 
 	"github.com/gordian-engine/dragon/internal/dchan"
 )
@@ -20,16 +21,37 @@ import (
 // associated with the CentralState
 // and provided when creating a new Wingspan session.
 type CentralState[D any] interface {
-	// UpdateFromRemote updates the central state with
+	// UpdateFromPeer updates the central state with
 	// new information originating from a remote peer.
-	UpdateFromRemote(context.Context, D) error
+	//
+	// If the delta does not add new information to the state,
+	// this method must return [ErrRedundantUpdate].
+	UpdateFromPeer(context.Context, D) error
 
-	// NewRemoteState returns a RemoteState instance
+	// NewOutboundRemoteState returns an OutboundRemoteState instance
 	// that contains a copy of the state in the current central state,
 	// and a Multicast that is valid for the returned state.
 	//
 	// Returning the multicast here avoids the possibility
 	// of a data race between constructing the state
 	// and observing the multicast.
-	NewRemoteState(context.Context) (RemoteState[D], *dchan.Multicast[D], error)
+	NewOutboundRemoteState(context.Context) (
+		OutboundRemoteState[D], *dchan.Multicast[D], error,
+	)
+
+	// NewInboundRemoteState returns a new [InboundRemoteState]
+	// that contains a copy of the state in the current central state,
+	// and a Multicast that is valid for the returned state.
+	//
+	// Returning the multicast here avoids the possibility
+	// of a data race between constructing the state
+	// and observing the multicast.
+	NewInboundRemoteState(context.Context) (
+		InboundRemoteState[D], *dchan.Multicast[D], error,
+	)
 }
+
+// Returned from [CentralState.UpdateFromPeer]
+// indicating that the delta did not add new information.
+// This is a normal case when many peers are gossiping at once.
+var ErrRedundantUpdate = errors.New("delta contained redundant data")

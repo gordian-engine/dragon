@@ -19,7 +19,7 @@ type OutboundWorker[D any] struct {
 
 	header []byte
 
-	s      wspacket.RemoteState[D]
+	s      wspacket.OutboundRemoteState[D]
 	deltas *dchan.Multicast[D]
 }
 
@@ -27,7 +27,7 @@ type OutboundWorker[D any] struct {
 func NewOutboundWorker[D any](
 	log *slog.Logger,
 	header []byte,
-	state wspacket.RemoteState[D],
+	state wspacket.OutboundRemoteState[D],
 	deltas *dchan.Multicast[D],
 ) *OutboundWorker[D] {
 	return &OutboundWorker[D]{
@@ -130,7 +130,7 @@ UPDATE_PACKET_SET:
 		case <-w.deltas.Ready:
 			val := w.deltas.Val
 			w.deltas = w.deltas.Next
-			w.s.ApplyUpdateFromLocal(val)
+			w.s.ApplyUpdateFromCentral(val)
 			continue UPDATE_PACKET_SET
 		default:
 			break UPDATE_PACKET_SET

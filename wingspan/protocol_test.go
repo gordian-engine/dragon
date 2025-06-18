@@ -41,6 +41,9 @@ func TestProtocol_outboundConnection(t *testing.T) {
 		sess0, err := fx.Protocols[0].NewSession(
 			ctx, []byte("sid"), []byte("application hello"),
 			s, m,
+			func(io.Reader) (uint32, error) {
+				panic("TODO")
+			},
 		)
 		require.NoError(t, err)
 
@@ -76,6 +79,9 @@ func TestProtocol_outboundConnection(t *testing.T) {
 		sess0, err := fx.Protocols[0].NewSession(
 			ctx, []byte("sid"), []byte("application hello"),
 			s, m,
+			func(io.Reader) (uint32, error) {
+				panic("TODO")
+			},
 		)
 		require.NoError(t, err)
 

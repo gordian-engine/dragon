@@ -3,7 +3,9 @@ package wingspan
 import (
 	"context"
 
+	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/wingspan/internal/wsi"
+	"github.com/quic-go/quic-go"
 )
 
 // Session is a handle into a session object.
@@ -13,6 +15,17 @@ import (
 type Session[D any] struct {
 	s      *wsi.Session[D]
 	cancel context.CancelCauseFunc
+}
+
+// AcceptStream adds the incoming stream to the session.
+//
+// It is a fatal error to call AcceptStream twice with the same stream.
+func (s Session[D]) AcceptStream(
+	ctx context.Context,
+	conn dconn.Conn,
+	rs quic.ReceiveStream,
+) error {
+	return s.s.AcceptStream(ctx, conn, rs)
 }
 
 // Cancel immediately stops the session,
