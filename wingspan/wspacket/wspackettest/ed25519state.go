@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"io"
 	"iter"
 	"maps"
 
@@ -106,10 +107,14 @@ func (s *Ed25519State) mainLoop(ctx context.Context) {
 			s.handleUpdateFromPeer(req)
 
 		case req := <-s.newOutbounds:
+			peerHas := make(map[string]bool, len(s.sigs))
+			for k := range s.sigs {
+				peerHas[k] = false
+			}
 			req <- newOutboundEd25519StateResult{
 				State: &ed25519OutboundState{
 					sigs:    maps.Clone(s.sigs),
-					peerHas: make(map[string]bool, len(s.sigs)),
+					peerHas: peerHas,
 				},
 				M: s.m,
 			}
@@ -171,8 +176,8 @@ func (s *Ed25519State) UpdateFromPeer(
 func (s *Ed25519State) handleUpdateFromPeer(
 	req verifiedEd25519SignatureRequest,
 ) {
-	have, ok := s.sigs[req.StringKey]
-	if ok {
+	have := s.sigs[req.StringKey]
+	if have != nil {
 		if !bytes.Equal(have, req.Delta.Sig) {
 			// Had a verified signature that didn't match this one.
 			req.Resp <- errInvalidSignature
@@ -192,7 +197,7 @@ func (s *Ed25519State) handleUpdateFromPeer(
 }
 
 func (s *Ed25519State) NewOutboundRemoteState(ctx context.Context) (
-	*ed25519OutboundState, *dchan.Multicast[Ed25519Delta], error,
+	wspacket.OutboundRemoteState[Ed25519Delta], *dchan.Multicast[Ed25519Delta], error,
 ) {
 	ch := make(chan newOutboundEd25519StateResult, 1)
 
@@ -212,7 +217,7 @@ func (s *Ed25519State) NewOutboundRemoteState(ctx context.Context) (
 }
 
 func (s *Ed25519State) NewInboundRemoteState(ctx context.Context) (
-	*ed25519InboundState, *dchan.Multicast[Ed25519Delta], error,
+	wspacket.InboundRemoteState[Ed25519Delta], *dchan.Multicast[Ed25519Delta], error,
 ) {
 	ch := make(chan newInboundEd25519StateResult, 1)
 	select {
@@ -254,8 +259,8 @@ func (s *ed25519OutboundState) UnsentPackets() iter.Seq[wspacket.Packet] {
 				continue
 			}
 
-			sig, ok := s.sigs[k]
-			if !ok {
+			sig := s.sigs[k]
+			if sig == nil {
 				continue
 			}
 
@@ -318,9 +323,34 @@ func (s *ed25519InboundState) CheckIncoming(d Ed25519Delta) error {
 		return wspacket.ErrDuplicateSentPacket
 	}
 
-	if _, ok := s.have[string(d.PubKey)]; ok {
+	if have := s.have[string(d.PubKey)]; have != nil {
 		return wspacket.ErrAlreadyHavePacket
 	}
 
 	return nil
+}
+
+// ParseEd25519Packet is the packet parsing function
+// intended to be passed to [*wspacket.Protocol.NewSession].
+func ParseEd25519Packet(r io.Reader) (Ed25519Delta, error) {
+	var d Ed25519Delta
+
+	pkBuf := make([]byte, ed25519.PublicKeySize)
+
+	if _, err := io.ReadFull(r, pkBuf); err != nil {
+		return d, fmt.Errorf(
+			"failed to read public key: %w", err,
+		)
+	}
+
+	sigBuf := make([]byte, ed25519.SignatureSize)
+	if _, err := io.ReadFull(r, sigBuf); err != nil {
+		return d, fmt.Errorf(
+			"failed to read signature: %w", err,
+		)
+	}
+
+	d.PubKey = ed25519.PublicKey(pkBuf)
+	d.Sig = sigBuf
+	return d, nil
 }

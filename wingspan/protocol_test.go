@@ -2,10 +2,13 @@ package wingspan_test
 
 import (
 	"context"
+	"crypto/ed25519"
 	"io"
 	"testing"
 	"time"
 
+	"github.com/gordian-engine/dragon/dconn"
+	"github.com/gordian-engine/dragon/internal/dtest"
 	"github.com/gordian-engine/dragon/wingspan"
 	"github.com/gordian-engine/dragon/wingspan/wingspantest"
 	"github.com/gordian-engine/dragon/wingspan/wspacket/wspackettest"
@@ -105,13 +108,154 @@ func TestProtocol_outboundConnection(t *testing.T) {
 	})
 }
 
+func TestProtocol_packetContent(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	fx := wingspantest.NewProtocolFixture[wspackettest.Ed25519Delta](
+		t, ctx,
+		wingspantest.ProtocolFixtureConfig{
+			Nodes: 2,
+
+			ProtocolID:      0xd0,
+			SessionIDLength: 3,
+		},
+	)
+	defer cancel()
+
+	signContent := []byte("content to sign")
+
+	pub0, priv0, err := ed25519.GenerateKey(nil)
+	require.NoError(t, err)
+
+	pub1, priv1, err := ed25519.GenerateKey(nil)
+	require.NoError(t, err)
+
+	allowedKeys := []ed25519.PublicKey{pub0, pub1}
+
+	// Make a session on both sides before dialing.
+	// Normally the application would be concerned with
+	// how each side is aware of the sign content and allowed keys.
+	state0, m0 := wspackettest.NewEd25519State(
+		ctx, signContent, allowedKeys,
+	)
+	state1, m1 := wspackettest.NewEd25519State(
+		ctx, signContent, allowedKeys,
+	)
+	defer state0.Wait()
+	defer state1.Wait()
+	defer cancel()
+
+	sessID := []byte("sid")
+	appHeader := []byte("ed25519 app hello")
+
+	sess0, err := fx.Protocols[0].NewSession(
+		ctx, sessID, appHeader,
+		state0, m0,
+		wspackettest.ParseEd25519Packet,
+	)
+	require.NoError(t, err)
+	defer sess0.Cancel()
+
+	sess1, err := fx.Protocols[1].NewSession(
+		ctx, sessID, appHeader,
+		state1, m1,
+		wspackettest.ParseEd25519Packet,
+	)
+	require.NoError(t, err)
+	defer sess0.Cancel()
+
+	// Now connect the two nodes.
+	c0, c1 := fx.ListenerSet.Dial(t, 0, 1)
+	fx.AddConnection(c0, 0, 1)
+	fx.AddConnection(c1, 1, 0)
+
+	// Both sides need to accept the complementing stream.
+	acceptCtx, acceptCancel := context.WithTimeout(ctx, time.Second)
+	defer acceptCancel()
+
+	s01 := testStreamHeaders(
+		t, acceptCtx,
+		c1, fx.Protocols[1],
+		sessID, appHeader,
+	)
+	require.NoError(
+		t,
+		sess1.AcceptStream(
+			ctx,
+			dconn.Conn{
+				QUIC:  c0,
+				Chain: fx.ListenerSet.Leaves[0].Chain,
+			},
+			s01,
+		),
+	)
+
+	s10 := testStreamHeaders(
+		t, acceptCtx,
+		c0, fx.Protocols[0],
+		sessID, appHeader,
+	)
+	require.NoError(
+		t,
+		sess0.AcceptStream(
+			ctx,
+			dconn.Conn{
+				QUIC:  c1,
+				Chain: fx.ListenerSet.Leaves[1].Chain,
+			},
+			s10,
+		),
+	)
+	acceptCancel()
+
+	// First make a valid signature for zero,
+	// and add it to the zero state.
+	sig0 := ed25519.Sign(priv0, signContent)
+
+	d0 := wspackettest.Ed25519Delta{
+		PubKey: pub0,
+		Sig:    sig0,
+	}
+	require.NoError(t, state0.UpdateFromPeer(ctx, d0))
+
+	// Multicast 0 should have been updated.
+	_ = dtest.ReceiveSoon(t, m0.Ready)
+	require.Equal(t, d0, m0.Val)
+	m0 = m0.Next
+
+	// And if everything was wired correctly, sess0 sent that packet to sess1,
+	// which caused the m1 multicast to update.
+	_ = dtest.ReceiveSoon(t, m1.Ready)
+	require.Equal(t, d0, m1.Val)
+	m1 = m1.Next
+
+	// And now if a signature originates from sess1, it reaches sess0.
+	sig1 := ed25519.Sign(priv1, signContent)
+	d1 := wspackettest.Ed25519Delta{
+		PubKey: pub1,
+		Sig:    sig1,
+	}
+	require.NoError(t, state1.UpdateFromPeer(ctx, d1))
+
+	_ = dtest.ReceiveSoon(t, m1.Ready)
+	require.Equal(t, d1, m1.Val)
+	m1 = m1.Next
+
+	_ = dtest.ReceiveSoon(t, m0.Ready)
+	require.Equal(t, d1, m0.Val)
+	m0 = m0.Next
+}
+
 func testStreamHeaders[D any](
 	t *testing.T,
 	ctx context.Context,
 	conn quic.Connection,
 	p *wingspan.Protocol[D],
 	expSessionID, expAppHeader []byte,
-) {
+) quic.ReceiveStream {
 	t.Helper()
 
 	rs1, err := conn.AcceptUniStream(ctx)
@@ -131,4 +275,6 @@ func testStreamHeaders[D any](
 	ah, err := wingspan.ExtractStreamApplicationHeader(rs1, nil)
 	require.NoError(t, err)
 	require.Equal(t, expAppHeader, ah)
+
+	return rs1
 }
