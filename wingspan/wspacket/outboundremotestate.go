@@ -16,7 +16,7 @@ type OutboundRemoteState[D any] interface {
 
 	// If the peer for this state gave us new information,
 	// the Wingspan internals mark it here first,
-	// so that UpdateFromLocal is a redundant update.
+	// so that UpdateFromCentral is a redundant update.
 	ApplyUpdateFromPeer(D) error
 
 	// An iterator over the packets in the OutboundRemoteState

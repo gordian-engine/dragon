@@ -15,7 +15,7 @@ type InboundRemoteState[D any] interface {
 
 	// If the peer for this state gave us new information,
 	// the Wingspan internals mark it here first,
-	// so that UpdateFromLocal is a redundant update.
+	// so that UpdateFromCentral is a redundant update.
 	//
 	// It is possible although unlikely that a call to
 	// ApplyUpdateFromCentral could occur before ApplyUpdateFromPeer,

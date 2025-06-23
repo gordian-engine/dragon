@@ -1,4 +1,4 @@
-package wingspantest
+package wspackettest
 
 import (
 	"context"

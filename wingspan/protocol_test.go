@@ -8,6 +8,7 @@ import (
 
 	"github.com/gordian-engine/dragon/wingspan"
 	"github.com/gordian-engine/dragon/wingspan/wingspantest"
+	"github.com/gordian-engine/dragon/wingspan/wspacket/wspackettest"
 	"github.com/quic-go/quic-go"
 	"github.com/stretchr/testify/require"
 )
@@ -37,7 +38,7 @@ func TestProtocol_outboundConnection(t *testing.T) {
 		// so instead just do a short sleep.
 		time.Sleep(4 * time.Millisecond)
 
-		s, m := wingspantest.NewCentralBitsetState(ctx, 8)
+		s, m := wspackettest.NewCentralBitsetState(ctx, 8)
 		sess0, err := fx.Protocols[0].NewSession(
 			ctx, []byte("sid"), []byte("application hello"),
 			s, m,
@@ -75,7 +76,7 @@ func TestProtocol_outboundConnection(t *testing.T) {
 		defer cancel()
 
 		// Make the session before doing any dialing.
-		s, m := wingspantest.NewCentralBitsetState(ctx, 8)
+		s, m := wspackettest.NewCentralBitsetState(ctx, 8)
 		sess0, err := fx.Protocols[0].NewSession(
 			ctx, []byte("sid"), []byte("application hello"),
 			s, m,

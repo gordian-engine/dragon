@@ -186,7 +186,7 @@ func (s *Session[D]) Run(
 				res = inboundDeltaDrop
 			default:
 				s.log.Info(
-					"Failed to check update from remote",
+					"Failed to apply update from remote",
 					"err", err,
 				)
 				res = inboundDeltaReject
