@@ -46,11 +46,12 @@ func (w *OutboundWorker[D]) Run(
 	ctx context.Context,
 	parentWG *sync.WaitGroup,
 	conn quic.Connection,
-	headerTimeout time.Duration,
+	writeHeaderTimeout time.Duration,
+	peerReceivedCh <-chan D,
 ) {
 	defer parentWG.Done()
 
-	s, err := w.initializeStream(ctx, conn, headerTimeout)
+	s, err := w.initializeStream(ctx, conn, writeHeaderTimeout)
 	if err != nil {
 		w.log.Info(
 			"Failed to initialize outbound session stream",
@@ -65,7 +66,7 @@ func (w *OutboundWorker[D]) Run(
 	}()
 
 	// Send out whatever we have initially.
-	if err := w.sendPackets(ctx, s); err != nil {
+	if err := w.sendPackets(ctx, s, peerReceivedCh); err != nil {
 		w.log.Info(
 			"Error while sending initial packets",
 			"err", err,
@@ -80,7 +81,7 @@ func (w *OutboundWorker[D]) Run(
 			return
 
 		case <-w.deltas.Ready:
-			if err := w.sendPackets(ctx, s); err != nil {
+			if err := w.sendPackets(ctx, s, peerReceivedCh); err != nil {
 				w.log.Info(
 					"Error while sending packets in main loop",
 					"err", err,
@@ -88,7 +89,8 @@ func (w *OutboundWorker[D]) Run(
 				return
 			}
 
-			// TODO: handle remote update.
+		case d := <-peerReceivedCh:
+			w.s.AddUnverifiedFromPeer(d)
 		}
 	}
 }
@@ -96,14 +98,16 @@ func (w *OutboundWorker[D]) Run(
 func (w *OutboundWorker[D]) initializeStream(
 	ctx context.Context,
 	conn quic.Connection,
-	headerTimeout time.Duration,
+	writeHeaderTimeout time.Duration,
 ) (quic.SendStream, error) {
 	s, err := conn.OpenUniStreamSync(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf(
+			"failed to open outgoing stream: %w", err,
+		)
 	}
 
-	if err := s.SetWriteDeadline(time.Now().Add(headerTimeout)); err != nil {
+	if err := s.SetWriteDeadline(time.Now().Add(writeHeaderTimeout)); err != nil {
 		return nil, fmt.Errorf(
 			"failed to set write deadline: %w", err,
 		)
@@ -121,6 +125,7 @@ func (w *OutboundWorker[D]) initializeStream(
 func (w *OutboundWorker[D]) sendPackets(
 	ctx context.Context,
 	s quic.SendStream,
+	peerReceivedCh <-chan D,
 ) error {
 	// Make sure local packets are up to date.
 UPDATE_PACKET_SET:
@@ -131,6 +136,9 @@ UPDATE_PACKET_SET:
 			val := w.deltas.Val
 			w.deltas = w.deltas.Next
 			w.s.ApplyUpdateFromCentral(val)
+			continue UPDATE_PACKET_SET
+		case d := <-peerReceivedCh:
+			w.s.AddUnverifiedFromPeer(d)
 			continue UPDATE_PACKET_SET
 		default:
 			break UPDATE_PACKET_SET
@@ -171,12 +179,16 @@ SEND_PACKETS:
 			// because we are in the middle of using an iterator.
 			needsUpdate = true
 			break SEND_PACKETS
-
-			// TODO: handle remote update.
+		case d := <-peerReceivedCh:
+			w.s.AddUnverifiedFromPeer(d)
+			// We don't need to break iteration on unverified packets.
+		default:
+			// Nothing, continue iterating the unsent packets.
 		}
 	}
 
 	if needsUpdate {
+		needsUpdate = false
 		goto UPDATE_PACKET_SET
 	}
 

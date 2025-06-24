@@ -211,6 +211,8 @@ type remoteState[D any] struct {
 	Cancel context.CancelCauseFunc
 }
 
+// initializeConns sets up the workers for any pre-existing connections.
+// Further new connections are handled in the session's main loop.
 func (s *Session[D]) initializeConns(
 	ctx context.Context,
 	wg *sync.WaitGroup,
@@ -226,6 +228,8 @@ func (s *Session[D]) initializeConns(
 	return rs
 }
 
+// addRemoteState starts goroutines for the inbound and outbound workers
+// to be associated with the given connection.
 func (s *Session[D]) addRemoteState(
 	ctx context.Context,
 	wg *sync.WaitGroup,
@@ -251,14 +255,16 @@ func (s *Session[D]) addRemoteState(
 		s.inboundDeltaArrivals,
 	)
 
+	peerReceivedCh := make(chan D, 8) // Arbitrary size.
+
 	ctx, cancel := context.WithCancelCause(ctx)
 
 	wg.Add(2)
 	const headerTimeout = 5 * time.Millisecond
-	go ow.Run(ctx, wg, conn.QUIC, headerTimeout)
+	go ow.Run(ctx, wg, conn.QUIC, headerTimeout, peerReceivedCh)
 
 	inboundStreamCh := make(chan InboundStream[D], 1)
-	go iw.Run(ctx, wg, parsePacketFn, inboundStreamCh)
+	go iw.Run(ctx, wg, parsePacketFn, inboundStreamCh, peerReceivedCh)
 
 	return remoteState[D]{
 		Conn: conn,

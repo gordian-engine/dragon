@@ -115,6 +115,8 @@ func (s *Ed25519State) mainLoop(ctx context.Context) {
 				State: &ed25519OutboundState{
 					sigs:    maps.Clone(s.sigs),
 					peerHas: peerHas,
+
+					peerUnverified: make(map[string][]byte, 4), // Arbitrary size.
 				},
 				M: s.m,
 			}
@@ -238,17 +240,28 @@ func (s *Ed25519State) NewInboundRemoteState(ctx context.Context) (
 type ed25519OutboundState struct {
 	sigs    map[string][]byte
 	peerHas map[string]bool
+
+	peerUnverified map[string][]byte
 }
 
 func (s *ed25519OutboundState) ApplyUpdateFromCentral(d Ed25519Delta) error {
 	s.sigs[string(d.PubKey)] = d.Sig
+	if bytes.Equal(s.peerUnverified[string(d.PubKey)], d.Sig) {
+		s.peerHas[string(d.PubKey)] = true
+		delete(s.peerUnverified, string(d.PubKey))
+	}
 	return nil
 }
 
-func (s *ed25519OutboundState) ApplyUpdateFromPeer(d Ed25519Delta) error {
-	s.peerHas[string(d.PubKey)] = true
-	s.sigs[string(d.PubKey)] = d.Sig
-	return nil
+func (s *ed25519OutboundState) AddUnverifiedFromPeer(d Ed25519Delta) {
+	if bytes.Equal(s.sigs[string(d.PubKey)], d.Sig) {
+		// Call arrived late. Nothing to do.
+		return
+	}
+
+	// We didn't have an existing signature for this,
+	// so add it to the unverified map.
+	s.peerUnverified[string(d.PubKey)] = d.Sig
 }
 
 func (s *ed25519OutboundState) UnsentPackets() iter.Seq[wspacket.Packet] {

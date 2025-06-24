@@ -22,6 +22,7 @@ type InboundWorker[D any] struct {
 	log *slog.Logger
 
 	// Channel owned by the session.
+	// Parsed packets go to the session to fan out to [OutboundWorker] instances.
 	inboundDeltaArrivals chan<- inboundDeltaArrival[D]
 
 	// Set in the Run method.
@@ -56,6 +57,7 @@ func (w *InboundWorker[D]) Run(
 	parentWG *sync.WaitGroup,
 	parsePacketFn func(io.Reader) (D, error),
 	inboundStreamCh <-chan InboundStream[D],
+	peerReceivedCh chan<- D,
 ) {
 	defer parentWG.Done()
 
@@ -97,7 +99,7 @@ func (w *InboundWorker[D]) Run(
 				return
 			}
 		case d := <-localReads:
-			if err := w.handleLocalRead(ctx, d, state); err != nil {
+			if err := w.handleLocalRead(ctx, d, state, peerReceivedCh); err != nil {
 				w.log.Info(
 					"Failed to handle result of local read",
 					"err", err,
@@ -160,6 +162,7 @@ func (w *InboundWorker[D]) handleLocalRead(
 	ctx context.Context,
 	d D,
 	state wspacket.InboundRemoteState[D],
+	peerReceivedCh chan<- D,
 ) error {
 	// Consult local state first.
 	err := state.CheckIncoming(d)
@@ -177,14 +180,24 @@ func (w *InboundWorker[D]) handleLocalRead(
 		return fmt.Errorf("failed to check incoming packet: %w", err)
 	}
 
-	// Local state was fine. Now we need to check the central state.
+	// Local state was fine.
+	// Before sending this to the central state,
+	// attempt to inform the outbound worker of this new delta.
+	select {
+	case peerReceivedCh <- d:
+		peerReceivedCh = nil
+	default:
+	}
+
+	// Now we need to check the central state.
 	// This requests blocks on the central state's main loop,
 	// and this method is called from the inbound worker's main loop,
 	// so we do have to process some other signals here.
 	respCh := make(chan inboundDeltaResult, 1)
 	req := inboundDeltaArrival[D]{
 		Delta: d,
-		Resp:  respCh,
+
+		Resp: respCh,
 	}
 SEND_TO_CENTRAL:
 	for {
@@ -207,6 +220,9 @@ SEND_TO_CENTRAL:
 		case w.inboundDeltaArrivals <- req:
 			// Okay. Now need to wait for response.
 			break SEND_TO_CENTRAL
+		case peerReceivedCh <- d: // Channel may already have been nil.
+			peerReceivedCh = nil
+			continue SEND_TO_CENTRAL
 		}
 	}
 
@@ -232,6 +248,9 @@ AWAIT_DELTA_RESULT:
 		case res = <-respCh:
 			// Process the result outside this loop.
 			break AWAIT_DELTA_RESULT
+		case peerReceivedCh <- d: // Channel may already have been nil.
+			peerReceivedCh = nil
+			continue AWAIT_DELTA_RESULT
 		}
 	}
 

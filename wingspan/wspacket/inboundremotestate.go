@@ -9,8 +9,9 @@ type InboundRemoteState[D any] interface {
 	// Apply the update that was dispatched from the [CentralState].
 	// Wingspan internals handle routing this request.
 	//
-	// Upon receiving new information from the associated peer,
-	// it is expected that ApplyUpdateFromRemote would be called first.
+	// The purpose of the inbound state being aware of central state
+	// is to affect the return value of CheckIncoming,
+	// in order to avoid sending redundant values back to the central state.
 	ApplyUpdateFromCentral(D) error
 
 	// If the peer for this state gave us new information,
