@@ -227,7 +227,7 @@ SEND_TO_CENTRAL:
 	}
 
 	var res inboundDeltaResult
-AWAIT_DELTA_RESULT:
+AWAIT_RESULT_FROM_CENTRAL:
 	for {
 		select {
 		case <-ctx.Done():
@@ -244,16 +244,17 @@ AWAIT_DELTA_RESULT:
 					err,
 				)
 			}
-			continue AWAIT_DELTA_RESULT
+			continue AWAIT_RESULT_FROM_CENTRAL
 		case res = <-respCh:
 			// Process the result outside this loop.
-			break AWAIT_DELTA_RESULT
+			break AWAIT_RESULT_FROM_CENTRAL
 		case peerReceivedCh <- d: // Channel may already have been nil.
 			peerReceivedCh = nil
-			continue AWAIT_DELTA_RESULT
+			continue AWAIT_RESULT_FROM_CENTRAL
 		}
 	}
 
+	// Finally, handle the result we received from the central state.
 	switch res {
 	case inboundDeltaApply:
 		if err := state.ApplyUpdateFromPeer(d); err != nil {

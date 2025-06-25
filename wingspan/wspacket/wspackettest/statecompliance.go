@@ -2,6 +2,7 @@ package wspackettest
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/gordian-engine/dragon/internal/dtest"
@@ -30,39 +31,137 @@ type StateFixture[D any] interface {
 // TestStateCompliance runs compliance tests
 // for a [wspacket.CentralState] implementation.
 func TestStateCompliance[D any](t *testing.T, f StateFixtureFunc[D]) {
-	t.Run("UpdateFromPeer returns ErrRedundantUpdate on duplicate call", func(t *testing.T) {
-		t.Parallel()
+	t.Run("CentralState", func(t *testing.T) {
+		t.Run("UpdateFromPeer returns ErrRedundantUpdate on duplicate call", func(t *testing.T) {
+			t.Parallel()
 
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 
-		s, fx := f(t, ctx, 1)
+			s, fx := f(t, ctx, 1)
 
-		d := fx.GetDelta(0)
+			d := fx.GetDelta(0)
 
-		require.NoError(t, s.UpdateFromPeer(ctx, d))
-		require.ErrorIs(t, s.UpdateFromPeer(ctx, d), wspacket.ErrRedundantUpdate)
+			require.NoError(t, s.UpdateFromPeer(ctx, d))
+			require.ErrorIs(t, s.UpdateFromPeer(ctx, d), wspacket.ErrRedundantUpdate)
+		})
+
+		t.Run("multicasts for derived states get updated", func(t *testing.T) {
+			t.Parallel()
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			s, fx := f(t, ctx, 1)
+
+			d := fx.GetDelta(0)
+
+			_, mo, err := s.NewOutboundRemoteState(ctx)
+			require.NoError(t, err)
+
+			_, mi, err := s.NewInboundRemoteState(ctx)
+			require.NoError(t, err)
+
+			s.UpdateFromPeer(ctx, d)
+
+			dtest.ReceiveSoon(t, mo.Ready)
+			dtest.ReceiveSoon(t, mi.Ready)
+		})
 	})
 
-	t.Run("multicasts for derived states get updated", func(t *testing.T) {
-		t.Parallel()
+	t.Run("InboundRemoteState", func(t *testing.T) {
+		t.Run("CheckIncoming returns ErrDuplicateSentPacket", func(t *testing.T) {
+			t.Parallel()
 
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 
-		s, fx := f(t, ctx, 1)
+			s, fx := f(t, ctx, 1)
 
-		d := fx.GetDelta(0)
+			i, _, err := s.NewInboundRemoteState(ctx)
+			require.NoError(t, err)
 
-		_, mo, err := s.NewOutboundRemoteState(ctx)
-		require.NoError(t, err)
+			d := fx.GetDelta(0)
+			require.NoError(t, i.CheckIncoming(d))
 
-		_, mi, err := s.NewInboundRemoteState(ctx)
-		require.NoError(t, err)
+			require.ErrorIs(t, i.CheckIncoming(d), wspacket.ErrDuplicateSentPacket)
+		})
 
-		s.UpdateFromPeer(ctx, d)
+		t.Run("CheckIncoming returns ErrAlreadyHavePacket", func(t *testing.T) {
+			t.Parallel()
 
-		dtest.ReceiveSoon(t, mo.Ready)
-		dtest.ReceiveSoon(t, mi.Ready)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			s, fx := f(t, ctx, 1)
+
+			i, _, err := s.NewInboundRemoteState(ctx)
+			require.NoError(t, err)
+
+			// Another peer sends the delta,
+			// so we receive it from the central state first.
+			d := fx.GetDelta(0)
+			require.NoError(t, i.ApplyUpdateFromCentral(d))
+
+			// Then later, this connected peer sends the same delta.
+			require.ErrorIs(t, i.CheckIncoming(d), wspacket.ErrAlreadyHavePacket)
+		})
+	})
+
+	t.Run("OutboundRemoteState", func(t *testing.T) {
+		t.Run("UnsentPackets respects marking a packet sent", func(t *testing.T) {
+			t.Parallel()
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			s, fx := f(t, ctx, 2)
+
+			o, _, err := s.NewOutboundRemoteState(ctx)
+			require.NoError(t, err)
+
+			// No unsent packets in initial state.
+			require.Empty(t, slices.Collect(o.UnsentPackets()))
+
+			d := fx.GetDelta(0)
+			require.NoError(t, o.ApplyUpdateFromCentral(d))
+
+			require.Len(t, slices.Collect(o.UnsentPackets()), 1)
+
+			i := 0
+			for u := range o.UnsentPackets() {
+				u.MarkSent()
+				if i > 0 {
+					t.Fatal("expected only one unsent packet but got more")
+				}
+				i++
+			}
+
+			require.Empty(t, slices.Collect(o.UnsentPackets()))
+		})
+
+		t.Run("UnsentPackets respects AddUnverifiedFromPeer", func(t *testing.T) {
+			t.Parallel()
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			s, fx := f(t, ctx, 2)
+
+			o, _, err := s.NewOutboundRemoteState(ctx)
+			require.NoError(t, err)
+
+			d := fx.GetDelta(0)
+
+			// Adding an unverified delta
+			// does not cause the delta to be treated as an unsent packet.
+			require.NoError(t, o.AddUnverifiedFromPeer(d))
+			require.Empty(t, slices.Collect(o.UnsentPackets()))
+
+			// Now adding the same delta as an update from central
+			// also does not treat the delta as an unsent packet.
+			require.NoError(t, o.ApplyUpdateFromCentral(d))
+			require.Empty(t, slices.Collect(o.UnsentPackets()))
+		})
 	})
 }

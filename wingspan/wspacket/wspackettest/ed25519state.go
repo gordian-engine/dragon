@@ -253,15 +253,16 @@ func (s *ed25519OutboundState) ApplyUpdateFromCentral(d Ed25519Delta) error {
 	return nil
 }
 
-func (s *ed25519OutboundState) AddUnverifiedFromPeer(d Ed25519Delta) {
+func (s *ed25519OutboundState) AddUnverifiedFromPeer(d Ed25519Delta) error {
 	if bytes.Equal(s.sigs[string(d.PubKey)], d.Sig) {
 		// Call arrived late. Nothing to do.
-		return
+		return nil
 	}
 
 	// We didn't have an existing signature for this,
 	// so add it to the unverified map.
 	s.peerUnverified[string(d.PubKey)] = d.Sig
+	return nil
 }
 
 func (s *ed25519OutboundState) UnsentPackets() iter.Seq[wspacket.Packet] {
@@ -332,13 +333,15 @@ func (s *ed25519InboundState) ApplyUpdateFromPeer(d Ed25519Delta) error {
 }
 
 func (s *ed25519InboundState) CheckIncoming(d Ed25519Delta) error {
-	if _, ok := s.checked[string(d.PubKey)]; ok {
+	if s.checked[string(d.PubKey)] {
 		return wspacket.ErrDuplicateSentPacket
 	}
 
 	if have := s.have[string(d.PubKey)]; have != nil {
 		return wspacket.ErrAlreadyHavePacket
 	}
+
+	s.checked[string(d.PubKey)] = true
 
 	return nil
 }

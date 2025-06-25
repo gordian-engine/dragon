@@ -38,7 +38,10 @@ type OutboundRemoteState[D any] interface {
 	// The implementation must gracefully handle an unverified delta
 	// arriving after a call to ApplyUpdateFromCentral,
 	// although that case is unlikely.
-	AddUnverifiedFromPeer(D)
+	//
+	// Returning an error from this method will cause the session
+	// to close the underlying connection to the peer.
+	AddUnverifiedFromPeer(D) error
 
 	// An iterator over the packets in the OutboundRemoteState
 	// which have not yet been sent.

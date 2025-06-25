@@ -171,9 +171,10 @@ func (s *OutboundBitsetState) ApplyUpdateFromCentral(d uint32) error {
 	return nil
 }
 
-func (s *OutboundBitsetState) AddUnverifiedFromPeer(d uint32) {
+func (s *OutboundBitsetState) AddUnverifiedFromPeer(d uint32) error {
 	// This is a bit meaningless for this state implementation.
 	s.have.Set(uint(d))
+	return nil
 }
 
 func (s *OutboundBitsetState) UnsentPackets() iter.Seq[wspacket.Packet] {

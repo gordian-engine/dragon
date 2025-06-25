@@ -28,10 +28,15 @@ type InboundRemoteState[D any] interface {
 	// or if it is a packet this peer has already sent
 	// (which is a protocol violation).
 	//
-	// After Wingspan internals parse a packet from a peer,
+	// Immediately after Wingspan internals parse a packet from a peer,
 	// the parsed delta is passed to CheckIncoming.
 	// This method must return [ErrAlreadyHavePacket],
 	// [ErrDuplicateSentPacket], or nil.
+	//
+	// If CheckIncoming returns nil,
+	// the Wingspan internals route the packet to
+	// [OutboundRemoteState.AddUnverifiedFromPeer]
+	// and to [CentralState.UpdateFromPeer].
 	//
 	// The implementation is responsible for ensuring
 	// that multiple calls with the same delta
