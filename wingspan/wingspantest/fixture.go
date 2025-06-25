@@ -12,9 +12,9 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-type ProtocolFixture struct {
+type ProtocolFixture[D any] struct {
 	ConnChanges []*dchan.Multicast[dconn.Change]
-	Protocols   []*wingspan.Protocol
+	Protocols   []*wingspan.Protocol[D]
 
 	ListenerSet *dquictest.ListenerSet
 }
@@ -28,22 +28,22 @@ type ProtocolFixtureConfig struct {
 	SessionIDLength uint8
 }
 
-func NewProtocolFixture(
+func NewProtocolFixture[D any](
 	t *testing.T, ctx context.Context, cfg ProtocolFixtureConfig,
-) *ProtocolFixture {
+) *ProtocolFixture[D] {
 	t.Helper()
 
 	log := dtest.NewLogger(t)
 
-	f := &ProtocolFixture{
+	f := &ProtocolFixture[D]{
 		ConnChanges: make([]*dchan.Multicast[dconn.Change], cfg.Nodes),
-		Protocols:   make([]*wingspan.Protocol, cfg.Nodes),
+		Protocols:   make([]*wingspan.Protocol[D], cfg.Nodes),
 		ListenerSet: dquictest.NewListenerSet(t, ctx, cfg.Nodes),
 	}
 
 	for i := range cfg.Nodes {
 		cc := dchan.NewMulticast[dconn.Change]()
-		p := wingspan.NewProtocol(ctx, log.With("idx", i), wingspan.ProtocolConfig{
+		p := wingspan.NewProtocol[D](ctx, log.With("idx", i), wingspan.ProtocolConfig{
 			ConnectionChanges: cc,
 			ProtocolID:        cfg.ProtocolID,
 			SessionIDLength:   cfg.SessionIDLength,
@@ -61,7 +61,7 @@ func NewProtocolFixture(
 // ownerIdx and peerIdx should correspond to the arguments given to
 // [*dquictest.ListenerSet.Dial] (in order for the first returned connection,
 // and swapped for the second returned connection).
-func (f *ProtocolFixture) AddConnection(
+func (f *ProtocolFixture[D]) AddConnection(
 	conn quic.Connection,
 	ownerIdx, peerIdx int,
 ) {
