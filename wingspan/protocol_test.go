@@ -23,12 +23,15 @@ func TestProtocol_outboundConnection(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		fx := wingspantest.NewProtocolFixture[uint32](t, ctx, wingspantest.ProtocolFixtureConfig{
-			Nodes: 2,
+		fx := wingspantest.NewProtocolFixture[wspackettest.Ed25519Delta](
+			t, ctx,
+			wingspantest.ProtocolFixtureConfig{
+				Nodes: 2,
 
-			ProtocolID:      0xd0,
-			SessionIDLength: 3,
-		})
+				ProtocolID:      0xd0,
+				SessionIDLength: 3,
+			},
+		)
 		defer cancel()
 
 		// Node 0 will start the session first.
@@ -39,15 +42,21 @@ func TestProtocol_outboundConnection(t *testing.T) {
 		// We don't have a way to synchronize on the protocol
 		// observing the connection change,
 		// so instead just do a short sleep.
-		time.Sleep(4 * time.Millisecond)
+		timeoutCh := time.After(4 * time.Millisecond)
 
-		s, m := wspackettest.NewCentralBitsetState(ctx, 8)
+		pub0, _, err := ed25519.GenerateKey(nil)
+		require.NoError(t, err)
+		pub1, _, err := ed25519.GenerateKey(nil)
+		require.NoError(t, err)
+
+		_ = <-timeoutCh
+
+		signContent := []byte(t.Name())
+		s, m := wspackettest.NewEd25519State(ctx, signContent, []ed25519.PublicKey{pub0, pub1})
 		sess0, err := fx.Protocols[0].NewSession(
 			ctx, []byte("sid"), []byte("application hello"),
 			s, m,
-			func(io.Reader) (uint32, error) {
-				panic("TODO")
-			},
+			wspackettest.ParseEd25519Packet,
 		)
 		require.NoError(t, err)
 
@@ -70,22 +79,29 @@ func TestProtocol_outboundConnection(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		fx := wingspantest.NewProtocolFixture[uint32](t, ctx, wingspantest.ProtocolFixtureConfig{
-			Nodes: 2,
+		fx := wingspantest.NewProtocolFixture[wspackettest.Ed25519Delta](
+			t, ctx,
+			wingspantest.ProtocolFixtureConfig{
+				Nodes: 2,
 
-			ProtocolID:      0xd0,
-			SessionIDLength: 3,
-		})
+				ProtocolID:      0xd0,
+				SessionIDLength: 3,
+			},
+		)
 		defer cancel()
 
+		pub0, _, err := ed25519.GenerateKey(nil)
+		require.NoError(t, err)
+		pub1, _, err := ed25519.GenerateKey(nil)
+		require.NoError(t, err)
+
 		// Make the session before doing any dialing.
-		s, m := wspackettest.NewCentralBitsetState(ctx, 8)
+		signContent := []byte(t.Name())
+		s, m := wspackettest.NewEd25519State(ctx, signContent, []ed25519.PublicKey{pub0, pub1})
 		sess0, err := fx.Protocols[0].NewSession(
 			ctx, []byte("sid"), []byte("application hello"),
 			s, m,
-			func(io.Reader) (uint32, error) {
-				panic("TODO")
-			},
+			wspackettest.ParseEd25519Packet,
 		)
 		require.NoError(t, err)
 
