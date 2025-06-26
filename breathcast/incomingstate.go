@@ -2,7 +2,7 @@ package breathcast
 
 import (
 	"github.com/gordian-engine/dragon/breathcast/internal/merkle/cbmt"
-	"github.com/gordian-engine/dragon/internal/dchan"
+	"github.com/gordian-engine/dragon/dpubsub"
 	"github.com/klauspost/reedsolomon"
 )
 
@@ -28,12 +28,12 @@ type incomingState struct {
 
 	// Consumers of incomingState are initialized with a copy of
 	// the pt.HaveLeaves bit set.
-	// They can observe this multicast for updates to which leaves
+	// They can observe this pubsub stream for updates to which leaves
 	// have been successfully added.
 	//
 	// The BroadcastOperation is responsible for setting this field,
 	// so consumers must be very careful to make a copy of the field
 	// and track that copy, rather than accessing the field directly
 	// from the incomingState struct.
-	addedLeafIndices *dchan.Multicast[uint]
+	addedLeafIndices *dpubsub.Stream[uint]
 }

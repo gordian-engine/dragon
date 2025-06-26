@@ -14,7 +14,7 @@ import (
 	"github.com/gordian-engine/dragon/breathcast/bcmerkle/bcsha256"
 	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dconn"
-	"github.com/gordian-engine/dragon/internal/dchan"
+	"github.com/gordian-engine/dragon/dpubsub"
 	"github.com/gordian-engine/dragon/internal/dmsg"
 	"github.com/quic-go/quic-go"
 )
@@ -77,7 +77,7 @@ func NewIntegrationApp(
 		<-appDone
 	})
 
-	connMulticast := dchan.NewMulticast[dconn.Change]()
+	connStream := dpubsub.NewStream[dconn.Change]()
 
 	app := &IntegrationApp{
 		log: log,
@@ -88,7 +88,7 @@ func NewIntegrationApp(
 			breathcast.ProtocolConfig{
 				InitialConnections: nil,
 
-				ConnectionChanges: connMulticast,
+				ConnectionChanges: connStream,
 
 				ProtocolID: breathcastProtocolID,
 
@@ -109,7 +109,7 @@ func NewIntegrationApp(
 		originations: make(chan originationRegistration),
 	}
 
-	go app.mainLoop(ctx, appDone, connChanges, connMulticast, nodeIDsByLeafCert)
+	go app.mainLoop(ctx, appDone, connChanges, connStream, nodeIDsByLeafCert)
 
 	return app
 }
@@ -118,7 +118,7 @@ func (a *IntegrationApp) mainLoop(
 	ctx context.Context,
 	done chan<- struct{},
 	changes <-chan dconn.Change,
-	mc *dchan.Multicast[dconn.Change],
+	mc *dpubsub.Stream[dconn.Change],
 	nodeIDsByLeafCert map[dcert.LeafCertHandle]int,
 ) {
 	defer close(done)
@@ -145,7 +145,7 @@ func (a *IntegrationApp) mainLoop(
 				delete(conns, cc.Conn.Chain.LeafHandle)
 			}
 
-			mc.Set(cc)
+			mc.Publish(cc)
 			mc = mc.Next
 
 		case req := <-a.incoming:

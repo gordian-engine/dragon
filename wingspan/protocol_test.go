@@ -237,13 +237,13 @@ func TestProtocol_packetContent(t *testing.T) {
 	}
 	require.NoError(t, state0.UpdateFromPeer(ctx, d0))
 
-	// Multicast 0 should have been updated.
+	// Stream 0 should have been updated.
 	_ = dtest.ReceiveSoon(t, m0.Ready)
 	require.Equal(t, d0, m0.Val)
 	m0 = m0.Next
 
 	// And if everything was wired correctly, sess0 sent that packet to sess1,
-	// which caused the m1 multicast to update.
+	// which caused the m1 stream to update.
 	_ = dtest.ReceiveSoon(t, m1.Ready)
 	require.Equal(t, d0, m1.Val)
 	m1 = m1.Next

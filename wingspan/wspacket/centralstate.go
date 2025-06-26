@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/gordian-engine/dragon/internal/dchan"
+	"github.com/gordian-engine/dragon/dpubsub"
 )
 
 // CentralState is the state management that is central to a session,
@@ -17,7 +17,7 @@ import (
 // for integration with the [wingspan.Protocol],
 // there is other functionality required outside of this interface.
 //
-// For instance, there must be a "deltas" [*dchan.Multicast]
+// For instance, there must be a "deltas" [*dpubsub.Stream]
 // associated with the CentralState
 // and provided when creating a new Wingspan session.
 type CentralState[D any] interface {
@@ -30,24 +30,24 @@ type CentralState[D any] interface {
 
 	// NewOutboundRemoteState returns an OutboundRemoteState instance
 	// that contains a copy of the state in the current central state,
-	// and a Multicast that is valid for the returned state.
+	// and a Stream that is valid for the returned state.
 	//
-	// Returning the multicast here avoids the possibility
+	// Returning the stream here avoids the possibility
 	// of a data race between constructing the state
-	// and observing the multicast.
+	// and observing the stream.
 	NewOutboundRemoteState(context.Context) (
-		OutboundRemoteState[D], *dchan.Multicast[D], error,
+		OutboundRemoteState[D], *dpubsub.Stream[D], error,
 	)
 
 	// NewInboundRemoteState returns a new [InboundRemoteState]
 	// that contains a copy of the state in the current central state,
-	// and a Multicast that is valid for the returned state.
+	// and a Stream that is valid for the returned state.
 	//
-	// Returning the multicast here avoids the possibility
+	// Returning the stream here avoids the possibility
 	// of a data race between constructing the state
-	// and observing the multicast.
+	// and observing the stream.
 	NewInboundRemoteState(context.Context) (
-		InboundRemoteState[D], *dchan.Multicast[D], error,
+		InboundRemoteState[D], *dpubsub.Stream[D], error,
 	)
 }
 

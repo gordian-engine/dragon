@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/bits-and-blooms/bitset"
+	"github.com/gordian-engine/dragon/dpubsub"
 	"github.com/gordian-engine/dragon/internal/dbitset"
-	"github.com/gordian-engine/dragon/internal/dchan"
 	"github.com/quic-go/quic-go"
 )
 
@@ -34,8 +34,8 @@ type OutgoingRelayConfig struct {
 	// The RunOutgoingRelay function takes ownership of this bitset.
 	InitialHavePackets *bitset.BitSet
 
-	// Multicast of indices of packets that we now are allowed to read.
-	NewAvailablePackets *dchan.Multicast[uint]
+	// Pubsub stream of indices of packets that we now are allowed to read.
+	NewAvailablePackets *dpubsub.Stream[uint]
 
 	// Channel that is closed when the broadcast operation
 	// has reconstituted the data.
@@ -200,7 +200,7 @@ func relayNewDatagrams(
 	packets [][]byte,
 	nData uint16,
 	havePackets *bitset.BitSet,
-	newAvailablePackets *dchan.Multicast[uint],
+	newAvailablePackets *dpubsub.Stream[uint],
 	dataReady <-chan struct{},
 	syncOutCh chan<- *bitset.BitSet,
 	syncReturnCh <-chan *bitset.BitSet,

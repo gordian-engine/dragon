@@ -10,7 +10,7 @@ import (
 	"iter"
 	"maps"
 
-	"github.com/gordian-engine/dragon/internal/dchan"
+	"github.com/gordian-engine/dragon/dpubsub"
 	"github.com/gordian-engine/dragon/wingspan/wspacket"
 )
 
@@ -22,7 +22,7 @@ type rawEdKey [ed25519.PublicKeySize]byte
 // This is a simplified implementation intended only for use in tests.
 // Do not use this in production code.
 type Ed25519State struct {
-	m *dchan.Multicast[Ed25519Delta]
+	m *dpubsub.Stream[Ed25519Delta]
 
 	signContent []byte
 
@@ -51,12 +51,12 @@ type verifiedEd25519SignatureRequest struct {
 
 type newOutboundEd25519StateResult struct {
 	State *ed25519OutboundState
-	M     *dchan.Multicast[Ed25519Delta]
+	M     *dpubsub.Stream[Ed25519Delta]
 }
 
 type newInboundEd25519StateResult struct {
 	State *ed25519InboundState
-	M     *dchan.Multicast[Ed25519Delta]
+	M     *dpubsub.Stream[Ed25519Delta]
 }
 
 // NewEd25519State returns a new instance of Ed25519State.
@@ -68,8 +68,8 @@ func NewEd25519State(
 	ctx context.Context,
 	signContent []byte,
 	allowedKeys []ed25519.PublicKey,
-) (*Ed25519State, *dchan.Multicast[Ed25519Delta]) {
-	m := dchan.NewMulticast[Ed25519Delta]()
+) (*Ed25519State, *dpubsub.Stream[Ed25519Delta]) {
+	m := dpubsub.NewStream[Ed25519Delta]()
 	s := &Ed25519State{
 		m: m,
 
@@ -194,12 +194,12 @@ func (s *Ed25519State) handleUpdateFromPeer(
 	s.sigs[req.StringKey] = req.Delta.Sig
 	req.Resp <- nil
 
-	s.m.Set(req.Delta)
+	s.m.Publish(req.Delta)
 	s.m = s.m.Next
 }
 
 func (s *Ed25519State) NewOutboundRemoteState(ctx context.Context) (
-	wspacket.OutboundRemoteState[Ed25519Delta], *dchan.Multicast[Ed25519Delta], error,
+	wspacket.OutboundRemoteState[Ed25519Delta], *dpubsub.Stream[Ed25519Delta], error,
 ) {
 	ch := make(chan newOutboundEd25519StateResult, 1)
 
@@ -219,7 +219,7 @@ func (s *Ed25519State) NewOutboundRemoteState(ctx context.Context) (
 }
 
 func (s *Ed25519State) NewInboundRemoteState(ctx context.Context) (
-	wspacket.InboundRemoteState[Ed25519Delta], *dchan.Multicast[Ed25519Delta], error,
+	wspacket.InboundRemoteState[Ed25519Delta], *dpubsub.Stream[Ed25519Delta], error,
 ) {
 	ch := make(chan newInboundEd25519StateResult, 1)
 	select {

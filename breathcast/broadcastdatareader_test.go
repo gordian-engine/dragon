@@ -8,7 +8,7 @@ import (
 	"github.com/gordian-engine/dragon/breathcast"
 	"github.com/gordian-engine/dragon/breathcast/bcmerkle/bcsha256"
 	"github.com/gordian-engine/dragon/dconn"
-	"github.com/gordian-engine/dragon/internal/dchan"
+	"github.com/gordian-engine/dragon/dpubsub"
 	"github.com/gordian-engine/dragon/internal/dtest"
 	"github.com/stretchr/testify/require"
 )
@@ -36,7 +36,7 @@ func TestBroadcastOperation_origination_reader(t *testing.T) {
 	require.NoError(t, err)
 
 	p := breathcast.NewProtocol(ctx, dtest.NewLogger(t), breathcast.ProtocolConfig{
-		ConnectionChanges: dchan.NewMulticast[dconn.Change](),
+		ConnectionChanges: dpubsub.NewStream[dconn.Change](),
 		ProtocolID:        0xFE,
 		BroadcastIDLength: 3,
 	})

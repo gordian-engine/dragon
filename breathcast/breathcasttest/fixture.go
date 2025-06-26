@@ -6,7 +6,7 @@ import (
 
 	"github.com/gordian-engine/dragon/breathcast"
 	"github.com/gordian-engine/dragon/dconn"
-	"github.com/gordian-engine/dragon/internal/dchan"
+	"github.com/gordian-engine/dragon/dpubsub"
 	"github.com/gordian-engine/dragon/internal/dquic/dquictest"
 	"github.com/gordian-engine/dragon/internal/dtest"
 	"github.com/quic-go/quic-go"
@@ -16,7 +16,7 @@ import (
 //
 // Create an instance with [NewProtocolFixture].
 type ProtocolFixture struct {
-	ConnChanges []*dchan.Multicast[dconn.Change]
+	ConnChanges []*dpubsub.Stream[dconn.Change]
 	Protocols   []*breathcast.Protocol
 
 	ListenerSet *dquictest.ListenerSet
@@ -45,13 +45,13 @@ func NewProtocolFixture(
 	log := dtest.NewLogger(t)
 
 	f := &ProtocolFixture{
-		ConnChanges: make([]*dchan.Multicast[dconn.Change], cfg.Nodes),
+		ConnChanges: make([]*dpubsub.Stream[dconn.Change], cfg.Nodes),
 		Protocols:   make([]*breathcast.Protocol, cfg.Nodes),
 		ListenerSet: dquictest.NewListenerSet(t, ctx, cfg.Nodes),
 	}
 
 	for i := range cfg.Nodes {
-		cc := dchan.NewMulticast[dconn.Change]()
+		cc := dpubsub.NewStream[dconn.Change]()
 		p := breathcast.NewProtocol(ctx, log.With("idx", i), breathcast.ProtocolConfig{
 			ConnectionChanges: cc,
 			ProtocolID:        cfg.ProtocolID,
@@ -74,7 +74,7 @@ func (f *ProtocolFixture) AddConnection(
 	conn quic.Connection,
 	ownerIdx, peerIdx int,
 ) {
-	f.ConnChanges[ownerIdx].Set(dconn.Change{
+	f.ConnChanges[ownerIdx].Publish(dconn.Change{
 		Conn: dconn.Conn{
 			QUIC:  conn,
 			Chain: f.ListenerSet.Leaves[peerIdx].Chain,

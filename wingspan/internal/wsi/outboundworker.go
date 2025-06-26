@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gordian-engine/dragon/internal/dchan"
+	"github.com/gordian-engine/dragon/dpubsub"
 	"github.com/gordian-engine/dragon/wingspan/wspacket"
 	"github.com/quic-go/quic-go"
 )
@@ -20,7 +20,7 @@ type OutboundWorker[D any] struct {
 	header []byte
 
 	s      wspacket.OutboundRemoteState[D]
-	deltas *dchan.Multicast[D]
+	deltas *dpubsub.Stream[D]
 }
 
 // NewOutboundWorker returns a new OutboundWorker.
@@ -28,7 +28,7 @@ func NewOutboundWorker[D any](
 	log *slog.Logger,
 	header []byte,
 	state wspacket.OutboundRemoteState[D],
-	deltas *dchan.Multicast[D],
+	deltas *dpubsub.Stream[D],
 ) *OutboundWorker[D] {
 	return &OutboundWorker[D]{
 		log: log,

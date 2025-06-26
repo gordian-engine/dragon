@@ -15,7 +15,7 @@ import (
 	"github.com/gordian-engine/dragon/breathcast/internal/merkle/cbmt"
 	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dconn"
-	"github.com/gordian-engine/dragon/internal/dchan"
+	"github.com/gordian-engine/dragon/dpubsub"
 	"github.com/quic-go/quic-go"
 )
 
@@ -154,7 +154,7 @@ func (o *BroadcastOperation) Data(ctx context.Context) io.Reader {
 func (o *BroadcastOperation) mainLoop(
 	ctx context.Context,
 	conns map[dcert.LeafCertHandle]dconn.Conn,
-	connChanges *dchan.Multicast[dconn.Change],
+	connChanges *dpubsub.Stream[dconn.Change],
 	wg *sync.WaitGroup,
 	is *incomingState,
 ) {
@@ -191,7 +191,7 @@ func (o *BroadcastOperation) mainLoop(
 func (o *BroadcastOperation) originationMainLoop(
 	ctx context.Context,
 	conns map[dcert.LeafCertHandle]dconn.Conn,
-	connChanges *dchan.Multicast[dconn.Change],
+	connChanges *dpubsub.Stream[dconn.Change],
 	protoHeader bci.ProtocolHeader,
 ) {
 	for {
@@ -236,9 +236,9 @@ func (o *BroadcastOperation) runOrigination(
 func (o *BroadcastOperation) handleOriginationConnChange(
 	ctx context.Context,
 	conns map[dcert.LeafCertHandle]dconn.Conn,
-	connChanges *dchan.Multicast[dconn.Change],
+	connChanges *dpubsub.Stream[dconn.Change],
 	protoHeader bci.ProtocolHeader,
-) *dchan.Multicast[dconn.Change] {
+) *dpubsub.Stream[dconn.Change] {
 	cc := connChanges.Val
 	if cc.Adding {
 		conns[cc.Conn.Chain.LeafHandle] = cc.Conn
@@ -300,7 +300,7 @@ func (o *BroadcastOperation) runAcceptBroadcast(
 func (o *BroadcastOperation) relayMainLoop(
 	ctx context.Context,
 	conns map[dcert.LeafCertHandle]dconn.Conn,
-	connChanges *dchan.Multicast[dconn.Change],
+	connChanges *dpubsub.Stream[dconn.Change],
 	protoHeader bci.ProtocolHeader,
 	is *incomingState,
 ) {
@@ -342,10 +342,10 @@ func (o *BroadcastOperation) relayMainLoop(
 func (o *BroadcastOperation) handleRelayConnChange(
 	ctx context.Context,
 	conns map[dcert.LeafCertHandle]dconn.Conn,
-	connChanges *dchan.Multicast[dconn.Change],
+	connChanges *dpubsub.Stream[dconn.Change],
 	protoHeader bci.ProtocolHeader,
 	is *incomingState,
-) *dchan.Multicast[dconn.Change] {
+) *dpubsub.Stream[dconn.Change] {
 	cc := connChanges.Val
 	if cc.Adding {
 		conns[cc.Conn.Chain.LeafHandle] = cc.Conn
@@ -490,7 +490,7 @@ func (o *BroadcastOperation) handleAddPacketRequest(
 
 		// Now that the packets have been updated,
 		// we can notify any observers that we have the packet.
-		is.addedLeafIndices.Set(uint(idx))
+		is.addedLeafIndices.Publish(uint(idx))
 		is.addedLeafIndices = is.addedLeafIndices.Next
 
 		leavesSoFar++

@@ -12,7 +12,7 @@ import (
 
 	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dconn"
-	"github.com/gordian-engine/dragon/internal/dchan"
+	"github.com/gordian-engine/dragon/dpubsub"
 	"github.com/gordian-engine/dragon/wingspan/wspacket"
 	"github.com/quic-go/quic-go"
 )
@@ -28,7 +28,7 @@ type Session[D any] struct {
 	header []byte
 
 	state  wspacket.CentralState[D]
-	deltas *dchan.Multicast[D]
+	deltas *dpubsub.Stream[D]
 
 	acceptStreamRequests chan acceptStreamRequest
 	inboundDeltaArrivals chan inboundDeltaArrival[D]
@@ -76,7 +76,7 @@ func NewSession[D any](
 	protocolID byte,
 	sessionID, appHeader []byte,
 	state wspacket.CentralState[D],
-	deltas *dchan.Multicast[D],
+	deltas *dpubsub.Stream[D],
 ) *Session[D] {
 	if len(appHeader) >= (1 << 16) {
 		panic(fmt.Errorf(
@@ -118,7 +118,7 @@ func (s *Session[D]) Run(
 	parentWG *sync.WaitGroup,
 	parsePacketFn func(io.Reader) (D, error),
 	conns map[dcert.LeafCertHandle]dconn.Conn,
-	connChanges *dchan.Multicast[dconn.Change],
+	connChanges *dpubsub.Stream[dconn.Change],
 ) {
 	defer parentWG.Done()
 

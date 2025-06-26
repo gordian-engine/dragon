@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gordian-engine/dragon/internal/dchan"
+	"github.com/gordian-engine/dragon/dpubsub"
 	"github.com/gordian-engine/dragon/wingspan/wspacket"
 	"github.com/quic-go/quic-go"
 )
@@ -27,7 +27,7 @@ type InboundWorker[D any] struct {
 
 	// Set in the Run method.
 	// Simpler as a field than passing around unexported methods here.
-	deltas *dchan.Multicast[D]
+	deltas *dpubsub.Stream[D]
 }
 
 // NewInboundWorker returns a new InboundWorker.
@@ -47,7 +47,7 @@ func NewInboundWorker[D any](
 type InboundStream[D any] struct {
 	Stream quic.ReceiveStream
 	State  wspacket.InboundRemoteState[D]
-	Deltas *dchan.Multicast[D]
+	Deltas *dpubsub.Stream[D]
 }
 
 // Run runs the main loop of the InboundWorker.

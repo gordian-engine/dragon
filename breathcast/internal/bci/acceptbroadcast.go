@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/bits-and-blooms/bitset"
+	"github.com/gordian-engine/dragon/dpubsub"
 	"github.com/gordian-engine/dragon/internal/dbitset"
-	"github.com/gordian-engine/dragon/internal/dchan"
 	"github.com/quic-go/quic-go"
 )
 
@@ -24,7 +24,7 @@ type AcceptBroadcastConfig struct {
 	PacketHandler PacketHandler
 
 	InitialHaveLeaves *bitset.BitSet
-	AddedLeaves       *dchan.Multicast[uint]
+	AddedLeaves       *dpubsub.Stream[uint]
 
 	BitsetSendPeriod time.Duration
 
@@ -88,7 +88,7 @@ func runPeriodicBitsetUpdates(
 	wg *sync.WaitGroup,
 	s quic.SendStream,
 	haveLeaves *bitset.BitSet,
-	addedLeaves *dchan.Multicast[uint],
+	addedLeaves *dpubsub.Stream[uint],
 	newHaveLeaves chan<- *bitset.BitSet,
 	sendTimeout time.Duration,
 	sendPeriod time.Duration,

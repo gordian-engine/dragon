@@ -10,8 +10,8 @@ import (
 	"github.com/bits-and-blooms/bitset"
 	"github.com/gordian-engine/dragon/breathcast/bcmerkle/bcsha256"
 	"github.com/gordian-engine/dragon/breathcast/internal/bci"
+	"github.com/gordian-engine/dragon/dpubsub"
 	"github.com/gordian-engine/dragon/internal/dbitset"
-	"github.com/gordian-engine/dragon/internal/dchan"
 	"github.com/gordian-engine/dragon/internal/dquic/dquictest"
 	"github.com/gordian-engine/dragon/internal/dtest"
 	"github.com/quic-go/quic-go"
@@ -39,7 +39,7 @@ func TestRunAcceptBroadcast_firstUpdate(t *testing.T) {
 			PacketHandler: new(datagramCollector),
 
 			InitialHaveLeaves: haveLeaves.Clone(),
-			AddedLeaves:       dchan.NewMulticast[uint](),
+			AddedLeaves:       dpubsub.NewStream[uint](),
 
 			BitsetSendPeriod: 2 * time.Millisecond, // Arbitrary for test.
 
@@ -78,7 +78,7 @@ func TestRunAcceptBroadcast_firstUpdate(t *testing.T) {
 			PacketHandler: new(datagramCollector),
 
 			InitialHaveLeaves: haveLeaves.Clone(),
-			AddedLeaves:       dchan.NewMulticast[uint](),
+			AddedLeaves:       dpubsub.NewStream[uint](),
 
 			BitsetSendPeriod: 2 * time.Millisecond, // Arbitrary for test.
 
@@ -113,7 +113,7 @@ func TestRunAcceptBroadcast_externalUpdatesShared(t *testing.T) {
 	// Set one bit so we confirm the sent bitsets are only deltas.
 	haveLeaves.Set(0)
 
-	al := dchan.NewMulticast[uint]()
+	al := dpubsub.NewStream[uint]()
 
 	bci.RunAcceptBroadcast(ctx, dtest.NewLogger(t), bci.AcceptBroadcastConfig{
 		WG: &wg,
@@ -140,7 +140,7 @@ func TestRunAcceptBroadcast_externalUpdatesShared(t *testing.T) {
 	require.True(t, got.Test(0))
 
 	// Now we tell the operation that it has a bit set.
-	al.Set(3)
+	al.Publish(3)
 	al = al.Next
 
 	require.NoError(t, dec.ReceiveBitset(s, 5*time.Millisecond, got))
@@ -183,7 +183,7 @@ func TestRunAcceptBroadcast_syncDatagrams(t *testing.T) {
 		PacketHandler: c,
 
 		InitialHaveLeaves: bitset.MustNew(4),
-		AddedLeaves:       dchan.NewMulticast[uint](),
+		AddedLeaves:       dpubsub.NewStream[uint](),
 
 		BitsetSendPeriod: 5 * time.Millisecond, // Arbitrary for test.
 

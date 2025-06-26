@@ -3,7 +3,7 @@ package dquictest
 import (
 	"context"
 
-	"github.com/gordian-engine/dragon/internal/dchan"
+	"github.com/gordian-engine/dragon/dpubsub"
 	"github.com/quic-go/quic-go"
 )
 
@@ -42,21 +42,21 @@ func (d DatagramDropper) SendDatagram([]byte) error {
 	return nil
 }
 
-// MulticastingDatagramSender wraps a quic.Connection
+// PubsubDatagramSender wraps a quic.Connection
 // that reroutes SendDatagram to put the byte values
-// on a provided [*dchan.Multicast].
+// on a provided [*dpubsub.Stream].
 // This allows unblocked behavior of SendDatagram
-// but still allows test syncrhonization,
+// but still allows test synchronization,
 // without using particularly sized buffered channels.
-type MulticastingDatagramSender struct {
+type PubsubDatagramSender struct {
 	quic.Connection
 
-	Multicast *dchan.Multicast[[]byte]
+	Stream *dpubsub.Stream[[]byte]
 }
 
-func (s *MulticastingDatagramSender) SendDatagram(d []byte) error {
-	s.Multicast.Set(d)
-	s.Multicast = s.Multicast.Next
+func (s *PubsubDatagramSender) SendDatagram(d []byte) error {
+	s.Stream.Publish(d)
+	s.Stream = s.Stream.Next
 
 	return nil
 }

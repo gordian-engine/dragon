@@ -11,7 +11,7 @@ import (
 
 	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dconn"
-	"github.com/gordian-engine/dragon/internal/dchan"
+	"github.com/gordian-engine/dragon/dpubsub"
 	"github.com/gordian-engine/dragon/wingspan/internal/wsi"
 	"github.com/gordian-engine/dragon/wingspan/wspacket"
 )
@@ -24,9 +24,9 @@ import (
 type Protocol[D any] struct {
 	log *slog.Logger
 
-	// Multicast for connection changes,
+	// Pubsub stream for connection changes,
 	// so that broadcast operations can observe it directly.
-	connChanges *dchan.Multicast[dconn.Change]
+	connChanges *dpubsub.Stream[dconn.Change]
 
 	startSessionRequests chan sessionRequest[D]
 
@@ -67,9 +67,9 @@ type ProtocolConfig struct {
 	InitialConnections []dconn.Conn
 
 	// How to inform the protocol of connection changes.
-	// Using dchan.Multicast for this reduces the number of required goroutines,
+	// Using a pubsub stream for this reduces the number of required goroutines,
 	// at the cost of a heap-allocated linked list.
-	ConnectionChanges *dchan.Multicast[dconn.Change]
+	ConnectionChanges *dpubsub.Stream[dconn.Change]
 
 	// The single protocol-identifying byte to be sent on outgoing streams.
 	ProtocolID byte
@@ -181,7 +181,7 @@ func (p *Protocol[D]) NewSession(
 	id []byte,
 	appHeader []byte,
 	state wspacket.CentralState[D],
-	deltas *dchan.Multicast[D],
+	deltas *dpubsub.Stream[D],
 	parsePacketFn func(io.Reader) (D, error),
 ) (Session[D], error) {
 	if len(id) != int(p.sessionIDLength) {

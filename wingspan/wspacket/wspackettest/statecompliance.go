@@ -46,7 +46,7 @@ func TestStateCompliance[D any](t *testing.T, f StateFixtureFunc[D]) {
 			require.ErrorIs(t, s.UpdateFromPeer(ctx, d), wspacket.ErrRedundantUpdate)
 		})
 
-		t.Run("multicasts for derived states get updated", func(t *testing.T) {
+		t.Run("stream for derived states get updated", func(t *testing.T) {
 			t.Parallel()
 
 			ctx, cancel := context.WithCancel(context.Background())

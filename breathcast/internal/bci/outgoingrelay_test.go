@@ -14,8 +14,8 @@ import (
 	"github.com/bits-and-blooms/bitset"
 	"github.com/gordian-engine/dragon/breathcast/bcmerkle/bcsha256"
 	"github.com/gordian-engine/dragon/breathcast/internal/bci"
+	"github.com/gordian-engine/dragon/dpubsub"
 	"github.com/gordian-engine/dragon/internal/dbitset"
-	"github.com/gordian-engine/dragon/internal/dchan"
 	"github.com/gordian-engine/dragon/internal/dquic/dquictest"
 	"github.com/gordian-engine/dragon/internal/dtest"
 	"github.com/quic-go/quic-go"
@@ -183,7 +183,7 @@ func TestRunOutgoingRelay_forwardNewDatagram(t *testing.T) {
 	// Now we indicate that the next datagram is available to the host.
 	// It would have arrived from a separate peer somehow.
 	ad := fx.Cfg.NewAvailablePackets
-	ad.Set(1)
+	ad.Publish(1)
 	ad = ad.Next
 
 	// Then if we are able to send another continue signal,
@@ -221,10 +221,10 @@ func TestRunOutgoingRelay_missedDatagramSentReliably(t *testing.T) {
 
 	// The operation is running on the "host" side of the connection.
 	cHost, cClient := fx.ListenerSet.Dial(t, 0, 1)
-	hostDGs := dchan.NewMulticast[[]byte]()
-	cHW := &dquictest.MulticastingDatagramSender{
+	hostDGs := dpubsub.NewStream[[]byte]()
+	cHW := &dquictest.PubsubDatagramSender{
 		Connection: cHost,
-		Multicast:  hostDGs,
+		Stream:     hostDGs,
 	}
 	fx.Run(t, ctx, nil, cHW)
 
@@ -305,10 +305,10 @@ func TestRunOutgoingRelay_missedDatagrams_staggered(t *testing.T) {
 
 	// The operation is running on the "host" side of the connection.
 	cHost, cClient := fx.ListenerSet.Dial(t, 0, 1)
-	hostDGs := dchan.NewMulticast[[]byte]()
-	cHW := &dquictest.MulticastingDatagramSender{
+	hostDGs := dpubsub.NewStream[[]byte]()
+	cHW := &dquictest.PubsubDatagramSender{
 		Connection: cHost,
-		Multicast:  hostDGs,
+		Stream:     hostDGs,
 	}
 	fx.Run(t, ctx, nil, cHW)
 
@@ -347,7 +347,7 @@ func TestRunOutgoingRelay_missedDatagrams_staggered(t *testing.T) {
 	// Then the host gets a new datagram.
 	fx.Cfg.Packets[1] = []byte("\xAAtest\x00\x01datagram 1")
 	nad := fx.Cfg.NewAvailablePackets
-	nad.Set(1)
+	nad.Publish(1)
 	nad = nad.Next
 
 	// The host forwards the new datagram to the client,
@@ -445,10 +445,10 @@ func TestOutgoingRelay_dataReady(t *testing.T) {
 
 	// The operation is running on the "host" side of the connection.
 	cHost, cClient := fx.ListenerSet.Dial(t, 0, 1)
-	hostDGs := dchan.NewMulticast[[]byte]()
-	cHW := &dquictest.MulticastingDatagramSender{
+	hostDGs := dpubsub.NewStream[[]byte]()
+	cHW := &dquictest.PubsubDatagramSender{
 		Connection: cHost,
-		Multicast:  hostDGs,
+		Stream:     hostDGs,
 	}
 	fx.Run(t, ctx, nil, cHW)
 
@@ -618,7 +618,7 @@ func NewOutgoingRelayFixture(
 
 		InitialHavePackets: bitset.MustNew(uint(nData + nParity)),
 
-		NewAvailablePackets: dchan.NewMulticast[uint](),
+		NewAvailablePackets: dpubsub.NewStream[uint](),
 
 		DataReady: dataReady,
 
