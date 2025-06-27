@@ -491,10 +491,20 @@ func ExtractStreamApplicationHeader(r io.Reader, dst []byte) ([]byte, byte, erro
 	return dst, buf[0], nil
 }
 
+// ExtractStreamBroadcastID calls [ExtractStreamBroadcastID]
+// with r, dst, and the internally set broadcast ID length.
+func (p *Protocol) ExtractStreamBroadcastID(r io.Reader, dst []byte) ([]byte, error) {
+	return ExtractStreamBroadcastID(r, dst, int(p.broadcastIDLength))
+}
+
 // ExtractStreamBroadcastID extracts the broadcast ID
 // from the given reader (which should be a QUIC stream).
 // The extracted data is appended to the given dst slice,
 // which is permitted to be nil.
+//
+// The caller must provide the correct broadcast ID length;
+// most callers should use [*Protocol.ExtractStreamBroadcastID],
+// but this standalone function can be useful in some tests.
 //
 // The stream is an origination stream created through [*Protocol.NewOrigination].
 //
@@ -502,11 +512,11 @@ func ExtractStreamApplicationHeader(r io.Reader, dst []byte) ([]byte, byte, erro
 //
 // It is assumed that the caller has already consumed
 // the protocol ID byte matching [ProtocolConfig.ProtocolID].
-func (p *Protocol) ExtractStreamBroadcastID(r io.Reader, dst []byte) ([]byte, error) {
-	if cap(dst) >= int(p.broadcastIDLength) {
-		dst = dst[:p.broadcastIDLength]
+func ExtractStreamBroadcastID(r io.Reader, dst []byte, bidLen int) ([]byte, error) {
+	if cap(dst) >= bidLen {
+		dst = dst[:bidLen]
 	} else {
-		dst = make([]byte, p.broadcastIDLength)
+		dst = make([]byte, bidLen)
 	}
 	if _, err := io.ReadFull(r, dst); err != nil {
 		return dst, fmt.Errorf(
