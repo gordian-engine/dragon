@@ -86,7 +86,7 @@ for a custom broadcast protocol.
 
 One node on the network provides an arbitrary set of data
 and some details on how it is to be transfered, to create an "origination".
-The origination includes an [erasure-coding](https://en.wikipedia.org/wiki/Erasure_code) of the input data
+The origination includes an [erasure-coding](https://en.wikipedia.org/wiki/Erasure_code) of the input data.
 The erasure-coded shards also include corresponding Merkle proofs;
 therefore, clients who have the Merkle root can verify
 that they have correctly received a shard of the original data.
@@ -128,3 +128,32 @@ Once a relaying peer receives enough shards to reconstruct the original data,
 it acts like an originating broadcaster,
 sending remaining shards over unreliable transport
 and then sending anything else missed over the reliable stream.
+
+#### wingspan
+
+See the [`wingspan` package](https://pkg.go.dev/github.com/gordian-engine/dragon/wingspan)
+for a custom gossiping protocol.
+
+Any participant can create or accept many Sessions within the protocol.
+Every Session has an ID; independently created Sessions with the same ID
+are treated as an identical Session.
+(In blockchain terms, a Session would represent a height and round in proof-of-stake voting.)
+
+A created Session has an application header, and application-defined state.
+Consumers of the Protocol and Session types provide a "Delta" type
+to be transmitted as a packet to update the state.
+(Again in blockchain terms, a packet could represent one or more votes during a voting round,
+depending on how votes are encoded and whether signature aggregation is used.)
+
+The wingspan protocol implementation inspects the state to track what packets
+have been sent to, or received from, individual peers.
+If Peer A sends a particular packet, the "central state" for the session
+will be updated with that new information.
+Depending on the user-defined implementation, that same byte-for-byte packet
+may be forwarded to other peers, or a new packet containing that information
+and additional known information may be sent to other peers.
+The wingspan protocol handles the bookkeeping to minimize redundant sharing of information.
+
+A blockchain information could use a simple bitmap of state for unaggregated signatures.
+Aggregated signatures would be more of a tree-style structure,
+understanding that there is an implied aggregation order.

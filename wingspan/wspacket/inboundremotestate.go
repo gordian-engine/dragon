@@ -5,6 +5,25 @@ import "errors"
 // InboundRemoteState is the state associated with an inbound stream.
 //
 // Create an instance of InboundRemoteState with [CentralState.NewInboundRemoteState].
+//
+// Implementers may note that the sequence of calls for a single delta
+// depends on the origin of the delta.
+//
+// If a different peer sends the delta, only ApplyUpdateFromCentral is called.
+//
+// If the peer associated with the state sends the Delta,
+// CheckIncoming is called first to ensure the peer
+// is not violating the protocol by sending the same packet twice,
+// and also to short circuit unnecessary work
+// if the peer sends a packet that we already received from another peer.
+//
+// If the packet received from the peer is new,
+// and if the central state verifies and accepts the delta,
+// then the session calls ApplyUpdateFromPeer.
+//
+// If another peer is concurrently sending the same packet,
+// it is possible for ApplyUpdateFromCentral
+// to be called between CheckIncoming and ApplyUpdateFromPeer.
 type InboundRemoteState[D any] interface {
 	// Apply the update that was dispatched from the [CentralState].
 	// Wingspan internals handle routing this request.
@@ -14,9 +33,12 @@ type InboundRemoteState[D any] interface {
 	// in order to avoid sending redundant values back to the central state.
 	ApplyUpdateFromCentral(D) error
 
-	// If the peer for this state gave us new information,
-	// the Wingspan internals mark it here first,
-	// so that UpdateFromCentral is a redundant update.
+	// ApplyUpdateFromPeer indicates that the given delta
+	// was accepted by the central state (or was noted as redundant
+	// due to a concurrent update from another peer).
+	//
+	// For many implementations of InboundRemoteState,
+	// ApplyUpdateFromPeer will be a no-op.
 	//
 	// It is possible although unlikely that a call to
 	// ApplyUpdateFromCentral could occur before ApplyUpdateFromPeer,
@@ -46,12 +68,13 @@ type InboundRemoteState[D any] interface {
 
 var (
 	// Error to be returned from [InboundRemoteState.CheckIncoming]
-	// when a peer sends a packet that we already had.
+	// when a peer sends a packet that was already observed
+	// due to a call to ApplyUpdateFromCentral.
 	// This is a normal occurrence which short-circuits some work.
 	ErrAlreadyHavePacket = errors.New("already had packet")
 
 	// Error to be returned from [InboundRemoteState.CheckIncoming]
-	// when a peer sends a packet that the same peer already sent.
+	// when a peer sends the same packet more than once.
 	// This is a protocol violation that will result in disconnection.
 	ErrDuplicateSentPacket = errors.New("peer sent same packet twice")
 )
