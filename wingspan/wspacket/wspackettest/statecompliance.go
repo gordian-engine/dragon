@@ -14,23 +14,44 @@ import (
 // The testing.T instance is available if needed,
 // for instance to register a t.Cleanup after context cancellation.
 // The context is guaranteed to be canceled before the test completes.
-type StateFixtureFunc[D any] func(t *testing.T, ctx context.Context, nDeltas int) (
-	wspacket.CentralState[D], StateFixture[D],
+type StateFixtureFunc[
+	PktIn any, PktOut wspacket.OutboundPacket,
+	DeltaIn, DeltaOut any,
+] func(t *testing.T, ctx context.Context, nDeltas int) (
+	wspacket.CentralState[PktIn, PktOut, DeltaIn, DeltaOut],
+	StateFixture[PktIn, DeltaIn, DeltaOut],
 )
 
-type StateFixture[D any] interface {
-	// DeltaCreatorFunc returns a valid delta at the given index.
+type StateFixture[PktIn, DeltaIn, DeltaOut any] interface {
+	// GetDeltaOutAndPacketIn is used for exercising the specific case
+	// of two peers sending the same effective packet.
+	GetDeltaOutAndPacketIn() (DeltaOut, PktIn)
+
+	GetDeltaInAndDeltaOut() (DeltaIn, DeltaOut)
+
+	// GetPacketIn returns a valid PktIn at the given index.
 	// Implementations should panic for n < 0 or n >= nDeltas.
-	GetDelta(n int) D
+	GetPacketIn(n int) PktIn
+
+	// GetDeltaIn returns a valid DeltaIn at the given index.
+	// Implementations should panic for n < 0 or n >= nDeltas.
+	GetDeltaIn(n int) DeltaIn
+
+	// GetDeltaOut returns a valid DeltaOut at the given index.
+	// Implementations should panic for n < 0 or n >= nDeltas.
+	GetDeltaOut(n int) DeltaOut
 
 	// Get a delta that will cause a call to [wspacket.CentralState.UpdateFromPeer]
 	// to fail with an application-specific error.
-	GetInvalidDelta() D
+	GetInvalidDelta() DeltaIn
 }
 
 // TestStateCompliance runs compliance tests
 // for a [wspacket.CentralState] implementation.
-func TestStateCompliance[D any](t *testing.T, f StateFixtureFunc[D]) {
+func TestStateCompliance[
+	PktIn any, PktOut wspacket.OutboundPacket,
+	DeltaIn, DeltaOut any,
+](t *testing.T, f StateFixtureFunc[PktIn, PktOut, DeltaIn, DeltaOut]) {
 	t.Run("CentralState", func(t *testing.T) {
 		t.Run("UpdateFromPeer returns ErrRedundantUpdate on duplicate call", func(t *testing.T) {
 			t.Parallel()
@@ -40,7 +61,7 @@ func TestStateCompliance[D any](t *testing.T, f StateFixtureFunc[D]) {
 
 			s, fx := f(t, ctx, 1)
 
-			d := fx.GetDelta(0)
+			d := fx.GetDeltaIn(0)
 
 			require.NoError(t, s.UpdateFromPeer(ctx, d))
 			require.ErrorIs(t, s.UpdateFromPeer(ctx, d), wspacket.ErrRedundantUpdate)
@@ -54,7 +75,7 @@ func TestStateCompliance[D any](t *testing.T, f StateFixtureFunc[D]) {
 
 			s, fx := f(t, ctx, 1)
 
-			d := fx.GetDelta(0)
+			d := fx.GetDeltaIn(0)
 
 			_, mo, err := s.NewOutboundRemoteState(ctx)
 			require.NoError(t, err)
@@ -81,10 +102,10 @@ func TestStateCompliance[D any](t *testing.T, f StateFixtureFunc[D]) {
 			i, _, err := s.NewInboundRemoteState(ctx)
 			require.NoError(t, err)
 
-			d := fx.GetDelta(0)
-			require.NoError(t, i.CheckIncoming(d))
+			p := fx.GetPacketIn(0)
+			require.NoError(t, i.CheckIncoming(p))
 
-			require.ErrorIs(t, i.CheckIncoming(d), wspacket.ErrDuplicateSentPacket)
+			require.ErrorIs(t, i.CheckIncoming(p), wspacket.ErrDuplicateSentPacket)
 		})
 
 		t.Run("CheckIncoming returns ErrAlreadyHavePacket", func(t *testing.T) {
@@ -100,11 +121,11 @@ func TestStateCompliance[D any](t *testing.T, f StateFixtureFunc[D]) {
 
 			// Another peer sends the delta,
 			// so we receive it from the central state first.
-			d := fx.GetDelta(0)
+			d, p := fx.GetDeltaOutAndPacketIn()
 			require.NoError(t, i.ApplyUpdateFromCentral(d))
 
 			// Then later, this connected peer sends the same delta.
-			require.ErrorIs(t, i.CheckIncoming(d), wspacket.ErrAlreadyHavePacket)
+			require.ErrorIs(t, i.CheckIncoming(p), wspacket.ErrAlreadyHavePacket)
 		})
 	})
 
@@ -123,7 +144,7 @@ func TestStateCompliance[D any](t *testing.T, f StateFixtureFunc[D]) {
 			// No unsent packets in initial state.
 			require.Empty(t, slices.Collect(o.UnsentPackets()))
 
-			d := fx.GetDelta(0)
+			d := fx.GetDeltaOut(0)
 			require.NoError(t, o.ApplyUpdateFromCentral(d))
 
 			require.Len(t, slices.Collect(o.UnsentPackets()), 1)
@@ -151,16 +172,16 @@ func TestStateCompliance[D any](t *testing.T, f StateFixtureFunc[D]) {
 			o, _, err := s.NewOutboundRemoteState(ctx)
 			require.NoError(t, err)
 
-			d := fx.GetDelta(0)
+			dIn, dOut := fx.GetDeltaInAndDeltaOut()
 
 			// Adding an unverified delta
 			// does not cause the delta to be treated as an unsent packet.
-			require.NoError(t, o.AddUnverifiedFromPeer(d))
+			require.NoError(t, o.AddUnverifiedFromPeer(dIn))
 			require.Empty(t, slices.Collect(o.UnsentPackets()))
 
 			// Now adding the same delta as an update from central
 			// also does not treat the delta as an unsent packet.
-			require.NoError(t, o.ApplyUpdateFromCentral(d))
+			require.NoError(t, o.ApplyUpdateFromCentral(dOut))
 			require.Empty(t, slices.Collect(o.UnsentPackets()))
 		})
 	})

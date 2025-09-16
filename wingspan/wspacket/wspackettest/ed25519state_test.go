@@ -17,7 +17,14 @@ func TestEd25519StateCompliance(t *testing.T) {
 }
 
 func newEd25519Fixture(t *testing.T, ctx context.Context, nDeltas int) (
-	wspacket.CentralState[wspackettest.Ed25519Delta], wspackettest.StateFixture[wspackettest.Ed25519Delta],
+	wspacket.CentralState[
+		wspackettest.Ed25519PacketIn, wspackettest.Ed25519PacketOut,
+		wspackettest.Ed25519Delta, wspackettest.Ed25519Delta,
+	],
+	wspackettest.StateFixture[
+		wspackettest.Ed25519PacketIn,
+		wspackettest.Ed25519Delta, wspackettest.Ed25519Delta,
+	],
 ) {
 	t.Helper()
 
@@ -64,6 +71,33 @@ func (c *ed25519DeltaCreator) GetDelta(n int) wspackettest.Ed25519Delta {
 		PubKey: c.PubKeys[n],
 		Sig:    c.Sigs[n],
 	}
+}
+
+func (c *ed25519DeltaCreator) GetDeltaIn(n int) wspackettest.Ed25519Delta {
+	return c.GetDelta(n)
+}
+
+func (c *ed25519DeltaCreator) GetDeltaOut(n int) wspackettest.Ed25519Delta {
+	return c.GetDelta(n)
+}
+
+func (c *ed25519DeltaCreator) GetDeltaOutAndPacketIn() (wspackettest.Ed25519Delta, wspackettest.Ed25519PacketIn) {
+	d := c.GetDelta(0)
+
+	return d, wspackettest.NewEd25519PacketInForTest(d.PubKey, d.Sig)
+}
+
+func (c *ed25519DeltaCreator) GetPacketIn(n int) wspackettest.Ed25519PacketIn {
+	d := c.GetDelta(n)
+
+	return wspackettest.NewEd25519PacketInForTest(d.PubKey, d.Sig)
+}
+
+func (c *ed25519DeltaCreator) GetDeltaInAndDeltaOut() (
+	wspackettest.Ed25519Delta, wspackettest.Ed25519Delta,
+) {
+	d := c.GetDelta(0)
+	return d, d
 }
 
 func (c *ed25519DeltaCreator) GetInvalidDelta() wspackettest.Ed25519Delta {

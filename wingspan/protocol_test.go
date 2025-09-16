@@ -11,6 +11,7 @@ import (
 	"github.com/gordian-engine/dragon/internal/dtest"
 	"github.com/gordian-engine/dragon/wingspan"
 	"github.com/gordian-engine/dragon/wingspan/wingspantest"
+	"github.com/gordian-engine/dragon/wingspan/wspacket"
 	"github.com/gordian-engine/dragon/wingspan/wspacket/wspackettest"
 	"github.com/quic-go/quic-go"
 	"github.com/stretchr/testify/require"
@@ -23,7 +24,10 @@ func TestProtocol_outboundConnection(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		fx := wingspantest.NewProtocolFixture[wspackettest.Ed25519Delta](
+		fx := wingspantest.NewProtocolFixture[
+			wspackettest.Ed25519PacketIn, wspackettest.Ed25519PacketOut,
+			wspackettest.Ed25519Delta, wspackettest.Ed25519Delta,
+		](
 			t, ctx,
 			wingspantest.ProtocolFixtureConfig{
 				Nodes: 2,
@@ -56,7 +60,6 @@ func TestProtocol_outboundConnection(t *testing.T) {
 		sess0, err := fx.Protocols[0].NewSession(
 			ctx, []byte("sid"), []byte("application hello"),
 			s, m,
-			wspackettest.ParseEd25519Packet,
 		)
 		require.NoError(t, err)
 
@@ -79,7 +82,10 @@ func TestProtocol_outboundConnection(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		fx := wingspantest.NewProtocolFixture[wspackettest.Ed25519Delta](
+		fx := wingspantest.NewProtocolFixture[
+			wspackettest.Ed25519PacketIn, wspackettest.Ed25519PacketOut,
+			wspackettest.Ed25519Delta, wspackettest.Ed25519Delta,
+		](
 			t, ctx,
 			wingspantest.ProtocolFixtureConfig{
 				Nodes: 2,
@@ -101,7 +107,6 @@ func TestProtocol_outboundConnection(t *testing.T) {
 		sess0, err := fx.Protocols[0].NewSession(
 			ctx, []byte("sid"), []byte("application hello"),
 			s, m,
-			wspackettest.ParseEd25519Packet,
 		)
 		require.NoError(t, err)
 
@@ -130,7 +135,10 @@ func TestProtocol_packetContent(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	fx := wingspantest.NewProtocolFixture[wspackettest.Ed25519Delta](
+	fx := wingspantest.NewProtocolFixture[
+		wspackettest.Ed25519PacketIn, wspackettest.Ed25519PacketOut,
+		wspackettest.Ed25519Delta, wspackettest.Ed25519Delta,
+	](
 		t, ctx,
 		wingspantest.ProtocolFixtureConfig{
 			Nodes: 2,
@@ -170,7 +178,6 @@ func TestProtocol_packetContent(t *testing.T) {
 	sess0, err := fx.Protocols[0].NewSession(
 		ctx, sessID, appHeader,
 		state0, m0,
-		wspackettest.ParseEd25519Packet,
 	)
 	require.NoError(t, err)
 	defer sess0.Cancel()
@@ -178,7 +185,6 @@ func TestProtocol_packetContent(t *testing.T) {
 	sess1, err := fx.Protocols[1].NewSession(
 		ctx, sessID, appHeader,
 		state1, m1,
-		wspackettest.ParseEd25519Packet,
 	)
 	require.NoError(t, err)
 	defer sess0.Cancel()
@@ -265,11 +271,14 @@ func TestProtocol_packetContent(t *testing.T) {
 	m0 = m0.Next
 }
 
-func testStreamHeaders[D any](
+func testStreamHeaders[
+	PktIn any, PktOut wspacket.OutboundPacket,
+	DeltaIn, DeltaOut any,
+](
 	t *testing.T,
 	ctx context.Context,
 	conn quic.Connection,
-	p *wingspan.Protocol[D],
+	p *wingspan.Protocol[PktIn, PktOut, DeltaIn, DeltaOut],
 	expSessionID, expAppHeader []byte,
 ) quic.ReceiveStream {
 	t.Helper()

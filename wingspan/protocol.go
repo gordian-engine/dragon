@@ -21,14 +21,17 @@ import (
 // The key method on Protocol is [*Protocol.NewSession].
 // A "session" has a session ID and is the agreed "topic"
 // for gossip among the network.
-type Protocol[D any] struct {
+type Protocol[
+	PktIn any, PktOut wspacket.OutboundPacket,
+	DeltaIn, DeltaOut any,
+] struct {
 	log *slog.Logger
 
 	// Pubsub stream for connection changes,
 	// so that broadcast operations can observe it directly.
 	connChanges *dpubsub.Stream[dconn.Change]
 
-	startSessionRequests chan sessionRequest[D]
+	startSessionRequests chan sessionRequest[PktIn, PktOut, DeltaIn, DeltaOut]
 
 	// Application-decided protocol ID.
 	// Necessary for outgoing streams.
@@ -51,12 +54,13 @@ type Protocol[D any] struct {
 // The main loop starts the goroutine for the session
 // and sends a Session on the response channel,
 // so that [*Protocol.NewSession] can return a cancelable session.
-type sessionRequest[D any] struct {
-	Session *wsi.Session[D]
+type sessionRequest[
+	PktIn any, PktOut wspacket.OutboundPacket,
+	DeltaIn, DeltaOut any,
+] struct {
+	Session *wsi.Session[PktIn, PktOut, DeltaIn, DeltaOut]
 
-	ParsePacketFn func(io.Reader) (D, error)
-
-	Resp chan Session[D]
+	Resp chan Session[PktIn, PktOut, DeltaIn, DeltaOut]
 }
 
 // ProtocolConfig is the configuration passed to [NewProtocol].
@@ -78,11 +82,14 @@ type ProtocolConfig struct {
 	SessionIDLength uint8
 }
 
-func NewProtocol[D any](
+func NewProtocol[
+	PktIn any, PktOut wspacket.OutboundPacket,
+	DeltaIn, DeltaOut any,
+](
 	ctx context.Context,
 	log *slog.Logger,
 	cfg ProtocolConfig,
-) *Protocol[D] {
+) *Protocol[PktIn, PktOut, DeltaIn, DeltaOut] {
 	if cfg.SessionIDLength == 0 {
 		// It's plausible that there would be a use case
 		// for saving the space required for session IDs,
@@ -92,12 +99,12 @@ func NewProtocol[D any](
 		)
 	}
 
-	p := &Protocol[D]{
+	p := &Protocol[PktIn, PktOut, DeltaIn, DeltaOut]{
 		log: log,
 
 		connChanges: cfg.ConnectionChanges,
 
-		startSessionRequests: make(chan sessionRequest[D]),
+		startSessionRequests: make(chan sessionRequest[PktIn, PktOut, DeltaIn, DeltaOut]),
 
 		protocolID: cfg.ProtocolID,
 
@@ -116,7 +123,9 @@ func NewProtocol[D any](
 	return p
 }
 
-func (p *Protocol[D]) mainLoop(ctx context.Context, conns map[dcert.LeafCertHandle]dconn.Conn) {
+func (p *Protocol[PktIn, PktOut, DeltaIn, DeltaOut]) mainLoop(
+	ctx context.Context, conns map[dcert.LeafCertHandle]dconn.Conn,
+) {
 	defer close(p.mainLoopDone)
 
 	for {
@@ -143,14 +152,14 @@ func (p *Protocol[D]) mainLoop(ctx context.Context, conns map[dcert.LeafCertHand
 	}
 }
 
-func (p *Protocol[D]) Wait() {
+func (p *Protocol[PktIn, PktOut, DeltaIn, DeltaOut]) Wait() {
 	<-p.mainLoopDone
 	p.wg.Wait()
 }
 
-func (p *Protocol[D]) handleStartSessionRequest(
+func (p *Protocol[PktIn, PktOut, DeltaIn, DeltaOut]) handleStartSessionRequest(
 	ctx context.Context,
-	req sessionRequest[D],
+	req sessionRequest[PktIn, PktOut, DeltaIn, DeltaOut],
 	conns map[dcert.LeafCertHandle]dconn.Conn,
 ) {
 	ctx, cancel := context.WithCancelCause(ctx)
@@ -158,13 +167,12 @@ func (p *Protocol[D]) handleStartSessionRequest(
 	p.wg.Add(1)
 	go req.Session.Run(
 		ctx, &p.wg,
-		req.ParsePacketFn,
 		maps.Clone(conns),
 		p.connChanges,
 	)
 
 	// Response channel is buffered.
-	req.Resp <- Session[D]{
+	req.Resp <- Session[PktIn, PktOut, DeltaIn, DeltaOut]{
 		s:      req.Session,
 		cancel: cancel,
 	}
@@ -176,45 +184,43 @@ func (p *Protocol[D]) handleStartSessionRequest(
 // The parsePacketFn callback is used to read a packet
 // from the peer's network stream and convert it into a D value.
 // The function will be called concurrently.
-func (p *Protocol[D]) NewSession(
+func (p *Protocol[PktIn, PktOut, DeltaIn, DeltaOut]) NewSession(
 	ctx context.Context,
 	id []byte,
 	appHeader []byte,
-	state wspacket.CentralState[D],
-	deltas *dpubsub.Stream[D],
-	parsePacketFn func(io.Reader) (D, error),
-) (Session[D], error) {
+	state wspacket.CentralState[PktIn, PktOut, DeltaIn, DeltaOut],
+	deltas *dpubsub.Stream[DeltaOut],
+) (Session[PktIn, PktOut, DeltaIn, DeltaOut], error) {
 	if len(id) != int(p.sessionIDLength) {
-		return Session[D]{}, fmt.Errorf(
+		return Session[PktIn, PktOut, DeltaIn, DeltaOut]{}, fmt.Errorf(
 			"BUG: attempted to create session with invalid ID length %d (must be %d)",
 			len(id), p.sessionIDLength,
 		)
 	}
 
-	s := wsi.NewSession(
+	s := wsi.NewSession[PktIn, PktOut, DeltaIn, DeltaOut](
 		p.log.With("sid", fmt.Sprintf("%x", id)), // TODO: hex log helper.
 		p.protocolID, id, appHeader,
 		state, deltas,
 	)
 
-	resp := make(chan Session[D], 1)
+	resp := make(chan Session[PktIn, PktOut, DeltaIn, DeltaOut], 1)
 	select {
 	case <-ctx.Done():
-		return Session[D]{}, fmt.Errorf(
+		return Session[PktIn, PktOut, DeltaIn, DeltaOut]{}, fmt.Errorf(
 			"context canceled while making request to start session: %w",
 			context.Cause(ctx),
 		)
-	case p.startSessionRequests <- sessionRequest[D]{
-		Session:       s,
-		ParsePacketFn: parsePacketFn,
-		Resp:          resp,
+	case p.startSessionRequests <- sessionRequest[PktIn, PktOut, DeltaIn, DeltaOut]{
+		Session: s,
+		Resp:    resp,
 	}:
 		// Okay.
 	}
 
 	select {
 	case <-ctx.Done():
-		return Session[D]{}, fmt.Errorf(
+		return Session[PktIn, PktOut, DeltaIn, DeltaOut]{}, fmt.Errorf(
 			"context canceled while waiting for response to start session: %w",
 			context.Cause(ctx),
 		)
@@ -233,7 +239,7 @@ func (p *Protocol[D]) NewSession(
 //
 // It is assumed that the caller has already consumed
 // the protocol ID byte matching [ProtocolConfig.ProtocolID].
-func (p *Protocol[D]) ExtractStreamSessionID(
+func (p *Protocol[PktIn, PktOut, DeltaIn, DeltaOut]) ExtractStreamSessionID(
 	r io.Reader, dst []byte,
 ) ([]byte, error) {
 	if cap(dst) >= int(p.sessionIDLength) {

@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"sync"
 	"time"
@@ -18,20 +17,21 @@ import (
 )
 
 // Session is the internal representation of a session.
-//
-// Type parameter D is the delta type for state management.
-type Session[D any] struct {
+type Session[
+	PktIn any, PktOut wspacket.OutboundPacket,
+	DeltaIn, DeltaOut any,
+] struct {
 	log *slog.Logger
 
 	// We store the full header only once on the session
 	// and then reuse it for every outbound worker.
 	header []byte
 
-	state  wspacket.CentralState[D]
-	deltas *dpubsub.Stream[D]
+	state  wspacket.CentralState[PktIn, PktOut, DeltaIn, DeltaOut]
+	deltas *dpubsub.Stream[DeltaOut]
 
 	acceptStreamRequests chan acceptStreamRequest
-	inboundDeltaArrivals chan inboundDeltaArrival[D]
+	inboundDeltaArrivals chan inboundDeltaArrival[DeltaIn]
 }
 
 // acceptStreamRequest contains the details necessary
@@ -43,9 +43,9 @@ type acceptStreamRequest struct {
 }
 
 // inboundDeltaArrival is the value sent by an [InboundWorker]
-// to the [Session], when the worker's peer sends a packet.
-type inboundDeltaArrival[D any] struct {
-	Delta D
+// to the [Session], after parsing and processing a packet from the peer.
+type inboundDeltaArrival[DeltaIn any] struct {
+	Delta DeltaIn
 	Resp  chan<- inboundDeltaResult
 }
 
@@ -71,13 +71,16 @@ const (
 	inboundDeltaReject
 )
 
-func NewSession[D any](
+func NewSession[
+	PktIn any, PktOut wspacket.OutboundPacket,
+	DeltaIn, DeltaOut any,
+](
 	log *slog.Logger,
 	protocolID byte,
 	sessionID, appHeader []byte,
-	state wspacket.CentralState[D],
-	deltas *dpubsub.Stream[D],
-) *Session[D] {
+	state wspacket.CentralState[PktIn, PktOut, DeltaIn, DeltaOut],
+	deltas *dpubsub.Stream[DeltaOut],
+) *Session[PktIn, PktOut, DeltaIn, DeltaOut] {
 	if len(appHeader) >= (1 << 16) {
 		panic(fmt.Errorf(
 			"BUG: app header size must fit in 16 bits (got length %d)",
@@ -99,7 +102,7 @@ func NewSession[D any](
 
 	_ = copy(h[1+len(sessionID)+2:], appHeader)
 
-	return &Session[D]{
+	return &Session[PktIn, PktOut, DeltaIn, DeltaOut]{
 		log: log,
 
 		header: h,
@@ -109,14 +112,13 @@ func NewSession[D any](
 
 		// Unbuffered since caller blocks anyway.
 		acceptStreamRequests: make(chan acceptStreamRequest),
-		inboundDeltaArrivals: make(chan inboundDeltaArrival[D]),
+		inboundDeltaArrivals: make(chan inboundDeltaArrival[DeltaIn]),
 	}
 }
 
-func (s *Session[D]) Run(
+func (s *Session[PktIn, PktOut, DeltaIn, DeltaOut]) Run(
 	ctx context.Context,
 	parentWG *sync.WaitGroup,
-	parsePacketFn func(io.Reader) (D, error),
 	conns map[dcert.LeafCertHandle]dconn.Conn,
 	connChanges *dpubsub.Stream[dconn.Change],
 ) {
@@ -125,7 +127,7 @@ func (s *Session[D]) Run(
 	var wg sync.WaitGroup
 	defer wg.Wait()
 
-	rs := s.initializeConns(ctx, &wg, conns, parsePacketFn)
+	rs := s.initializeConns(ctx, &wg, conns)
 
 	for {
 		select {
@@ -138,7 +140,7 @@ func (s *Session[D]) Run(
 			lh := cc.Conn.Chain.LeafHandle
 			if cc.Adding {
 				conns[lh] = cc.Conn
-				rs[lh] = s.addRemoteState(ctx, &wg, cc.Conn, parsePacketFn)
+				rs[lh] = s.addRemoteState(ctx, &wg, cc.Conn)
 			} else {
 				rs[lh].Cancel(nil) // TODO: use sentinel error here.
 
@@ -164,7 +166,7 @@ func (s *Session[D]) Run(
 				))
 			}
 
-			r.InboundStreamCh <- InboundStream[D]{
+			r.InboundStreamCh <- InboundStream[PktIn, DeltaIn, DeltaOut]{
 				Stream: req.Stream,
 				State:  is,
 				Deltas: m,
@@ -200,29 +202,31 @@ func (s *Session[D]) Run(
 
 // remoteState is the centralized value used to track
 // [Session] state for a single network peer.
-type remoteState[D any] struct {
+type remoteState[
+	PktIn any, PktOut wspacket.OutboundPacket,
+	DeltaIn, DeltaOut any,
+] struct {
 	Conn dconn.Conn
 
-	OW *OutboundWorker[D]
-	IW *InboundWorker[D]
+	OW *OutboundWorker[PktIn, PktOut, DeltaIn, DeltaOut]
+	IW *InboundWorker[PktIn, DeltaIn, DeltaOut]
 
-	InboundStreamCh chan<- InboundStream[D]
+	InboundStreamCh chan<- InboundStream[PktIn, DeltaIn, DeltaOut]
 
 	Cancel context.CancelCauseFunc
 }
 
 // initializeConns sets up the workers for any pre-existing connections.
 // Further new connections are handled in the session's main loop.
-func (s *Session[D]) initializeConns(
+func (s *Session[PktIn, PktOut, DeltaIn, DeltaOut]) initializeConns(
 	ctx context.Context,
 	wg *sync.WaitGroup,
 	conns map[dcert.LeafCertHandle]dconn.Conn,
-	parsePacketFn func(io.Reader) (D, error),
-) map[dcert.LeafCertHandle]remoteState[D] {
-	rs := make(map[dcert.LeafCertHandle]remoteState[D], len(conns))
+) map[dcert.LeafCertHandle]remoteState[PktIn, PktOut, DeltaIn, DeltaOut] {
+	rs := make(map[dcert.LeafCertHandle]remoteState[PktIn, PktOut, DeltaIn, DeltaOut], len(conns))
 
 	for h, conn := range conns {
-		rs[h] = s.addRemoteState(ctx, wg, conn, parsePacketFn)
+		rs[h] = s.addRemoteState(ctx, wg, conn)
 	}
 
 	return rs
@@ -230,12 +234,11 @@ func (s *Session[D]) initializeConns(
 
 // addRemoteState starts goroutines for the inbound and outbound workers
 // to be associated with the given connection.
-func (s *Session[D]) addRemoteState(
+func (s *Session[PktIn, PktOut, DeltaIn, DeltaOut]) addRemoteState(
 	ctx context.Context,
 	wg *sync.WaitGroup,
 	conn dconn.Conn,
-	parsePacketFn func(io.Reader) (D, error),
-) remoteState[D] {
+) remoteState[PktIn, PktOut, DeltaIn, DeltaOut] {
 	rs, m, err := s.state.NewOutboundRemoteState(ctx)
 	if err != nil {
 		// TODO: probably should send back an error to the caller.
@@ -244,18 +247,18 @@ func (s *Session[D]) addRemoteState(
 
 	log := s.log.With("remote", conn.QUIC.RemoteAddr().String())
 
-	ow := NewOutboundWorker(
+	ow := NewOutboundWorker[PktIn, PktOut, DeltaIn, DeltaOut](
 		log.With("worker", "outbound"),
 		s.header,
 		rs,
 		m,
 	)
-	iw := NewInboundWorker(
+	iw := NewInboundWorker[PktIn, DeltaIn, DeltaOut](
 		log.With("worker", "inbound"),
 		s.inboundDeltaArrivals,
 	)
 
-	peerReceivedCh := make(chan D, 8) // Arbitrary size.
+	peerReceivedCh := make(chan DeltaIn, 8) // Arbitrary size.
 
 	ctx, cancel := context.WithCancelCause(ctx)
 
@@ -263,10 +266,10 @@ func (s *Session[D]) addRemoteState(
 	const headerTimeout = 5 * time.Millisecond
 	go ow.Run(ctx, wg, conn.QUIC, headerTimeout, peerReceivedCh)
 
-	inboundStreamCh := make(chan InboundStream[D], 1)
-	go iw.Run(ctx, wg, parsePacketFn, inboundStreamCh, peerReceivedCh)
+	inboundStreamCh := make(chan InboundStream[PktIn, DeltaIn, DeltaOut], 1)
+	go iw.Run(ctx, wg, inboundStreamCh, peerReceivedCh)
 
-	return remoteState[D]{
+	return remoteState[PktIn, PktOut, DeltaIn, DeltaOut]{
 		Conn: conn,
 
 		OW: ow,
@@ -278,7 +281,7 @@ func (s *Session[D]) addRemoteState(
 	}
 }
 
-func (s *Session[D]) AcceptStream(
+func (s *Session[PktIn, PktOut, DeltaIn, DeltaOut]) AcceptStream(
 	ctx context.Context,
 	conn dconn.Conn,
 	rs quic.ReceiveStream,

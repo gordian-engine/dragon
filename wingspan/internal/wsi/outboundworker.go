@@ -14,23 +14,29 @@ import (
 
 // OutboundWorker manages the outbound stream
 // to a particular peer, for a particular session.
-type OutboundWorker[D any] struct {
+type OutboundWorker[
+	PktIn any, PktOut wspacket.OutboundPacket,
+	DeltaIn, DeltaOut any,
+] struct {
 	log *slog.Logger
 
 	header []byte
 
-	s      wspacket.OutboundRemoteState[D]
-	deltas *dpubsub.Stream[D]
+	s      wspacket.OutboundRemoteState[PktIn, PktOut, DeltaIn, DeltaOut]
+	deltas *dpubsub.Stream[DeltaOut]
 }
 
 // NewOutboundWorker returns a new OutboundWorker.
-func NewOutboundWorker[D any](
+func NewOutboundWorker[
+	PktIn any, PktOut wspacket.OutboundPacket,
+	DeltaIn, DeltaOut any,
+](
 	log *slog.Logger,
 	header []byte,
-	state wspacket.OutboundRemoteState[D],
-	deltas *dpubsub.Stream[D],
-) *OutboundWorker[D] {
-	return &OutboundWorker[D]{
+	state wspacket.OutboundRemoteState[PktIn, PktOut, DeltaIn, DeltaOut],
+	deltas *dpubsub.Stream[DeltaOut],
+) *OutboundWorker[PktIn, PktOut, DeltaIn, DeltaOut] {
+	return &OutboundWorker[PktIn, PktOut, DeltaIn, DeltaOut]{
 		log: log,
 
 		header: header,
@@ -42,12 +48,12 @@ func NewOutboundWorker[D any](
 
 // Run executes the main loop of outbound work.
 // It is intended to be run in its own goroutine.
-func (w *OutboundWorker[D]) Run(
+func (w *OutboundWorker[PktIn, PktOut, DeltaIn, DeltaOut]) Run(
 	ctx context.Context,
 	parentWG *sync.WaitGroup,
 	conn quic.Connection,
 	writeHeaderTimeout time.Duration,
-	peerReceivedCh <-chan D,
+	peerReceivedCh <-chan DeltaIn,
 ) {
 	defer parentWG.Done()
 
@@ -95,7 +101,7 @@ func (w *OutboundWorker[D]) Run(
 	}
 }
 
-func (w *OutboundWorker[D]) initializeStream(
+func (w *OutboundWorker[PktIn, PktOut, DeltaIn, DeltaOut]) initializeStream(
 	ctx context.Context,
 	conn quic.Connection,
 	writeHeaderTimeout time.Duration,
@@ -122,10 +128,10 @@ func (w *OutboundWorker[D]) initializeStream(
 	return s, nil
 }
 
-func (w *OutboundWorker[D]) sendPackets(
+func (w *OutboundWorker[PktIn, PktOut, DeltaIn, DeltaOut]) sendPackets(
 	ctx context.Context,
 	s quic.SendStream,
-	peerReceivedCh <-chan D,
+	peerReceivedCh <-chan DeltaIn,
 ) error {
 	// Make sure local packets are up to date.
 UPDATE_PACKET_SET:

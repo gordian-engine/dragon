@@ -1,9 +1,9 @@
 package wspacket
 
-// Packet is an opaque view of a single outgoing packet.
+// OutboundPacket is an opaque view of a single outgoing packet.
 //
-// Packet values are accessed through [OutboundRemoteState.UnsentPackets].
-type Packet interface {
+// OutboundPacket values are accessed through [OutboundRemoteState.UnsentPackets].
+type OutboundPacket interface {
 	// Bytes is the raw byte slice that needs to be sent
 	// to the peer over a QUIC stream.
 	//

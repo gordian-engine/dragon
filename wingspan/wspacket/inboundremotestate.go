@@ -1,6 +1,9 @@
 package wspacket
 
-import "errors"
+import (
+	"errors"
+	"io"
+)
 
 // InboundRemoteState is the state associated with an inbound stream.
 //
@@ -24,16 +27,16 @@ import "errors"
 // If another peer is concurrently sending the same packet,
 // it is possible for ApplyUpdateFromCentral
 // to be called between CheckIncoming and ApplyUpdateFromPeer.
-type InboundRemoteState[D any] interface {
-	// Apply the update that was dispatched from the [CentralState].
+type InboundRemoteState[PktIn, DeltaIn, DeltaOut any] interface {
+	// Apply the outbound delta that was dispatched from the [CentralState].
 	// Wingspan internals handle routing this request.
 	//
 	// The purpose of the inbound state being aware of central state
 	// is to affect the return value of CheckIncoming,
 	// in order to avoid sending redundant values back to the central state.
-	ApplyUpdateFromCentral(D) error
+	ApplyUpdateFromCentral(DeltaOut) error
 
-	// ApplyUpdateFromPeer indicates that the given delta
+	// ApplyUpdateFromPeer indicates that the given inbound delta
 	// was accepted by the central state (or was noted as redundant
 	// due to a concurrent update from another peer).
 	//
@@ -44,14 +47,24 @@ type InboundRemoteState[D any] interface {
 	// ApplyUpdateFromCentral could occur before ApplyUpdateFromPeer,
 	// so the implementation must handle that case gracefully,
 	// returning nil.
-	ApplyUpdateFromPeer(D) error
+	ApplyUpdateFromPeer(DeltaIn) error
+
+	// Parse an incoming packet.
+	// This should simply consume bytes from the reader
+	// and produce a packet.
+	ParsePacket(io.Reader) (PktIn, error)
+
+	// Convert the lightweight packet to a delta value for the [CentralState].
+	// Wingspan internals call this if the inbound state passes CheckIncoming.
+	// This allows expensive work to be skipped for redundant packets.
+	PacketToDelta(PktIn) (DeltaIn, error)
 
 	// Determine if this is a packet we've seen before,
 	// or if it is a packet this peer has already sent
 	// (which is a protocol violation).
 	//
 	// Immediately after Wingspan internals parse a packet from a peer,
-	// the parsed delta is passed to CheckIncoming.
+	// the packet is passed to CheckIncoming.
 	// This method must return [ErrAlreadyHavePacket],
 	// [ErrDuplicateSentPacket], or nil.
 	//
@@ -63,7 +76,7 @@ type InboundRemoteState[D any] interface {
 	// The implementation is responsible for ensuring
 	// that multiple calls with the same delta
 	// return ErrDuplicateSentPacket on the second or later calls.
-	CheckIncoming(D) error
+	CheckIncoming(PktIn) error
 }
 
 var (

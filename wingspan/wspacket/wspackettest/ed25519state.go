@@ -18,7 +18,7 @@ var errInvalidSignature = errors.New("invalid signature")
 
 type rawEdKey [ed25519.PublicKeySize]byte
 
-// Ed25519State implements [wspacket.CentralState[string]].
+// Ed25519State implements [wspacket.CentralState].
 // This is a simplified implementation intended only for use in tests.
 // Do not use this in production code.
 type Ed25519State struct {
@@ -35,6 +35,8 @@ type Ed25519State struct {
 
 	done chan struct{}
 }
+
+var _ wspacket.CentralState[Ed25519PacketIn, Ed25519PacketOut, Ed25519Delta, Ed25519Delta] = (*Ed25519State)(nil)
 
 // Ed25519Delta implements the D type parameter
 // expected throughout the wspacket stack.
@@ -199,7 +201,9 @@ func (s *Ed25519State) handleUpdateFromPeer(
 }
 
 func (s *Ed25519State) NewOutboundRemoteState(ctx context.Context) (
-	wspacket.OutboundRemoteState[Ed25519Delta], *dpubsub.Stream[Ed25519Delta], error,
+	wspacket.OutboundRemoteState[Ed25519PacketIn, Ed25519PacketOut, Ed25519Delta, Ed25519Delta],
+	*dpubsub.Stream[Ed25519Delta],
+	error,
 ) {
 	ch := make(chan newOutboundEd25519StateResult, 1)
 
@@ -219,7 +223,9 @@ func (s *Ed25519State) NewOutboundRemoteState(ctx context.Context) (
 }
 
 func (s *Ed25519State) NewInboundRemoteState(ctx context.Context) (
-	wspacket.InboundRemoteState[Ed25519Delta], *dpubsub.Stream[Ed25519Delta], error,
+	wspacket.InboundRemoteState[Ed25519PacketIn, Ed25519Delta, Ed25519Delta],
+	*dpubsub.Stream[Ed25519Delta],
+	error,
 ) {
 	ch := make(chan newInboundEd25519StateResult, 1)
 	select {
@@ -265,9 +271,9 @@ func (s *ed25519OutboundState) AddUnverifiedFromPeer(d Ed25519Delta) error {
 	return nil
 }
 
-func (s *ed25519OutboundState) UnsentPackets() iter.Seq[wspacket.Packet] {
-	p := ed25519Packet{owner: s}
-	return func(yield func(wspacket.Packet) bool) {
+func (s *ed25519OutboundState) UnsentPackets() iter.Seq[Ed25519PacketOut] {
+	p := Ed25519PacketOut{owner: s}
+	return func(yield func(Ed25519PacketOut) bool) {
 		for k, has := range s.peerHas {
 			if has {
 				continue
@@ -287,13 +293,13 @@ func (s *ed25519OutboundState) UnsentPackets() iter.Seq[wspacket.Packet] {
 	}
 }
 
-type ed25519Packet struct {
+type Ed25519PacketOut struct {
 	owner *ed25519OutboundState
 	buf   []byte
 	key   string
 }
 
-func (p *ed25519Packet) setBytes(key string, sig []byte) {
+func (p *Ed25519PacketOut) setBytes(key string, sig []byte) {
 	var b []byte
 	if cap(p.buf) >= len(key)+len(sig) {
 		b = p.buf[:len(key)+len(sig)]
@@ -308,12 +314,21 @@ func (p *ed25519Packet) setBytes(key string, sig []byte) {
 	p.key = key
 }
 
-func (p ed25519Packet) Bytes() []byte {
+func (p Ed25519PacketOut) Bytes() []byte {
 	return p.buf
 }
 
-func (p ed25519Packet) MarkSent() {
+func (p Ed25519PacketOut) MarkSent() {
 	p.owner.peerHas[p.key] = true
+}
+
+type Ed25519PacketIn struct {
+	key []byte
+	sig []byte
+}
+
+func NewEd25519PacketInForTest(key, sig []byte) Ed25519PacketIn {
+	return Ed25519PacketIn{key: key, sig: sig}
 }
 
 type ed25519InboundState struct {
@@ -332,18 +347,49 @@ func (s *ed25519InboundState) ApplyUpdateFromPeer(d Ed25519Delta) error {
 	return nil
 }
 
-func (s *ed25519InboundState) CheckIncoming(d Ed25519Delta) error {
-	if s.checked[string(d.PubKey)] {
+func (s *ed25519InboundState) CheckIncoming(p Ed25519PacketIn) error {
+	if s.checked[string(p.key)] {
 		return wspacket.ErrDuplicateSentPacket
 	}
 
-	if have := s.have[string(d.PubKey)]; have != nil {
+	if have := s.have[string(p.key)]; have != nil {
 		return wspacket.ErrAlreadyHavePacket
 	}
 
-	s.checked[string(d.PubKey)] = true
+	s.checked[string(p.key)] = true
 
 	return nil
+}
+
+func (s *ed25519InboundState) PacketToDelta(p Ed25519PacketIn) (Ed25519Delta, error) {
+	return ParseEd25519Packet(
+		io.MultiReader(
+			bytes.NewReader(p.key),
+			bytes.NewReader(p.sig),
+		),
+	)
+}
+
+func (s *ed25519InboundState) ParsePacket(r io.Reader) (Ed25519PacketIn, error) {
+	pkBuf := make([]byte, ed25519.PublicKeySize)
+
+	if _, err := io.ReadFull(r, pkBuf); err != nil {
+		return Ed25519PacketIn{}, fmt.Errorf(
+			"failed to read public key: %w", err,
+		)
+	}
+
+	sigBuf := make([]byte, ed25519.SignatureSize)
+	if _, err := io.ReadFull(r, sigBuf); err != nil {
+		return Ed25519PacketIn{}, fmt.Errorf(
+			"failed to read signature: %w", err,
+		)
+	}
+
+	return Ed25519PacketIn{
+		key: pkBuf,
+		sig: sigBuf,
+	}, nil
 }
 
 // ParseEd25519Packet is the packet parsing function

@@ -5,6 +5,7 @@ import (
 
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/wingspan/internal/wsi"
+	"github.com/gordian-engine/dragon/wingspan/wspacket"
 	"github.com/quic-go/quic-go"
 )
 
@@ -12,15 +13,19 @@ import (
 // Sessions are created through [*Protocol.NewSession].
 //
 // The type parameter D is the delta type, just as in [Protocol].
-type Session[D any] struct {
-	s      *wsi.Session[D]
+// The type parameter P is the packet type corresponding to a [PacketParser].
+type Session[
+	PktIn any, PktOut wspacket.OutboundPacket,
+	DeltaIn, DeltaOut any,
+] struct {
+	s      *wsi.Session[PktIn, PktOut, DeltaIn, DeltaOut]
 	cancel context.CancelCauseFunc
 }
 
 // AcceptStream adds the incoming stream to the session.
 //
 // It is a fatal error to call AcceptStream twice with the same stream.
-func (s Session[D]) AcceptStream(
+func (s Session[PktIn, PktOut, DeltaIn, DeltaOut]) AcceptStream(
 	ctx context.Context,
 	conn dconn.Conn,
 	rs quic.ReceiveStream,
@@ -30,7 +35,7 @@ func (s Session[D]) AcceptStream(
 
 // Cancel immediately stops the session,
 // canceling any active send or receive streams.
-func (s Session[D]) Cancel() {
+func (s Session[PktIn, PktOut, DeltaIn, DeltaOut]) Cancel() {
 	// TODO: use a sentinel error here.
 	s.cancel(nil)
 }

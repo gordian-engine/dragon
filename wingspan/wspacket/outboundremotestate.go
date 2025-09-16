@@ -9,8 +9,11 @@ import "iter"
 //
 // The methods on OutboundRemoteState are all called in Wingspan internals,
 // and implementers can assume no methods are called concurrently.
-type OutboundRemoteState[D any] interface {
-	// Apply the update that was dispatched from the [CentralState].
+type OutboundRemoteState[
+	PktIn any, PktOut OutboundPacket,
+	DeltaIn, DeltaOut any,
+] interface {
+	// Apply the outbound delta that was dispatched from the [CentralState].
 	// Wingspan internals handle routing this request.
 	//
 	// An update from the central state indicates a new packet
@@ -19,14 +22,15 @@ type OutboundRemoteState[D any] interface {
 	// that matches the update.
 	// In that case, the state should treat the delta
 	// as though the peer already has it.
-	ApplyUpdateFromCentral(D) error
+	ApplyUpdateFromCentral(DeltaOut) error
 
-	// AddUnverifiedFromPeer is called after successfully parsing
-	// a delta from a packet, on the corresponding inbound worker,
+	// AddUnverifiedFromPeer is called after
+	// successfully parsing an inbound delta from a packet,
+	// on the corresponding inbound worker,
 	// but before Wingspan internals pass the delta
 	// to the [CentralState] for verification.
 	//
-	// The implementation should treat optimistically accumulate
+	// The implementation should optimistically accumulate
 	// delta values in a buffer, removing entries upon
 	// a corresponding call to ApplyUpdateFromCentral.
 	//
@@ -41,7 +45,7 @@ type OutboundRemoteState[D any] interface {
 	//
 	// Returning an error from this method will cause the session
 	// to close the underlying connection to the peer.
-	AddUnverifiedFromPeer(D) error
+	AddUnverifiedFromPeer(DeltaIn) error
 
 	// An iterator over the packets in the OutboundRemoteState
 	// which have not yet been sent.
@@ -55,5 +59,5 @@ type OutboundRemoteState[D any] interface {
 	// It is possible that there may be many calls
 	// to ApplyUpdateFromCentral or AddUnverifiedFromPeer
 	// before UnsentPackets is called again.
-	UnsentPackets() iter.Seq[Packet]
+	UnsentPackets() iter.Seq[PktOut]
 }

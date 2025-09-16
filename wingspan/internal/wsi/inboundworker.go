@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"sync"
 	"time"
@@ -18,24 +17,24 @@ import (
 // consulting its [wspacket.InboundRemoteState]
 // and sending inbound packets to the [wspacket.CentralState]
 // belonging to the worker's owning [Session].
-type InboundWorker[D any] struct {
+type InboundWorker[PktIn, DeltaIn, DeltaOut any] struct {
 	log *slog.Logger
 
 	// Channel owned by the session.
 	// Parsed packets go to the session to fan out to [OutboundWorker] instances.
-	inboundDeltaArrivals chan<- inboundDeltaArrival[D]
+	inboundDeltaArrivals chan<- inboundDeltaArrival[DeltaIn]
 
 	// Set in the Run method.
 	// Simpler as a field than passing around unexported methods here.
-	deltas *dpubsub.Stream[D]
+	deltas *dpubsub.Stream[DeltaOut]
 }
 
 // NewInboundWorker returns a new InboundWorker.
-func NewInboundWorker[D any](
+func NewInboundWorker[PktIn, DeltaIn, DeltaOut any](
 	log *slog.Logger,
-	inboundDeltaArrivals chan<- inboundDeltaArrival[D],
-) *InboundWorker[D] {
-	return &InboundWorker[D]{
+	inboundDeltaArrivals chan<- inboundDeltaArrival[DeltaIn],
+) *InboundWorker[PktIn, DeltaIn, DeltaOut] {
+	return &InboundWorker[PktIn, DeltaIn, DeltaOut]{
 		log: log,
 
 		inboundDeltaArrivals: inboundDeltaArrivals,
@@ -44,26 +43,25 @@ func NewInboundWorker[D any](
 
 // InboundStream is the set of values necessary
 // to unblock [*InboundWorker.Run].
-type InboundStream[D any] struct {
+type InboundStream[PktIn, DeltaIn, DeltaOut any] struct {
 	Stream quic.ReceiveStream
-	State  wspacket.InboundRemoteState[D]
-	Deltas *dpubsub.Stream[D]
+	State  wspacket.InboundRemoteState[PktIn, DeltaIn, DeltaOut]
+	Deltas *dpubsub.Stream[DeltaOut]
 }
 
 // Run runs the main loop of the InboundWorker.
 // Run is intended to be run in its own goroutine.
-func (w *InboundWorker[D]) Run(
+func (w *InboundWorker[PktIn, DeltaIn, DeltaOut]) Run(
 	ctx context.Context,
 	parentWG *sync.WaitGroup,
-	parsePacketFn func(io.Reader) (D, error),
-	inboundStreamCh <-chan InboundStream[D],
-	peerReceivedCh chan<- D,
+	inboundStreamCh <-chan InboundStream[PktIn, DeltaIn, DeltaOut],
+	peerReceivedCh chan<- DeltaIn,
 ) {
 	defer parentWG.Done()
 
 	// Wait for the stream and initial state.
 	var s quic.ReceiveStream
-	var state wspacket.InboundRemoteState[D]
+	var state wspacket.InboundRemoteState[PktIn, DeltaIn, DeltaOut]
 	select {
 	case <-ctx.Done():
 		return
@@ -75,10 +73,10 @@ func (w *InboundWorker[D]) Run(
 
 	// Now that we are set up,
 	// we start a separate goroutine to handle reading from the stream.
-	localReads := make(chan D, 4) // Arbitrary size guess.
+	incomingPackets := make(chan PktIn, 4) // Arbitrary size guess.
 	readerDone := make(chan struct{})
 	readerCtx, cancel := context.WithCancel(ctx) // Unblock send if current goroutine stops.
-	go w.readStream(readerCtx, s, parsePacketFn, localReads, readerDone)
+	go w.readStream(readerCtx, s, state, incomingPackets, readerDone)
 	defer func() {
 		<-readerDone
 	}()
@@ -98,8 +96,8 @@ func (w *InboundWorker[D]) Run(
 				)
 				return
 			}
-		case d := <-localReads:
-			if err := w.handleLocalRead(ctx, d, state, peerReceivedCh); err != nil {
+		case p := <-incomingPackets:
+			if err := w.convertIncomingPacketToDelta(ctx, p, state, peerReceivedCh); err != nil {
 				w.log.Info(
 					"Failed to handle result of local read",
 					"err", err,
@@ -111,19 +109,19 @@ func (w *InboundWorker[D]) Run(
 }
 
 // readStream parses one packet at a time from s,
-// and then sends the parsed delta value on the localReads channel
-// (which is part of the main loop of InboundWorker).
-func (w *InboundWorker[D]) readStream(
+// and then sends the parsed packet value on the incomingPackets channel
+// (which is read in the main loop of InboundWorker).
+func (w *InboundWorker[PktIn, DeltaIn, DeltaOut]) readStream(
 	ctx context.Context,
-	s quic.ReceiveStream,
-	parsePacketFn func(io.Reader) (D, error),
-	localReads chan<- D,
+	rs quic.ReceiveStream,
+	state wspacket.InboundRemoteState[PktIn, DeltaIn, DeltaOut],
+	incomingPackets chan<- PktIn,
 	done chan<- struct{},
 ) {
 	defer close(done)
 
 	for {
-		if err := s.SetReadDeadline(time.Time{}); err != nil {
+		if err := rs.SetReadDeadline(time.Time{}); err != nil {
 			w.log.Info(
 				"Failed to set read deadline on stream",
 				"err", err,
@@ -138,7 +136,7 @@ func (w *InboundWorker[D]) readStream(
 		// Otherwise the peer could send a partial packet
 		// and we would be stuck here until the stream is otherwise canceled.
 
-		delta, err := parsePacketFn(s)
+		p, err := state.ParsePacket(rs)
 		if err != nil {
 			w.log.Info(
 				"Failed to parse packet",
@@ -150,22 +148,22 @@ func (w *InboundWorker[D]) readStream(
 		select {
 		case <-ctx.Done():
 			return
-		case localReads <- delta:
+		case incomingPackets <- p:
 			// Okay.
 		}
 	}
 }
 
-// handleLocalRead processes a packet that was already parsed
+// convertIncomingPacketToDelta processes a packet that was already parsed
 // from the inbound stream associated with w.
-func (w *InboundWorker[D]) handleLocalRead(
+func (w *InboundWorker[PktIn, DeltaIn, DeltaOut]) convertIncomingPacketToDelta(
 	ctx context.Context,
-	d D,
-	state wspacket.InboundRemoteState[D],
-	peerReceivedCh chan<- D,
+	p PktIn,
+	state wspacket.InboundRemoteState[PktIn, DeltaIn, DeltaOut],
+	peerReceivedCh chan<- DeltaIn,
 ) error {
 	// Consult local state first.
-	err := state.CheckIncoming(d)
+	err := state.CheckIncoming(p)
 	if errors.Is(err, wspacket.ErrAlreadyHavePacket) {
 		// We saw this data from somewhere else,
 		// so nothing to do here.
@@ -180,8 +178,15 @@ func (w *InboundWorker[D]) handleLocalRead(
 		return fmt.Errorf("failed to check incoming packet: %w", err)
 	}
 
-	// Local state was fine.
-	// Before sending this to the central state,
+	// Now that we've done the lightweight check on the packet,
+	// the state value can do any other heavy lifting required
+	// for the central state to fan this value out.
+	d, err := state.PacketToDelta(p)
+	if err != nil {
+		return fmt.Errorf("failed to convert packet to delta: %w", err)
+	}
+
+	// Before sending the delta to the central state,
 	// attempt to inform the outbound worker of this new delta.
 	select {
 	case peerReceivedCh <- d:
@@ -194,7 +199,7 @@ func (w *InboundWorker[D]) handleLocalRead(
 	// and this method is called from the inbound worker's main loop,
 	// so we do have to process some other signals here.
 	respCh := make(chan inboundDeltaResult, 1)
-	req := inboundDeltaArrival[D]{
+	req := inboundDeltaArrival[DeltaIn]{
 		Delta: d,
 
 		Resp: respCh,
