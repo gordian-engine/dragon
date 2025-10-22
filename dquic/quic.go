@@ -38,8 +38,8 @@ func MakeTransport(connContext context.Context, udpConn *net.UDPConn) *quic.Tran
 
 		// I think this is correct: contexts associated with the underlying connection
 		// are derived from the node's lifecycle context.
-		ConnContext: func(context.Context) context.Context {
-			return connContext
+		ConnContext: func(context.Context, *quic.ClientInfo) (context.Context, error) {
+			return connContext, nil
 		},
 
 		// Skip: Tracer: we aren't interested in tracing quite yet.

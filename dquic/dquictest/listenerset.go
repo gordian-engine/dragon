@@ -137,7 +137,7 @@ func (ls *ListenerSet) Dial(t *testing.T, srcIdx, dstIdx int) (srcConn, dstConn 
 	defer cancel()
 	t.Cleanup(cancel)
 
-	connAcceptedCh := make(chan quic.Connection, 1)
+	connAcceptedCh := make(chan *quic.Conn, 1)
 
 	go func() {
 		acceptedConn, err := ls.QLs[dstIdx].Accept(ctx)

@@ -24,15 +24,15 @@ type ReceiveStream interface {
 
 // WrapReceiveStream wraps s into a ReceiveStreamAdapter,
 // satifying the [ReceiveStream] interface.
-func WrapReceiveStream(s quic.ReceiveStream) ReceiveStreamAdapter {
+func WrapReceiveStream(s *quic.ReceiveStream) ReceiveStreamAdapter {
 	return ReceiveStreamAdapter{s: s}
 }
 
-// ReceiveStreamAdapter wraps a [quic.ReceiveStream]
+// ReceiveStreamAdapter wraps a [*quic.ReceiveStream]
 // to satisfy the [ReceiveStream] interface.
 // Use [WrapReceiveStream] to create an instance.
 type ReceiveStreamAdapter struct {
-	s quic.ReceiveStream
+	s *quic.ReceiveStream
 }
 
 func (a ReceiveStreamAdapter) Read(p []byte) (int, error) {
@@ -64,15 +64,15 @@ type SendStream interface {
 
 // WrapSendStream wraps s into a SendStreamAdapter,
 // satifying the [SendStream] interface.
-func WrapSendStream(s quic.SendStream) SendStreamAdapter {
+func WrapSendStream(s *quic.SendStream) SendStreamAdapter {
 	return SendStreamAdapter{s: s}
 }
 
-// SendStreamAdapter wraps a [quic.SendStream]
+// SendStreamAdapter wraps a [*quic.SendStream]
 // to satisfy the [SendStream] interface.
 // Use [WrapSendStream] to create an instance.
 type SendStreamAdapter struct {
-	s quic.SendStream
+	s *quic.SendStream
 }
 
 func (a SendStreamAdapter) Write(p []byte) (int, error) {
@@ -105,10 +105,10 @@ type Stream interface {
 }
 
 type StreamAdapter struct {
-	s quic.Stream
+	s *quic.Stream
 }
 
-func WrapStream(s quic.Stream) StreamAdapter {
+func WrapStream(s *quic.Stream) StreamAdapter {
 	return StreamAdapter{s: s}
 }
 

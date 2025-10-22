@@ -48,12 +48,12 @@ var _ Conn = ConnAdapter{}
 //
 // Create an instance with [WrapConn].
 type ConnAdapter struct {
-	qc quic.Connection
+	qc *quic.Conn
 }
 
 // WrapConn wraps the given connection,
 // returning a value implementing [Conn].
-func WrapConn(qc quic.Connection) ConnAdapter {
+func WrapConn(qc *quic.Conn) ConnAdapter {
 	return ConnAdapter{qc: qc}
 }
 
