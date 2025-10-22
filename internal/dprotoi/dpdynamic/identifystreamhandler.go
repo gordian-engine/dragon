@@ -7,8 +7,8 @@ import (
 	"log/slog"
 
 	"github.com/gordian-engine/dragon/dconn"
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dprotoi"
-	"github.com/quic-go/quic-go"
 )
 
 type identifyStreamHandler struct {
@@ -17,7 +17,7 @@ type identifyStreamHandler struct {
 }
 
 func (h identifyStreamHandler) Handle(
-	ctx context.Context, s quic.Stream, res *Result,
+	ctx context.Context, s dquic.Stream, res *Result,
 ) (handler, error) {
 	if err := s.SetReadDeadline(h.Cfg.Now().Add(h.Cfg.IdentifyStreamTimeout)); err != nil {
 		return nil, fmt.Errorf("failed to set read deadline on dynamic stream: %w", err)

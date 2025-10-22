@@ -4,9 +4,9 @@ import (
 	"context"
 
 	"github.com/gordian-engine/dragon/dconn"
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/wingspan/internal/wsi"
 	"github.com/gordian-engine/dragon/wingspan/wspacket"
-	"github.com/quic-go/quic-go"
 )
 
 // Session is a handle into a session object.
@@ -28,7 +28,7 @@ type Session[
 func (s Session[PktIn, PktOut, DeltaIn, DeltaOut]) AcceptStream(
 	ctx context.Context,
 	conn dconn.Conn,
-	rs quic.ReceiveStream,
+	rs dquic.ReceiveStream,
 ) error {
 	return s.s.AcceptStream(ctx, conn, rs)
 }

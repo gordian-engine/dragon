@@ -16,7 +16,7 @@ import (
 	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/dpubsub"
-	"github.com/quic-go/quic-go"
+	"github.com/gordian-engine/dragon/dquic"
 )
 
 // BroadcastOperation is a specific operation within a [Protocol]
@@ -68,7 +68,7 @@ type BroadcastOperation struct {
 
 type acceptBroadcastRequest struct {
 	Conn   dconn.Conn
-	Stream quic.Stream
+	Stream dquic.Stream
 	Resp   chan struct{}
 }
 
@@ -216,7 +216,7 @@ func (o *BroadcastOperation) originationMainLoop(
 func (o *BroadcastOperation) runOrigination(
 	ctx context.Context,
 	log *slog.Logger,
-	conn quic.Connection,
+	conn dquic.Conn,
 	protoHeader bci.ProtocolHeader,
 ) {
 	bci.RunOrigination(
@@ -265,7 +265,7 @@ func (o *BroadcastOperation) handleOriginationConnChange(
 func (o *BroadcastOperation) runAcceptBroadcast(
 	ctx context.Context,
 	log *slog.Logger,
-	s quic.Stream,
+	s dquic.Stream,
 	is *incomingState,
 ) {
 	bci.RunAcceptBroadcast(
@@ -361,7 +361,7 @@ func (o *BroadcastOperation) handleRelayConnChange(
 
 func (o *BroadcastOperation) runOutgoingRelay(
 	ctx context.Context,
-	conn quic.Connection,
+	conn dquic.Conn,
 	protoHeader bci.ProtocolHeader,
 	is *incomingState,
 ) {
@@ -650,7 +650,7 @@ func (o *BroadcastOperation) initOrigination(
 func (o *BroadcastOperation) AcceptBroadcast(
 	ctx context.Context,
 	conn dconn.Conn,
-	stream quic.Stream,
+	stream dquic.Stream,
 ) error {
 	if o.acceptBroadcastRequests == nil {
 		// Running in origination mode.

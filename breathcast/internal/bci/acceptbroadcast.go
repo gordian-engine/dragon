@@ -11,6 +11,7 @@ import (
 
 	"github.com/bits-and-blooms/bitset"
 	"github.com/gordian-engine/dragon/dpubsub"
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dbitset"
 	"github.com/quic-go/quic-go"
 )
@@ -19,7 +20,7 @@ import (
 type AcceptBroadcastConfig struct {
 	WG *sync.WaitGroup
 
-	Stream        quic.Stream
+	Stream        dquic.Stream
 	PacketDecoder *PacketDecoder
 	PacketHandler PacketHandler
 
@@ -86,7 +87,7 @@ func runPeriodicBitsetUpdates(
 	ctx context.Context,
 	log *slog.Logger,
 	wg *sync.WaitGroup,
-	s quic.SendStream,
+	s dquic.SendStream,
 	haveLeaves *bitset.BitSet,
 	addedLeaves *dpubsub.Stream[uint],
 	newHaveLeaves chan<- *bitset.BitSet,
@@ -201,7 +202,7 @@ func acceptSyncUpdates(
 	ctx context.Context,
 	log *slog.Logger,
 	wg *sync.WaitGroup,
-	s quic.ReceiveStream,
+	s dquic.ReceiveStream,
 	pDec *PacketDecoder,
 	dh PacketHandler,
 	newHaveLeaves <-chan *bitset.BitSet,
@@ -320,8 +321,8 @@ UNFINISHED:
 		); err != nil {
 			var streamErr *quic.StreamError
 			if errors.As(err, &streamErr) {
-				if streamErr.ErrorCode == GotFullDataErrorCode ||
-					streamErr.ErrorCode == InterruptedErrorCode {
+				if dquic.StreamErrorCode(streamErr.ErrorCode) == GotFullDataErrorCode ||
+					dquic.StreamErrorCode(streamErr.ErrorCode) == InterruptedErrorCode {
 					// Silently stop here.
 					return
 				}
@@ -347,7 +348,7 @@ UNFINISHED:
 // then the packet is passed to the packet handler.
 func readSingleSyncPacket(
 	ctx context.Context,
-	s quic.ReceiveStream,
+	s dquic.ReceiveStream,
 	dec *PacketDecoder,
 	havePackets *bitset.BitSet,
 	dh PacketHandler,
@@ -385,7 +386,7 @@ func readSingleSyncPacket(
 func terminateStreamWhenDone(
 	ctx context.Context,
 	wg *sync.WaitGroup,
-	s quic.Stream,
+	s dquic.Stream,
 	dataReady <-chan struct{},
 ) {
 	defer wg.Done()

@@ -2,24 +2,25 @@ package dquicwrap
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 
-	"github.com/quic-go/quic-go"
+	"github.com/gordian-engine/dragon/dquic"
 )
 
-// Conn wraps a real quic.Connection.
+// Conn wraps a [dquic.Conn], for the dpeerset package.
 //
 // Normally one might embed the wrapped interface value,
 // but in this case we want to be extremely precise
 // about the behavior of every method.
 type Conn struct {
-	q quic.Connection
+	dq dquic.Conn
 
 	streams <-chan *Stream
 }
 
-// NewConn returns a Conn wrapping the given plain quic.Connection.
+// NewConn returns a Conn wrapping the given plain dquic.Conn.
 //
 // The incomingStreams channel determines the streams that reach AcceptStream.
 // There should be another goroutine that accepts the raw streams,
@@ -27,23 +28,23 @@ type Conn struct {
 // whether the stream should be routed to the "application layer" (here)
 // or remain in the protocol layer.
 // (In practice, the [*dpeerset.peerInboundProcessor] does this work.)
-func NewConn(q quic.Connection, incomingStreams <-chan *Stream) *Conn {
+func NewConn(q dquic.Conn, incomingStreams <-chan *Stream) *Conn {
 	return &Conn{
-		q:       q,
+		dq:      q,
 		streams: incomingStreams,
 	}
 }
 
 // WrapsConnection reports whether c is wrapping conn.
 // This is only intended for tests.
-func (c *Conn) WrapsConnection(conn quic.Connection) bool {
-	return c.q == conn
+func (c *Conn) WrapsConnection(conn dquic.Conn) bool {
+	return c.dq == conn
 }
 
-var _ quic.Connection = (*Conn)(nil)
+var _ dquic.Conn = (*Conn)(nil)
 
-// AcceptStream implements [quic.Connection].
-func (c *Conn) AcceptStream(ctx context.Context) (quic.Stream, error) {
+// AcceptStream implements [dquic.Conn].
+func (c *Conn) AcceptStream(ctx context.Context) (dquic.Stream, error) {
 	select {
 	case <-ctx.Done():
 		return nil, fmt.Errorf(
@@ -55,17 +56,17 @@ func (c *Conn) AcceptStream(ctx context.Context) (quic.Stream, error) {
 	}
 }
 
-// AcceptUniStream implements [quic.Connection].
-func (c *Conn) AcceptUniStream(ctx context.Context) (quic.ReceiveStream, error) {
+// AcceptUniStream implements [dquic.Conn].
+func (c *Conn) AcceptUniStream(ctx context.Context) (dquic.ReceiveStream, error) {
 	// Direct call here because we don't do anything with uni streams
 	// at the protocol layer, currently.
 	// And we don't need to wrap receive streams, either.
-	return c.q.AcceptUniStream(ctx)
+	return c.dq.AcceptUniStream(ctx)
 }
 
-// OpenStream implements [quic.Connection].
-func (c *Conn) OpenStream() (quic.Stream, error) {
-	s, err := c.q.OpenStream()
+// OpenStreamSync implements [dquic.Conn].
+func (c *Conn) OpenStreamSync(ctx context.Context) (dquic.Stream, error) {
+	s, err := c.dq.OpenStreamSync(ctx)
 	if err != nil {
 		// Don't want to wrap the underlying error in this case.
 		return nil, err
@@ -74,71 +75,41 @@ func (c *Conn) OpenStream() (quic.Stream, error) {
 	return NewOutboundStream(s), nil
 }
 
-// OpenStreamSync implements [quic.Connection].
-func (c *Conn) OpenStreamSync(ctx context.Context) (quic.Stream, error) {
-	s, err := c.q.OpenStreamSync(ctx)
+// OpenUniStreamSync implements [dquic.Conn].
+func (c *Conn) OpenUniStreamSync(ctx context.Context) (dquic.SendStream, error) {
+	s, err := c.dq.OpenUniStreamSync(ctx)
 	if err != nil {
 		// Don't want to wrap the underlying error in this case.
 		return nil, err
 	}
 
-	return NewOutboundStream(s), nil
+	return &sendStream{dq: s}, nil
 }
 
-// OpenUniStream implements [quic.Connection].
-func (c *Conn) OpenUniStream() (quic.SendStream, error) {
-	s, err := c.q.OpenUniStream()
-	if err != nil {
-		// Don't want to wrap the underlying error in this case.
-		return nil, err
-	}
+// LocalAddr implements [dquic.Conn].
+func (c *Conn) LocalAddr() net.Addr { return c.dq.LocalAddr() }
 
-	return &sendStream{q: s}, nil
-}
+// RemoteAddr implements [dquic.Conn].
+func (c *Conn) RemoteAddr() net.Addr { return c.dq.RemoteAddr() }
 
-// OpenUniStreamSync implements [quic.Connection].
-func (c *Conn) OpenUniStreamSync(ctx context.Context) (quic.SendStream, error) {
-	s, err := c.q.OpenUniStreamSync(ctx)
-	if err != nil {
-		// Don't want to wrap the underlying error in this case.
-		return nil, err
-	}
-
-	return &sendStream{q: s}, nil
-}
-
-// LocalAddr implements [quic.Connection].
-func (c *Conn) LocalAddr() net.Addr { return c.q.LocalAddr() }
-
-// RemoteAddr implements [quic.Connection].
-func (c *Conn) RemoteAddr() net.Addr { return c.q.RemoteAddr() }
-
-// CloseWithError implements [quic.Connection].
+// CloseWithError implements [dquic.Conn].
 func (c *Conn) CloseWithError(
-	code quic.ApplicationErrorCode, msg string,
+	code dquic.ApplicationErrorCode, msg string,
 ) error {
-	return c.q.CloseWithError(code, msg)
+	return c.dq.CloseWithError(code, msg)
 }
 
-// Context implements [quic.Connection].
-func (c *Conn) Context() context.Context { return c.q.Context() }
-
-// ConnectionState implements [quic.Connection].
-func (c *Conn) ConnectionState() quic.ConnectionState {
-	return c.q.ConnectionState()
+// TLSConnectionState implements [dquic.Conn].
+func (c *Conn) TLSConnectionState() tls.ConnectionState {
+	return c.dq.TLSConnectionState()
 }
 
-// SendDatagram implements [quic.Connection].
+// SendDatagram implements [dquic.Conn].
 func (c *Conn) SendDatagram(p []byte) error {
-	return c.q.SendDatagram(p)
+	return c.dq.SendDatagram(p)
 }
 
-// ReceiveDatagram implements [quic.Connection].
+// ReceiveDatagram implements [dquic.Conn].
 func (c *Conn) ReceiveDatagram(ctx context.Context) ([]byte, error) {
-	return c.q.ReceiveDatagram(ctx)
-}
-
-// AddPath implements [quic.Connection].
-func (c *Conn) AddPath(t *quic.Transport) (*quic.Path, error) {
-	return c.q.AddPath(t)
+	return c.dq.ReceiveDatagram(ctx)
 }

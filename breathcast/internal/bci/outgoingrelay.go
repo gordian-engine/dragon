@@ -8,8 +8,8 @@ import (
 
 	"github.com/bits-and-blooms/bitset"
 	"github.com/gordian-engine/dragon/dpubsub"
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dbitset"
-	"github.com/quic-go/quic-go"
 )
 
 // OutgoingRelayConfig is the configuration for [RunOutgoingRelay].
@@ -20,7 +20,7 @@ type OutgoingRelayConfig struct {
 	WG *sync.WaitGroup
 
 	// The connection on which we will open the stream.
-	Conn quic.Connection
+	Conn dquic.Conn
 
 	// The protocol header for the corresponding broadcast operation.
 	ProtocolHeader ProtocolHeader
@@ -53,8 +53,8 @@ func RunOutgoingRelay(
 	cfg OutgoingRelayConfig,
 ) {
 	// Buffered so that writes in openOutgoingRelayStream don't block.
-	ssStartCh := make(chan quic.SendStream, 1)
-	ssEndCh := make(chan quic.SendStream, 1)
+	ssStartCh := make(chan dquic.SendStream, 1)
+	ssEndCh := make(chan dquic.SendStream, 1)
 	initialPeerHas := make(chan *bitset.BitSet, 1)
 	bsdCh := make(chan bsdState, 1)
 
@@ -123,7 +123,7 @@ func openOutgoingRelayStream(
 	log *slog.Logger,
 	cfg OutgoingRelayConfig,
 	bsdCh chan<- bsdState,
-	ssCh chan<- quic.SendStream,
+	ssCh chan<- dquic.SendStream,
 	initialPeerHas chan<- *bitset.BitSet,
 	haveRatio byte,
 ) {
@@ -196,7 +196,7 @@ func relayNewDatagrams(
 	wg *sync.WaitGroup,
 	initialPeerHas <-chan *bitset.BitSet,
 	peerBitsetUpdates <-chan *bitset.BitSet,
-	conn quic.Connection,
+	conn dquic.Conn,
 	packets [][]byte,
 	nData uint16,
 	havePackets *bitset.BitSet,
@@ -204,7 +204,7 @@ func relayNewDatagrams(
 	dataReady <-chan struct{},
 	syncOutCh chan<- *bitset.BitSet,
 	syncReturnCh <-chan *bitset.BitSet,
-	ssEndCh <-chan quic.SendStream,
+	ssEndCh <-chan dquic.SendStream,
 	clearDeltaTimeout chan<- struct{},
 ) {
 	defer wg.Done()
@@ -354,7 +354,7 @@ AWAIT_PEER_HAS:
 // at the end of the initial handshake.
 func sendExistingDatagrams(
 	log *slog.Logger,
-	conn quic.Connection,
+	conn dquic.Conn,
 	packets [][]byte,
 	toSend *bitset.BitSet,
 ) {
@@ -391,8 +391,8 @@ func sendMissedPackets(
 	ctx context.Context,
 	log *slog.Logger,
 	wg *sync.WaitGroup,
-	ssInCh <-chan quic.SendStream,
-	ssOutCh chan<- quic.SendStream,
+	ssInCh <-chan dquic.SendStream,
+	ssOutCh chan<- dquic.SendStream,
 	packets [][]byte,
 	syncRequestsCh <-chan *bitset.BitSet,
 	syncReturnsCh chan<- *bitset.BitSet,
@@ -400,7 +400,7 @@ func sendMissedPackets(
 	defer wg.Done()
 	defer close(ssOutCh)
 
-	var s quic.SendStream
+	var s dquic.SendStream
 	select {
 	case <-ctx.Done():
 		return
@@ -447,8 +447,8 @@ func sendMissedPackets(
 func finishRelay(
 	ctx context.Context,
 	log *slog.Logger,
-	conn quic.Connection,
-	sCh <-chan quic.SendStream,
+	conn dquic.Conn,
+	sCh <-chan dquic.SendStream,
 	peerHas *bitset.BitSet,
 	peerBitsetUpdates <-chan *bitset.BitSet,
 	packets [][]byte,
@@ -472,7 +472,7 @@ func finishRelay(
 	// we closed the synchronization request channel,
 	// which signaled to [sendMissedPackets]
 	// that it needs to return the stream over the sCh channel.
-	var s quic.SendStream
+	var s dquic.SendStream
 AWAIT_STREAM_CONTROL:
 	for {
 		var ok bool

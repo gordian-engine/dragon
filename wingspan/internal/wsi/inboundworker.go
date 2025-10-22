@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/gordian-engine/dragon/dpubsub"
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/wingspan/wspacket"
-	"github.com/quic-go/quic-go"
 )
 
 // InboundWorker handles an inbound unidirection QUIC stream,
@@ -44,7 +44,7 @@ func NewInboundWorker[PktIn, DeltaIn, DeltaOut any](
 // InboundStream is the set of values necessary
 // to unblock [*InboundWorker.Run].
 type InboundStream[PktIn, DeltaIn, DeltaOut any] struct {
-	Stream quic.ReceiveStream
+	Stream dquic.ReceiveStream
 	State  wspacket.InboundRemoteState[PktIn, DeltaIn, DeltaOut]
 	Deltas *dpubsub.Stream[DeltaOut]
 }
@@ -60,7 +60,7 @@ func (w *InboundWorker[PktIn, DeltaIn, DeltaOut]) Run(
 	defer parentWG.Done()
 
 	// Wait for the stream and initial state.
-	var s quic.ReceiveStream
+	var s dquic.ReceiveStream
 	var state wspacket.InboundRemoteState[PktIn, DeltaIn, DeltaOut]
 	select {
 	case <-ctx.Done():
@@ -113,7 +113,7 @@ func (w *InboundWorker[PktIn, DeltaIn, DeltaOut]) Run(
 // (which is read in the main loop of InboundWorker).
 func (w *InboundWorker[PktIn, DeltaIn, DeltaOut]) readStream(
 	ctx context.Context,
-	rs quic.ReceiveStream,
+	rs dquic.ReceiveStream,
 	state wspacket.InboundRemoteState[PktIn, DeltaIn, DeltaOut],
 	incomingPackets chan<- PktIn,
 	done chan<- struct{},

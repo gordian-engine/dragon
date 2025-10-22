@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/bits-and-blooms/bitset"
-	"github.com/quic-go/quic-go"
+	"github.com/gordian-engine/dragon/dquic"
 )
 
 const (
@@ -21,7 +21,7 @@ type AdaptiveEncoder struct {
 }
 
 func (e *AdaptiveEncoder) SendBitset(
-	s quic.SendStream,
+	s dquic.SendStream,
 	timeout time.Duration,
 	bs *bitset.BitSet,
 ) error {
@@ -64,7 +64,7 @@ type AdaptiveDecoder struct {
 }
 
 func (d *AdaptiveDecoder) ReceiveBitset(
-	s quic.ReceiveStream,
+	s dquic.ReceiveStream,
 	timeout time.Duration,
 	bs *bitset.BitSet,
 ) error {

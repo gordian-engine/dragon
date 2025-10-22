@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/gordian-engine/dragon/dcert"
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dmsg"
 	"github.com/gordian-engine/dragon/internal/dprotoi"
-	"github.com/quic-go/quic-go"
 )
 
 type InitiateProtocol struct {
@@ -39,7 +39,7 @@ func (c Config) Now() time.Time {
 func (p *InitiateProtocol) Run(
 	ctx context.Context,
 	chain dcert.Chain,
-	c quic.Connection,
+	c dquic.Conn,
 	msg dprotoi.ShuffleMessage,
 ) error {
 	// Unlike the more complex protocols,
@@ -99,7 +99,7 @@ func (p *InitiateProtocol) Run(
 	}
 }
 
-func (p *InitiateProtocol) closeStream(s quic.Stream) {
+func (p *InitiateProtocol) closeStream(s dquic.Stream) {
 	if err := s.Close(); err != nil {
 		p.Log.Info(
 			"Error when closing ephemeral stream for shuffles",

@@ -15,10 +15,10 @@ import (
 	"github.com/gordian-engine/dragon/breathcast/bcmerkle/bcsha256"
 	"github.com/gordian-engine/dragon/breathcast/internal/bci"
 	"github.com/gordian-engine/dragon/dpubsub"
+	"github.com/gordian-engine/dragon/dquic"
+	"github.com/gordian-engine/dragon/dquic/dquictest"
 	"github.com/gordian-engine/dragon/internal/dbitset"
-	"github.com/gordian-engine/dragon/internal/dquic/dquictest"
 	"github.com/gordian-engine/dragon/internal/dtest"
-	"github.com/quic-go/quic-go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -155,9 +155,9 @@ func TestRunOutgoingRelay_forwardNewDatagram(t *testing.T) {
 	// The operation is running on the "host" side of the connection.
 	cHost, cClient := fx.ListenerSet.Dial(t, 0, 1)
 	cWH := &blockingSendDatagram{
-		Connection: cHost,
-		Ctx:        ctx,
-		Out:        make(chan []byte),
+		Conn: cHost,
+		Ctx:  ctx,
+		Out:  make(chan []byte),
 	}
 	fx.Run(t, ctx, nil, cWH)
 
@@ -223,8 +223,8 @@ func TestRunOutgoingRelay_missedDatagramSentReliably(t *testing.T) {
 	cHost, cClient := fx.ListenerSet.Dial(t, 0, 1)
 	hostDGs := dpubsub.NewStream[[]byte]()
 	cHW := &dquictest.PubsubDatagramSender{
-		Connection: cHost,
-		Stream:     hostDGs,
+		Conn:   cHost,
+		Stream: hostDGs,
 	}
 	fx.Run(t, ctx, nil, cHW)
 
@@ -307,8 +307,8 @@ func TestRunOutgoingRelay_missedDatagrams_staggered(t *testing.T) {
 	cHost, cClient := fx.ListenerSet.Dial(t, 0, 1)
 	hostDGs := dpubsub.NewStream[[]byte]()
 	cHW := &dquictest.PubsubDatagramSender{
-		Connection: cHost,
-		Stream:     hostDGs,
+		Conn:   cHost,
+		Stream: hostDGs,
 	}
 	fx.Run(t, ctx, nil, cHW)
 
@@ -447,8 +447,8 @@ func TestOutgoingRelay_dataReady(t *testing.T) {
 	cHost, cClient := fx.ListenerSet.Dial(t, 0, 1)
 	hostDGs := dpubsub.NewStream[[]byte]()
 	cHW := &dquictest.PubsubDatagramSender{
-		Connection: cHost,
-		Stream:     hostDGs,
+		Conn:   cHost,
+		Stream: hostDGs,
 	}
 	fx.Run(t, ctx, nil, cHW)
 
@@ -539,7 +539,7 @@ func TestOutgoingRelay_dataReady(t *testing.T) {
 
 func parseHeader(
 	t *testing.T,
-	s quic.ReceiveStream,
+	s dquic.ReceiveStream,
 	bidLen int,
 ) (
 	protocolID byte,
@@ -643,7 +643,7 @@ func (f *OutgoingRelayFixture) Run(
 	t *testing.T,
 	ctx context.Context,
 	log *slog.Logger,
-	conn quic.Connection,
+	conn dquic.Conn,
 ) {
 	t.Helper()
 
@@ -675,7 +675,7 @@ func (f *OutgoingRelayFixture) Run(
 }
 
 type blockingSendDatagram struct {
-	quic.Connection
+	dquic.Conn
 
 	Ctx context.Context
 	Out chan []byte

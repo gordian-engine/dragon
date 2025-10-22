@@ -9,11 +9,11 @@ import (
 
 	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dconn"
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dmsg"
 	"github.com/gordian-engine/dragon/internal/dpeerset/dfanout"
 	"github.com/gordian-engine/dragon/internal/dprotoi"
 	"github.com/gordian-engine/dragon/internal/dquicwrap"
-	"github.com/quic-go/quic-go"
 )
 
 // ActiveView handles the network interactions for an active peer set.
@@ -518,7 +518,7 @@ func (a *ActiveView) ForwardJoinToNetwork(
 }
 
 func (a *ActiveView) handleForwardJoinToNetwork(ctx context.Context, fj forwardJoinToNetwork) {
-	streams := make([]quic.Stream, 0, len(a.byCA))
+	streams := make([]dquic.Stream, 0, len(a.byCA))
 	for certHandle, p := range a.byCA {
 		if _, ok := fj.Exclude[certHandle]; ok {
 			// Don't send it to a peer matching the CA exclude list.
@@ -609,7 +609,7 @@ func (a *ActiveView) handleInitiatedShuffle(ctx context.Context, is initiatedShu
 
 func (a *ActiveView) SendShuffleReply(
 	ctx context.Context,
-	s quic.Stream,
+	s dquic.Stream,
 	entries []dprotoi.ShuffleEntry,
 ) {
 	reply := dfanout.WorkOutboundShuffleReply{

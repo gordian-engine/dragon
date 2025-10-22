@@ -7,8 +7,8 @@ import (
 	"io"
 	"log/slog"
 
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dprotoi"
-	"github.com/quic-go/quic-go"
 )
 
 type awaitNeighborReplyHandler struct {
@@ -17,7 +17,7 @@ type awaitNeighborReplyHandler struct {
 }
 
 func (h awaitNeighborReplyHandler) Handle(
-	ctx context.Context, _ quic.Connection, res *Result,
+	ctx context.Context, _ dquic.Conn, res *Result,
 ) (handler, error) {
 	// The admission stream is open and we have to wait for the candidate peer
 	// to send a neighbor reply.

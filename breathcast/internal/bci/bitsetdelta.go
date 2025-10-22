@@ -6,14 +6,14 @@ import (
 	"time"
 
 	"github.com/bits-and-blooms/bitset"
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dbitset"
-	"github.com/quic-go/quic-go"
 )
 
 // bsdState is the initial bitset delta state
 // required for [receiveBitsetDeltas].
 type bsdState struct {
-	Stream quic.ReceiveStream
+	Stream dquic.ReceiveStream
 	Dec    *dbitset.AdaptiveDecoder
 }
 
@@ -51,7 +51,7 @@ func receiveBitsetDeltas(
 	defer wg.Done()
 
 	// Block until the stream is ready.
-	var s quic.ReceiveStream
+	var s dquic.ReceiveStream
 	var dec *dbitset.AdaptiveDecoder
 	select {
 	case <-ctx.Done():

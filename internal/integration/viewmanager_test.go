@@ -31,7 +31,7 @@ func TestRandViewManager(t *testing.T) {
 
 		active, passive int
 	}{
-		// This are just some arbitrary selections that seem to pass consistently.
+		// These are just some arbitrary selections that seem to pass consistently.
 		{nNodes: 5, active: 4, passive: 6},
 		{nNodes: 8, active: 3, passive: 6},
 		{nNodes: 10, active: 12, passive: 3},

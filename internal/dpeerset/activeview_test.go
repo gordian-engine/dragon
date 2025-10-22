@@ -5,9 +5,9 @@ import (
 	"testing"
 
 	"github.com/gordian-engine/dragon/dcert/dcerttest"
+	"github.com/gordian-engine/dragon/dquic/dquictest"
 	"github.com/gordian-engine/dragon/internal/dpeerset"
 	"github.com/gordian-engine/dragon/internal/dpeerset/dpeersettest"
-	"github.com/gordian-engine/dragon/internal/dquic/dquictest"
 	"github.com/gordian-engine/dragon/internal/dquicwrap"
 	"github.com/gordian-engine/dragon/internal/dtest"
 	"github.com/stretchr/testify/require"

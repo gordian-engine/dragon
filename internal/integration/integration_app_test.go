@@ -15,6 +15,7 @@ import (
 	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/dpubsub"
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dmsg"
 	"github.com/quic-go/quic-go"
 )
@@ -125,7 +126,7 @@ func (a *IntegrationApp) mainLoop(
 
 	var wg sync.WaitGroup
 
-	conns := map[dcert.LeafCertHandle]quic.Connection{}
+	conns := map[dcert.LeafCertHandle]dquic.Conn{}
 
 	ops := map[string]*breathcast.BroadcastOperation{}
 
@@ -264,7 +265,7 @@ func (a *IntegrationApp) acceptStreams(
 			bid, err := a.Breathcast.ExtractStreamBroadcastID(s, nil)
 			if err != nil {
 				var appError *quic.ApplicationError
-				if errors.As(err, &appError) && appError.ErrorCode == dmsg.RemovingFromActiveView {
+				if errors.As(err, &appError) && dquic.ApplicationErrorCode(appError.ErrorCode) == dmsg.RemovingFromActiveView {
 					return
 				}
 
@@ -354,7 +355,7 @@ func (a *IntegrationApp) acceptDatagrams(
 			}
 
 			var appError *quic.ApplicationError
-			if errors.As(err, &appError) && appError.ErrorCode == dmsg.RemovingFromActiveView {
+			if errors.As(err, &appError) && dquic.ApplicationErrorCode(appError.ErrorCode) == dmsg.RemovingFromActiveView {
 				return
 			}
 
@@ -380,7 +381,7 @@ func (a *IntegrationApp) acceptDatagrams(
 
 type IncomingBroadcast struct {
 	BroadcastID, AppHeader []byte
-	Stream                 quic.Stream
+	Stream                 dquic.Stream
 
 	Op *breathcast.BroadcastOperation
 }

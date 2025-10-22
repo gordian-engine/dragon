@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/gordian-engine/dragon/dpubsub"
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/wingspan/wspacket"
-	"github.com/quic-go/quic-go"
 )
 
 // OutboundWorker manages the outbound stream
@@ -51,7 +51,7 @@ func NewOutboundWorker[
 func (w *OutboundWorker[PktIn, PktOut, DeltaIn, DeltaOut]) Run(
 	ctx context.Context,
 	parentWG *sync.WaitGroup,
-	conn quic.Connection,
+	conn dquic.Conn,
 	writeHeaderTimeout time.Duration,
 	peerReceivedCh <-chan DeltaIn,
 ) {
@@ -103,9 +103,9 @@ func (w *OutboundWorker[PktIn, PktOut, DeltaIn, DeltaOut]) Run(
 
 func (w *OutboundWorker[PktIn, PktOut, DeltaIn, DeltaOut]) initializeStream(
 	ctx context.Context,
-	conn quic.Connection,
+	conn dquic.Conn,
 	writeHeaderTimeout time.Duration,
-) (quic.SendStream, error) {
+) (dquic.SendStream, error) {
 	s, err := conn.OpenUniStreamSync(ctx)
 	if err != nil {
 		return nil, fmt.Errorf(
@@ -130,7 +130,7 @@ func (w *OutboundWorker[PktIn, PktOut, DeltaIn, DeltaOut]) initializeStream(
 
 func (w *OutboundWorker[PktIn, PktOut, DeltaIn, DeltaOut]) sendPackets(
 	ctx context.Context,
-	s quic.SendStream,
+	s dquic.SendStream,
 	peerReceivedCh <-chan DeltaIn,
 ) error {
 	// Make sure local packets are up to date.

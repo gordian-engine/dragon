@@ -6,8 +6,8 @@ import (
 	"io"
 	"log/slog"
 
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dprotoi"
-	"github.com/quic-go/quic-go"
 )
 
 type acceptMessageHandler struct {
@@ -16,7 +16,7 @@ type acceptMessageHandler struct {
 }
 
 func (h acceptMessageHandler) Handle(
-	ctx context.Context, s quic.Stream, res *Result,
+	ctx context.Context, s dquic.Stream, res *Result,
 ) (handler, error) {
 	// Don't override the read deadline for the first message byte.
 	var msgType [1]byte

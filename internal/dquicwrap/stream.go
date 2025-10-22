@@ -1,9 +1,8 @@
 package dquicwrap
 
 import (
-	"time"
-
 	"github.com/gordian-engine/dragon/dconn"
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/quic-go/quic-go"
 )
 
@@ -15,7 +14,7 @@ import (
 type Stream struct {
 	// Just embed the receive stream,
 	// because we don't do any intercepting on receive streams.
-	quic.ReceiveStream
+	dquic.ReceiveStream
 
 	// Also embed the wrapped send stream.
 	sendStream
@@ -33,11 +32,11 @@ type Stream struct {
 // NewOutboundStream returns a wrapped stream
 // that requires that the first outbound byte
 // is >= [dconn.MinAppProtocolID].
-func NewOutboundStream(q quic.Stream) *Stream {
+func NewOutboundStream(dqs dquic.Stream) *Stream {
 	return &Stream{
-		ReceiveStream: q,
+		ReceiveStream: dqs,
 		sendStream: sendStream{
-			q: q,
+			dq: dqs,
 		},
 
 		// Since this is an outbound stream,
@@ -55,14 +54,14 @@ func NewOutboundStream(q quic.Stream) *Stream {
 // to decide whether the stream should be routed
 // to the application layer or remain in the p2p protocol layer.
 func NewInboundStream(
-	q quic.Stream,
+	q dquic.Stream,
 	alreadyConsumedProtocolID byte,
 ) *Stream {
 	return &Stream{
 		ReceiveStream: q,
 
 		sendStream: sendStream{
-			q: q,
+			dq: q,
 
 			// Set this true to avoid a protocol byte check.
 			// Since it's an inbound stream,
@@ -75,20 +74,7 @@ func NewInboundStream(
 	}
 }
 
-var _ quic.Stream = (*Stream)(nil)
-
-// SetDeadline implements [quic.Stream].
-func (s *Stream) SetDeadline(t time.Time) error {
-	// Direct call.
-	return s.q.SetDeadline(t)
-}
-
-// StreamID implements [quic.ReceiveStream] and [quic.SendStream].
-// (We need to declare it here due to embedding ambiguity).
-func (s *Stream) StreamID() quic.StreamID {
-	// Direct call.
-	return s.q.StreamID()
-}
+var _ dquic.Stream = (*Stream)(nil)
 
 // TODO: we need to extract a ReceiveStream
 // and move this declaration to that type.

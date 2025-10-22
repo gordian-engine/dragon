@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dprotoi"
-	"github.com/quic-go/quic-go"
 )
 
 // Protocol handles a newly accepted stream that has not yet been identified.
@@ -37,7 +37,7 @@ type Result struct {
 	ApplicationProtocolID uint8
 }
 
-func (p *Protocol) Run(ctx context.Context, s quic.Stream) (Result, error) {
+func (p *Protocol) Run(ctx context.Context, s dquic.Stream) (Result, error) {
 	var h handler = identifyStreamHandler{
 		OuterLog: p.Log,
 		Cfg:      &p.Cfg,
@@ -63,7 +63,7 @@ func (p *Protocol) Run(ctx context.Context, s quic.Stream) (Result, error) {
 
 type handler interface {
 	Handle(
-		context.Context, quic.Stream, *Result,
+		context.Context, dquic.Stream, *Result,
 	) (handler, error)
 
 	// User-facing name for logging and debugging.

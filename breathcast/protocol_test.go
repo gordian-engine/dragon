@@ -12,8 +12,8 @@ import (
 	"github.com/gordian-engine/dragon/breathcast/bcmerkle/bcsha256"
 	"github.com/gordian-engine/dragon/breathcast/breathcasttest"
 	"github.com/gordian-engine/dragon/dconn"
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dtest"
-	"github.com/quic-go/quic-go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -86,7 +86,7 @@ func TestProtocol_allDatagramsSucceed(t *testing.T) {
 	continueCh := make(chan struct{})
 	c0 = guaranteedDatagramQCWrapper{
 		Ctx:               ctx,
-		Connection:        c0,
+		Conn:              c0,
 		IncomingBroadcast: bop1,
 		Continue:          continueCh,
 	}
@@ -142,7 +142,7 @@ func TestProtocol_allDatagramsSucceed(t *testing.T) {
 }
 
 type guaranteedDatagramQCWrapper struct {
-	quic.Connection
+	dquic.Conn
 	Ctx               context.Context
 	IncomingBroadcast *breathcast.BroadcastOperation
 	Continue          chan struct{}
@@ -237,7 +237,7 @@ func TestProtocol_onlyFirstDatagramDropped(t *testing.T) {
 	continueCh := make(chan struct{})
 	c0 = &dropFirstDatagramQCWrapper{
 		Ctx:               ctx,
-		Connection:        c0,
+		Conn:              c0,
 		IncomingBroadcast: bop1,
 		Continue:          continueCh,
 	}
@@ -295,7 +295,7 @@ func TestProtocol_onlyFirstDatagramDropped(t *testing.T) {
 }
 
 type dropFirstDatagramQCWrapper struct {
-	quic.Connection
+	dquic.Conn
 	Ctx               context.Context
 	IncomingBroadcast *breathcast.BroadcastOperation
 	Continue          chan struct{}
@@ -338,7 +338,7 @@ func TestProtocol_allDatagramsDropped(t *testing.T) {
 	c0, c1 := fx.ListenerSet.Dial(t, 0, 1)
 
 	// Wrap c0 so that datagrams don't go through.
-	c0 = dropDatagramQCWrapper{Connection: c0}
+	c0 = dropDatagramQCWrapper{Conn: c0}
 
 	fx.AddConnection(c0, 0, 1)
 	fx.AddConnection(c1, 1, 0)
@@ -431,7 +431,7 @@ func TestProtocol_allDatagramsDropped(t *testing.T) {
 }
 
 type dropDatagramQCWrapper struct {
-	quic.Connection
+	dquic.Conn
 }
 
 func (w dropDatagramQCWrapper) SendDatagram([]byte) error {
@@ -629,7 +629,7 @@ func TestProtocol_Relay_datagramsForwarded(t *testing.T) {
 // because in some tests we do not want the BroadcastOperation
 // to be created before the stream is opened.
 type lateBoundDatagramQCWrapper struct {
-	quic.Connection
+	dquic.Conn
 	Continue chan struct{}
 
 	ctx context.Context
@@ -640,10 +640,10 @@ type lateBoundDatagramQCWrapper struct {
 
 func newLateBoundDatagramQCWrapper(
 	ctx context.Context,
-	conn quic.Connection,
+	conn dquic.Conn,
 ) *lateBoundDatagramQCWrapper {
 	return &lateBoundDatagramQCWrapper{
-		Connection: conn,
+		Conn: conn,
 
 		Continue: make(chan struct{}),
 

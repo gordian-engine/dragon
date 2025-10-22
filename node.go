@@ -14,6 +14,7 @@ import (
 
 	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dconn"
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/dview"
 	"github.com/gordian-engine/dragon/internal/dk"
 	"github.com/gordian-engine/dragon/internal/dprotoi"
@@ -21,7 +22,6 @@ import (
 	"github.com/gordian-engine/dragon/internal/dprotoi/dbootstrap/dbsacceptneighbor"
 	"github.com/gordian-engine/dragon/internal/dprotoi/dbootstrap/dbsinbound"
 	"github.com/gordian-engine/dragon/internal/dprotoi/dbootstrap/dbssendjoin"
-	"github.com/gordian-engine/dragon/internal/dquic"
 	"github.com/quic-go/quic-go"
 )
 
@@ -400,7 +400,7 @@ func (n *Node) acceptConnections(ctx context.Context) {
 	defer n.wg.Done()
 
 	for {
-		qc, err := n.quicListener.Accept(ctx)
+		rawQC, err := n.quicListener.Accept(ctx)
 		if err != nil {
 			if errors.Is(context.Cause(ctx), err) {
 				n.log.Info(
@@ -418,11 +418,13 @@ func (n *Node) acceptConnections(ctx context.Context) {
 			continue
 		}
 
+		qc := dquic.WrapConn(rawQC)
+
 		// TODO: this should have some early rate-limiting based on remote identity.
 
 		// TODO: update context to handle notify on certificate removal.
 
-		chain, err := dcert.NewChainFromTLSConnectionState(qc.ConnectionState().TLS)
+		chain, err := dcert.NewChainFromTLSConnectionState(qc.TLSConnectionState())
 		if err != nil {
 			n.log.Warn(
 				"Connection was accepted but chain extraction failed",
@@ -561,7 +563,7 @@ func (n *Node) acceptConnections(ctx context.Context) {
 }
 
 func (n *Node) handleIncomingJoin(
-	ctx context.Context, qc quic.Connection, qs quic.Stream,
+	ctx context.Context, qc dquic.Conn, qs dquic.Stream,
 	chain dcert.Chain, jm dprotoi.JoinMessage,
 ) error {
 	// Now we have the advertise address and an admission stream.
@@ -687,7 +689,7 @@ func (n *Node) handleIncomingJoin(
 
 func (n *Node) handleIncomingNeighbor(
 	ctx context.Context,
-	qc quic.Connection, qs quic.Stream,
+	qc dquic.Conn, qs dquic.Stream,
 	chain dcert.Chain, nm dprotoi.NeighborMessage,
 ) error {
 	// We received a neighbor message from the remote.
@@ -852,7 +854,7 @@ func (n *Node) DialAndJoin(ctx context.Context, addr net.Addr) error {
 		return fmt.Errorf("DialAndJoin: dial failed: %w", err)
 	}
 
-	chain, err := dcert.NewChainFromTLSConnectionState(dr.Conn.ConnectionState().TLS)
+	chain, err := dcert.NewChainFromTLSConnectionState(dr.Conn.TLSConnectionState())
 	if err != nil {
 		return fmt.Errorf("DialAndJoin: failed to extract certificate chain: %w", err)
 	}
@@ -920,7 +922,7 @@ func (n *Node) DialAndJoin(ctx context.Context, addr net.Addr) error {
 
 // bootstrapJoin bootstraps the protocol streams on the given connection.
 func (n *Node) bootstrapJoin(
-	ctx context.Context, qc quic.Connection,
+	ctx context.Context, qc dquic.Conn,
 ) (dbssendjoin.Result, error) {
 	p := dbssendjoin.Protocol{
 		Log:  n.log.With("protocol", "outgoing_bootstrap_join"),

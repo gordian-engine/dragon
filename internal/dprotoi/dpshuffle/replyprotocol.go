@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dprotoi"
-	"github.com/quic-go/quic-go"
 )
 
 // ReplyProtocol is the protocol for sending a response
@@ -35,7 +35,7 @@ func (c ReplyConfig) Now() time.Time {
 
 func (p *ReplyProtocol) Run(
 	ctx context.Context,
-	s quic.Stream,
+	s dquic.Stream,
 	msg dprotoi.ShuffleReplyMessage,
 ) error {
 	if err := s.SetWriteDeadline(p.Cfg.Now().Add(p.Cfg.SendReplyTimeout)); err != nil {

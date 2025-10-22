@@ -1,15 +1,15 @@
 package dquicwrap
 
 import (
-	"context"
 	"fmt"
 	"time"
 
 	"github.com/gordian-engine/dragon/dconn"
-	"github.com/quic-go/quic-go"
+	"github.com/gordian-engine/dragon/dquic"
 )
 
-// sendStream wraps a real quic.SendStream.
+// sendStream wraps a dquic.SendStream,
+// ensuring the first written byte exceeds [dconn.MinAppProtocolID].
 //
 // It can be unexported here because the type
 // is not exposed directly outside of this package.
@@ -18,7 +18,7 @@ import (
 // but in this case we want to be extremely precise
 // about the behavior of every method.
 type sendStream struct {
-	q quic.SendStream
+	dq dquic.SendStream
 
 	// Track whether this is the first write.
 	// We require that the very first byte is >= [dconn.MinAppProtocolID],
@@ -27,13 +27,7 @@ type sendStream struct {
 	writtenBefore bool
 }
 
-var _ quic.SendStream = (*sendStream)(nil)
-
-// StreamID implements [quic.ReceiveStream] and [quic.SendStream].
-func (s *sendStream) StreamID() quic.StreamID {
-	// Direct call.
-	return s.q.StreamID()
-}
+var _ dquic.SendStream = (*sendStream)(nil)
 
 // Write implements [quic.SendStream].
 func (s *sendStream) Write(p []byte) (int, error) {
@@ -48,27 +42,22 @@ func (s *sendStream) Write(p []byte) (int, error) {
 		s.writtenBefore = true
 	}
 
-	return s.q.Write(p)
+	return s.dq.Write(p)
 }
 
 // Close implements [quic.SendStream].
 func (s *sendStream) Close() error {
 	// Direct call.
-	return s.q.Close()
+	return s.dq.Close()
 }
 
 // CancelWrite implements [quic.SendStream].
-func (s *sendStream) CancelWrite(code quic.StreamErrorCode) {
+func (s *sendStream) CancelWrite(code dquic.StreamErrorCode) {
 	// Direct call.
-	s.q.CancelWrite(code)
-}
-
-// Context implements [quic.SendStream].
-func (s *sendStream) Context() context.Context {
-	return s.q.Context()
+	s.dq.CancelWrite(code)
 }
 
 // SetWriteDeadline implements [quic.SendStream].
 func (s *sendStream) SetWriteDeadline(t time.Time) error {
-	return s.q.SetWriteDeadline(t)
+	return s.dq.SetWriteDeadline(t)
 }

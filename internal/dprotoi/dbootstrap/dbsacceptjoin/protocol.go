@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/quic-go/quic-go"
+	"github.com/gordian-engine/dragon/dquic"
 )
 
 type Protocol struct {
@@ -14,9 +14,9 @@ type Protocol struct {
 
 	Cfg Config
 
-	Conn quic.Connection
+	Conn dquic.Conn
 
-	AdmissionStream quic.Stream
+	AdmissionStream dquic.Stream
 }
 
 type Config struct {
@@ -68,6 +68,6 @@ func (p *Protocol) Run(ctx context.Context) (Result, error) {
 }
 
 type acceptJoinHandler interface {
-	Handle(context.Context, quic.Connection, quic.Stream, *Result) (acceptJoinHandler, error)
+	Handle(context.Context, dquic.Conn, dquic.Stream, *Result) (acceptJoinHandler, error)
 	Name() string
 }

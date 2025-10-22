@@ -8,12 +8,12 @@ import (
 	"time"
 
 	"github.com/gordian-engine/dragon/dconn"
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dtest"
 	"github.com/gordian-engine/dragon/wingspan"
 	"github.com/gordian-engine/dragon/wingspan/wingspantest"
 	"github.com/gordian-engine/dragon/wingspan/wspacket"
 	"github.com/gordian-engine/dragon/wingspan/wspacket/wspackettest"
-	"github.com/quic-go/quic-go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -277,10 +277,10 @@ func testStreamHeaders[
 ](
 	t *testing.T,
 	ctx context.Context,
-	conn quic.Connection,
+	conn dquic.Conn,
 	p *wingspan.Protocol[PktIn, PktOut, DeltaIn, DeltaOut],
 	expSessionID, expAppHeader []byte,
-) quic.ReceiveStream {
+) dquic.ReceiveStream {
 	t.Helper()
 
 	rs1, err := conn.AcceptUniStream(ctx)

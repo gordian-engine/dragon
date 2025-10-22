@@ -230,7 +230,7 @@ func (p *Protocol[PktIn, PktOut, DeltaIn, DeltaOut]) NewSession(
 }
 
 // ExtractStreamSessionID extracts the session ID
-// from the given reader (which should be a [quic.ReceiveStream]).
+// from the given reader (which should be a [dquic.ReceiveStream]).
 // The extracted data is appended to the given dst slice,
 // which is permitted to be nil.
 //

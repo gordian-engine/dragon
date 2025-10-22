@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dprotoi"
-	"github.com/quic-go/quic-go"
 )
 
 type shuffleHandler struct {
@@ -15,7 +15,7 @@ type shuffleHandler struct {
 }
 
 func (h shuffleHandler) Handle(
-	ctx context.Context, s quic.Stream, res *Result,
+	ctx context.Context, s dquic.Stream, res *Result,
 ) (handler, error) {
 	// We will inherit the previous read deadline from identifyStreamHandler, for now.
 

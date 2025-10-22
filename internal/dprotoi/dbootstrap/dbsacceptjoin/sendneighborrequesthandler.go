@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dprotoi"
-	"github.com/quic-go/quic-go"
 )
 
 type sendNeighborRequestHandler struct {
@@ -15,7 +15,7 @@ type sendNeighborRequestHandler struct {
 }
 
 func (h sendNeighborRequestHandler) Handle(
-	ctx context.Context, _ quic.Connection, s quic.Stream, res *Result,
+	ctx context.Context, _ dquic.Conn, s dquic.Stream, res *Result,
 ) (acceptJoinHandler, error) {
 	if err := s.SetWriteDeadline(h.Cfg.Now().Add(h.Cfg.NeighborRequestTimeout)); err != nil {
 		return nil, fmt.Errorf(

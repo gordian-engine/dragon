@@ -6,11 +6,11 @@ import (
 
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/dpubsub"
-	"github.com/gordian-engine/dragon/internal/dquic/dquictest"
+	"github.com/gordian-engine/dragon/dquic"
+	"github.com/gordian-engine/dragon/dquic/dquictest"
 	"github.com/gordian-engine/dragon/internal/dtest"
 	"github.com/gordian-engine/dragon/wingspan"
 	"github.com/gordian-engine/dragon/wingspan/wspacket"
-	"github.com/quic-go/quic-go"
 )
 
 type ProtocolFixture[
@@ -71,7 +71,7 @@ func NewProtocolFixture[
 // [*dquictest.ListenerSet.Dial] (in order for the first returned connection,
 // and swapped for the second returned connection).
 func (f *ProtocolFixture[PktIn, PktOut, DeltaIn, DeltaOut]) AddConnection(
-	conn quic.Connection,
+	conn dquic.Conn,
 	ownerIdx, peerIdx int,
 ) {
 	f.ConnChanges[ownerIdx].Publish(dconn.Change{

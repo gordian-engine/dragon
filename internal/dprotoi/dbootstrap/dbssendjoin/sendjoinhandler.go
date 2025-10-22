@@ -6,8 +6,8 @@ import (
 	"log/slog"
 
 	"github.com/gordian-engine/dragon/daddr"
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dprotoi"
-	"github.com/quic-go/quic-go"
 )
 
 type sendJoinHandler struct {
@@ -16,7 +16,7 @@ type sendJoinHandler struct {
 }
 
 func (h sendJoinHandler) Handle(
-	ctx context.Context, c quic.Connection, res *Result,
+	ctx context.Context, c dquic.Conn, res *Result,
 ) (streamHandler, error) {
 	// We only have a bare connection at this point,
 	// so we need to set up the admission stream before anything else.
@@ -35,7 +35,7 @@ func (h sendJoinHandler) Handle(
 
 	msg := jm.OpenStreamAndJoinBytes()
 
-	s, err := c.OpenStream()
+	s, err := c.OpenStreamSync(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open stream: %w", err)
 	}

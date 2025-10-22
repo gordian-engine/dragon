@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/quic-go/quic-go"
+	"github.com/gordian-engine/dragon/dquic"
 )
 
 // Protocol is the outgoing bootstrap protocol initiated by
@@ -15,7 +15,7 @@ import (
 type Protocol struct {
 	Log *slog.Logger
 
-	Conn quic.Connection
+	Conn dquic.Conn
 
 	Cfg Config
 }
@@ -49,7 +49,7 @@ func (c Config) Now() time.Time {
 }
 
 type Result struct {
-	Admission quic.Stream
+	Admission dquic.Stream
 }
 
 func (p *Protocol) Run(ctx context.Context) (Result, error) {
@@ -80,7 +80,7 @@ func (p *Protocol) Run(ctx context.Context) (Result, error) {
 
 type handler interface {
 	Handle(
-		context.Context, quic.Connection, *Result,
+		context.Context, dquic.Conn, *Result,
 	) (handler, error)
 
 	Name() string

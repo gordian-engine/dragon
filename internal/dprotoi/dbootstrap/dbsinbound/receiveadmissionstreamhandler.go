@@ -8,8 +8,8 @@ import (
 	"log/slog"
 
 	"github.com/gordian-engine/dragon/daddr"
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dprotoi"
-	"github.com/quic-go/quic-go"
 )
 
 // receiveAdmisisonStreamHandler handles receiving initial data
@@ -21,7 +21,7 @@ type receiveAdmissionStreamHandler struct {
 }
 
 func (h receiveAdmissionStreamHandler) Handle(
-	ctx context.Context, c quic.Connection, res *Result,
+	ctx context.Context, c dquic.Conn, res *Result,
 ) (incomingStreamHandler, error) {
 	// Not setting a deadline on these reads;
 	// acceptIncomingStreamHandler set a read deadline

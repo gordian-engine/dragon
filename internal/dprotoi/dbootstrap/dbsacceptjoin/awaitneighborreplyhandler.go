@@ -7,8 +7,8 @@ import (
 	"io"
 	"log/slog"
 
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dprotoi"
-	"github.com/quic-go/quic-go"
 )
 
 type awaitNeighborReplyHandler struct {
@@ -17,7 +17,7 @@ type awaitNeighborReplyHandler struct {
 }
 
 func (h awaitNeighborReplyHandler) Handle(
-	ctx context.Context, _ quic.Connection, s quic.Stream, res *Result,
+	ctx context.Context, _ dquic.Conn, s dquic.Stream, res *Result,
 ) (acceptJoinHandler, error) {
 	if err := s.SetReadDeadline(h.Cfg.Now().Add(h.Cfg.NeighborReplyTimeout)); err != nil {
 		return nil, fmt.Errorf(

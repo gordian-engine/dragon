@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dprotoi"
-	"github.com/quic-go/quic-go"
 )
 
 // Protocol is the protocol for accepting an incoming connection,
@@ -16,7 +16,7 @@ import (
 type Protocol struct {
 	Log *slog.Logger
 
-	Conn quic.Connection
+	Conn dquic.Conn
 
 	PeerCert *x509.Certificate
 
@@ -46,7 +46,7 @@ func (c Config) Now() time.Time {
 }
 
 type Result struct {
-	AdmissionStream quic.Stream
+	AdmissionStream dquic.Stream
 
 	JoinMessage *dprotoi.JoinMessage
 
@@ -82,6 +82,6 @@ func (p *Protocol) Run(ctx context.Context) (Result, error) {
 }
 
 type incomingStreamHandler interface {
-	Handle(context.Context, quic.Connection, *Result) (incomingStreamHandler, error)
+	Handle(context.Context, dquic.Conn, *Result) (incomingStreamHandler, error)
 	Name() string
 }

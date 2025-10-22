@@ -9,12 +9,12 @@ import (
 	"time"
 
 	"github.com/gordian-engine/dragon/dconn"
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dmsg"
 	"github.com/gordian-engine/dragon/internal/dprotoi"
 	"github.com/gordian-engine/dragon/internal/dprotoi/dpadmission"
 	"github.com/gordian-engine/dragon/internal/dprotoi/dpdynamic"
 	"github.com/gordian-engine/dragon/internal/dquicwrap"
-	"github.com/quic-go/quic-go"
 )
 
 // peerInboundProcessor handles the work involved with accepting messages
@@ -162,7 +162,7 @@ func (p *peerInboundProcessor) acceptDynamicStreams(
 	// Channel that dynamic stream handlers read from.
 	// It must be unbuffered so that we know the stream is being handled
 	// before we accept the next stream.
-	ch := make(chan quic.Stream)
+	ch := make(chan dquic.Stream)
 
 	for {
 		s, err := p.peer.Conn.AcceptStream(ctx)
@@ -205,7 +205,7 @@ func (p *peerInboundProcessor) acceptDynamicStreams(
 
 func (p *peerInboundProcessor) handleDynamicStreams(
 	ctx context.Context,
-	ch <-chan quic.Stream,
+	ch <-chan dquic.Stream,
 ) {
 	defer p.wg.Done()
 
@@ -219,7 +219,7 @@ func (p *peerInboundProcessor) handleDynamicStreams(
 	for {
 		// The goroutine is started with a valid stream,
 		// so we handle work before reading from the channel.
-		var s quic.Stream
+		var s dquic.Stream
 		select {
 		case <-ctx.Done():
 			p.fail(fmt.Errorf(
@@ -264,7 +264,7 @@ func (p *peerInboundProcessor) handleDynamicStreams(
 
 func (p *peerInboundProcessor) handleShuffleFromPeer(
 	ctx context.Context,
-	s quic.Stream,
+	s dquic.Stream,
 	sm dprotoi.ShuffleMessage,
 ) {
 	// The shuffle message we've parsed needs to go back to the view manager.

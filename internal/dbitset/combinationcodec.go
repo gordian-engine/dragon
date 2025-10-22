@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/bits-and-blooms/bitset"
-	"github.com/quic-go/quic-go"
+	"github.com/gordian-engine/dragon/dquic"
 )
 
 // CombinationEncoder maintains internal state for encoding compressed bitsets.
@@ -61,7 +61,7 @@ func (e *CombinationEncoder) encode(
 // must be the same value the remote expects,
 // or else the remote will decode a different value from what we encode here.
 func (e *CombinationEncoder) SendBitset(
-	s quic.SendStream,
+	s dquic.SendStream,
 	timeout time.Duration,
 	bs *bitset.BitSet,
 ) error {
@@ -71,7 +71,7 @@ func (e *CombinationEncoder) SendBitset(
 }
 
 func (e *CombinationEncoder) send(
-	s quic.SendStream,
+	s dquic.SendStream,
 	timeout time.Duration,
 ) error {
 	if err := s.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
@@ -136,7 +136,7 @@ type CombinationDecoder struct {
 // must be the same value the remote expects,
 // or else the remote will decode a different value from what we encode here.
 func (d *CombinationDecoder) ReceiveBitset(
-	s quic.ReceiveStream,
+	s dquic.ReceiveStream,
 	timeout time.Duration,
 	bs *bitset.BitSet,
 ) error {

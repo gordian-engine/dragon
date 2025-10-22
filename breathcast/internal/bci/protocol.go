@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/bits-and-blooms/bitset"
-	"github.com/quic-go/quic-go"
+	"github.com/gordian-engine/dragon/dquic"
 )
 
 const (
@@ -22,15 +22,15 @@ const (
 const (
 	// The local process closes both the read and write
 	// sides of the stream when the it has the full data.
-	GotFullDataErrorCode quic.StreamErrorCode = 0x607
+	GotFullDataErrorCode dquic.StreamErrorCode = 0x2b3f_37a1_ef86_3459 // Decimal: 3116270635811484761
 
 	// The local process canceled the stream due to an interruption,
 	// typically due to a context cancellation higher in the stack.
 	// Stream reads and writes may not observe a context cancellation,
-	// but a call to [quic.ReceiveStream.CancelRead]
-	// or [quic.SendStream.CancelWrite]
+	// but a call to [dquic.ReceiveStream.CancelRead]
+	// or [dquic.SendStream.CancelWrite]
 	// will immediately end the corresponding read or write.
-	InterruptedErrorCode quic.StreamErrorCode = 0x11117
+	InterruptedErrorCode dquic.StreamErrorCode = 0x2887_4027_c46b_3a10 // Decimal: 2920373422916319760
 )
 
 // ProtocolHeader is a byte sequence containing:
@@ -91,9 +91,9 @@ type OpenStreamConfig struct {
 // OpenStream opens a new stream for the breathcast protocol.
 func OpenStream(
 	ctx context.Context,
-	conn quic.Connection,
+	conn dquic.Conn,
 	cfg OpenStreamConfig,
-) (quic.Stream, error) {
+) (dquic.Stream, error) {
 	openCtx, cancel := context.WithTimeout(ctx, cfg.OpenStreamTimeout)
 	s, err := conn.OpenStreamSync(openCtx)
 	cancel() // Immediately cancel sub-context to release resources.
@@ -162,7 +162,7 @@ func calculateRatio(bs *bitset.BitSet) byte {
 
 // SendSyncPacket writes the packet over the given stream.
 func SendSyncPacket(
-	s quic.SendStream,
+	s dquic.SendStream,
 	sendTimeout time.Duration,
 	raw []byte,
 ) error {
@@ -184,7 +184,7 @@ func SendSyncPacket(
 // SendSyncMissedDatagram sends an individual missed datagram
 // as a synchronous packet over the given stream.
 func SendSyncMissedDatagram(
-	s quic.SendStream,
+	s dquic.SendStream,
 	sendTimeout time.Duration,
 	raw []byte,
 ) error {

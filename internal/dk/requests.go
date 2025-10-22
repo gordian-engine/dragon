@@ -3,9 +3,9 @@ package dk
 import (
 	"github.com/gordian-engine/dragon/daddr"
 	"github.com/gordian-engine/dragon/dcert"
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/dview"
 	"github.com/gordian-engine/dragon/internal/dprotoi"
-	"github.com/quic-go/quic-go"
 )
 
 // JoinRequest is sent from the outer Node to the [Kernel],
@@ -63,13 +63,13 @@ type NeighborDecisionRequest struct {
 //     and that node needed a new connection,
 //     so they connected to us and directly opened sent a Neighbor message.
 type AddActivePeerRequest struct {
-	QuicConn quic.Connection
+	QuicConn dquic.Conn
 
 	Chain dcert.Chain
 
 	AA daddr.AddressAttestation
 
-	AdmissionStream quic.Stream
+	AdmissionStream dquic.Stream
 
 	Resp chan AddActivePeerResponse
 }

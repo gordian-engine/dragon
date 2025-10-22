@@ -2,14 +2,14 @@ package dmsg
 
 import (
 	"github.com/gordian-engine/dragon/dcert"
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dprotoi"
-	"github.com/quic-go/quic-go"
 )
 
 const (
 	// Application error code used when closing a connection
 	// due to it being removed from the active view.
-	RemovingFromActiveView quic.ApplicationErrorCode = 0x188E59FF
+	RemovingFromActiveView dquic.ApplicationErrorCode = 0x0bac_0bf7_2e4b_aa42 // Decimal: 841060386672978498
 )
 
 // ForwardJoinFromNetwork is a request for a forward join
@@ -32,7 +32,7 @@ type ForwardJoinFromNetwork struct {
 type ShuffleFromPeer struct {
 	Src dcert.Chain
 
-	Stream quic.Stream
+	Stream dquic.Stream
 
 	Msg dprotoi.ShuffleMessage
 }

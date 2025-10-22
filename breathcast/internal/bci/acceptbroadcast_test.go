@@ -11,10 +11,10 @@ import (
 	"github.com/gordian-engine/dragon/breathcast/bcmerkle/bcsha256"
 	"github.com/gordian-engine/dragon/breathcast/internal/bci"
 	"github.com/gordian-engine/dragon/dpubsub"
+	"github.com/gordian-engine/dragon/dquic"
+	"github.com/gordian-engine/dragon/dquic/dquictest"
 	"github.com/gordian-engine/dragon/internal/dbitset"
-	"github.com/gordian-engine/dragon/internal/dquic/dquictest"
 	"github.com/gordian-engine/dragon/internal/dtest"
-	"github.com/quic-go/quic-go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -239,14 +239,14 @@ func (c *datagramCollector) Get(idx int) []byte {
 // establishedStream returns a pair of streams,
 // one for each side of a stream between two hosts in a [dquictest.ListenerSet]
 // created inside this helper function
-func establishedStream(t *testing.T, ctx context.Context) (left, right quic.Stream) {
+func establishedStream(t *testing.T, ctx context.Context) (left, right dquic.Stream) {
 	t.Helper()
 
 	ls := dquictest.NewListenerSet(t, ctx, 2)
 	c01, c10 := ls.Dial(t, 0, 1)
 
 	// The stream we'll be using in the test.
-	s0, err := c01.OpenStream()
+	s0, err := c01.OpenStreamSync(ctx)
 	require.NoError(t, err)
 
 	// We have to send something before the stream can be accepted.

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/gordian-engine/dragon/daddr"
-	"github.com/quic-go/quic-go"
+	"github.com/gordian-engine/dragon/dquic"
 )
 
 // Protocol is the outgoing bootstrap protocol initiated by a node joining the p2p network.
@@ -19,7 +19,7 @@ type Protocol struct {
 	// Other protocol implementations in other packages don't include this,
 	// but this protocol bootstraps the other streams,
 	// so we rely on the connection to create those streams.
-	Conn quic.Connection
+	Conn dquic.Conn
 
 	Cfg Config
 }
@@ -60,7 +60,7 @@ func (c Config) Now() time.Time {
 type Result struct {
 	// This is the stream used for bootstrapping.
 	// Following bootstrapping, it is used for the Forward Join message.
-	AdmissionStream quic.Stream
+	AdmissionStream dquic.Stream
 
 	// We built and signed this message during the protocol,
 	// and the kernel needs it for active set management.
@@ -99,7 +99,7 @@ func (p *Protocol) Run(ctx context.Context) (Result, error) {
 
 type streamHandler interface {
 	Handle(
-		context.Context, quic.Connection, *Result,
+		context.Context, dquic.Conn, *Result,
 	) (streamHandler, error)
 
 	// User-facing name for logging and debugging.

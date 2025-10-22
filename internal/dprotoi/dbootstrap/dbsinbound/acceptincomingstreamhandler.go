@@ -7,8 +7,8 @@ import (
 	"io"
 	"log/slog"
 
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dprotoi"
-	"github.com/quic-go/quic-go"
 )
 
 // acceptIncomingStreamHandler is the first handler on accepting an incoming connection.
@@ -24,7 +24,7 @@ type acceptIncomingStreamHandler struct {
 // and then it expects either a join or neighbor message from the peer.
 // The details of that received message, if valid, are set on the Result.
 func (h acceptIncomingStreamHandler) Handle(
-	ctx context.Context, c quic.Connection, res *Result,
+	ctx context.Context, c dquic.Conn, res *Result,
 ) (incomingStreamHandler, error) {
 	// There is no plain timeout for accepting a stream,
 	// so we have to use a context timeout for this.

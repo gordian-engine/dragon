@@ -12,8 +12,8 @@ import (
 	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/dpubsub"
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/wingspan/wspacket"
-	"github.com/quic-go/quic-go"
 )
 
 // Session is the internal representation of a session.
@@ -38,7 +38,7 @@ type Session[
 // to add an inbound stream to the [Session].
 type acceptStreamRequest struct {
 	Conn   dconn.Conn
-	Stream quic.ReceiveStream
+	Stream dquic.ReceiveStream
 	Resp   chan struct{}
 }
 
@@ -284,7 +284,7 @@ func (s *Session[PktIn, PktOut, DeltaIn, DeltaOut]) addRemoteState(
 func (s *Session[PktIn, PktOut, DeltaIn, DeltaOut]) AcceptStream(
 	ctx context.Context,
 	conn dconn.Conn,
-	rs quic.ReceiveStream,
+	rs dquic.ReceiveStream,
 ) error {
 	req := acceptStreamRequest{
 		Conn:   conn,

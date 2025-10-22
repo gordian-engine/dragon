@@ -2,9 +2,9 @@ package dfanout
 
 import (
 	"github.com/gordian-engine/dragon/dcert"
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dmsg"
 	"github.com/gordian-engine/dragon/internal/dprotoi"
-	"github.com/quic-go/quic-go"
 )
 
 // Seed channels are "pre-work" channels,
@@ -46,14 +46,14 @@ func NewWorkChannels(chanSz int) WorkChannels {
 type SeedForwardJoin struct {
 	Msg dprotoi.ForwardJoinMessage
 
-	Streams []quic.Stream
+	Streams []dquic.Stream
 }
 
 // WorkForwardJoin is the translation of a [SeedForwardJoin] into fanout work.
 type WorkForwardJoin struct {
 	Raw []byte
 
-	Stream quic.Stream
+	Stream dquic.Stream
 }
 
 // WorkOutboundShuffle is a shuffle message destined for a particular peer.
@@ -65,7 +65,7 @@ type WorkForwardJoin struct {
 type WorkOutboundShuffle struct {
 	Msg dprotoi.ShuffleMessage
 
-	Conn quic.Connection
+	Conn dquic.Conn
 
 	// We should already have the chain anyway,
 	// so include it here so the worker
@@ -81,7 +81,7 @@ type WorkOutboundShuffle struct {
 type WorkOutboundShuffleReply struct {
 	Msg dprotoi.ShuffleReplyMessage
 
-	Stream quic.Stream
+	Stream dquic.Stream
 }
 
 type WorkerOutputChannels struct {

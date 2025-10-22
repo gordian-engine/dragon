@@ -8,7 +8,7 @@ import (
 
 	"github.com/bits-and-blooms/bitset"
 	"github.com/golang/snappy"
-	"github.com/quic-go/quic-go"
+	"github.com/gordian-engine/dragon/dquic"
 )
 
 type SnappyEncoder struct {
@@ -86,7 +86,7 @@ func (e *SnappyEncoder) encode(
 }
 
 func (e *SnappyEncoder) SendBitset(
-	s quic.SendStream,
+	s dquic.SendStream,
 	timeout time.Duration,
 	bs *bitset.BitSet,
 ) error {
@@ -96,7 +96,7 @@ func (e *SnappyEncoder) SendBitset(
 }
 
 func (e *SnappyEncoder) send(
-	s quic.SendStream,
+	s dquic.SendStream,
 	timeout time.Duration,
 ) error {
 	if err := s.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
@@ -120,7 +120,7 @@ type SnappyDecoder struct {
 }
 
 func (d *SnappyDecoder) ReceiveBitset(
-	s quic.ReceiveStream,
+	s dquic.ReceiveStream,
 	timeout time.Duration,
 	bs *bitset.BitSet,
 ) error {

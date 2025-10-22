@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/gordian-engine/dragon/dconn"
-	"github.com/gordian-engine/dragon/internal/dquic/dquictest"
+	"github.com/gordian-engine/dragon/dquic/dquictest"
 	"github.com/gordian-engine/dragon/internal/dquicwrap"
 	"github.com/gordian-engine/dragon/internal/dtest"
 	"github.com/stretchr/testify/require"

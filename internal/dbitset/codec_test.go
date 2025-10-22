@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/bits-and-blooms/bitset"
-	"github.com/gordian-engine/dragon/internal/dquic/dquictest"
-	"github.com/quic-go/quic-go"
+	"github.com/gordian-engine/dragon/dquic"
+	"github.com/gordian-engine/dragon/dquic/dquictest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -17,10 +17,10 @@ import (
 func testCodec(
 	t *testing.T,
 	enc interface {
-		SendBitset(quic.SendStream, time.Duration, *bitset.BitSet) error
+		SendBitset(dquic.SendStream, time.Duration, *bitset.BitSet) error
 	},
 	dec interface {
-		ReceiveBitset(quic.ReceiveStream, time.Duration, *bitset.BitSet) error
+		ReceiveBitset(dquic.ReceiveStream, time.Duration, *bitset.BitSet) error
 	},
 ) {
 	t.Helper()
@@ -31,7 +31,7 @@ func testCodec(
 	ls := dquictest.NewListenerSet(t, ctx, 2)
 	c0, c1 := ls.Dial(t, 0, 1)
 
-	s01, err := c0.OpenStream()
+	s01, err := c0.OpenStreamSync(ctx)
 	require.NoError(t, err)
 
 	_, err = s01.Write([]byte{0})

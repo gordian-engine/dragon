@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dprotoi"
-	"github.com/quic-go/quic-go"
 )
 
 type sendNeighborReplyHandler struct {
@@ -15,7 +15,7 @@ type sendNeighborReplyHandler struct {
 }
 
 func (h sendNeighborReplyHandler) Handle(
-	ctx context.Context, c quic.Connection, res *Result,
+	ctx context.Context, c dquic.Conn, res *Result,
 ) (streamHandler, error) {
 	s := res.AdmissionStream
 

@@ -10,10 +10,9 @@ import (
 	"time"
 
 	"github.com/gordian-engine/dragon/dcert"
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dk"
 	"github.com/gordian-engine/dragon/internal/dprotoi/dbootstrap/dbssendneighbor"
-	"github.com/gordian-engine/dragon/internal/dquic"
-	"github.com/quic-go/quic-go"
 )
 
 // neighborDialer runs a dedicated goroutine for making neighbor requests.
@@ -76,7 +75,7 @@ func (d *neighborDialer) dialAndNeighbor(ctx context.Context, addr string) {
 		return
 	}
 
-	chain, err := dcert.NewChainFromTLSConnectionState(dr.Conn.ConnectionState().TLS)
+	chain, err := dcert.NewChainFromTLSConnectionState(dr.Conn.TLSConnectionState())
 	if err != nil {
 		d.Log.Warn(
 			"Failed to extract certificate chain from neighbor",
@@ -153,7 +152,7 @@ func (d *neighborDialer) dialAndNeighbor(ctx context.Context, addr string) {
 }
 
 func (d *neighborDialer) bootstrapNeighbor(
-	ctx context.Context, qc quic.Connection,
+	ctx context.Context, qc dquic.Conn,
 ) (dbssendneighbor.Result, error) {
 	p := dbssendneighbor.Protocol{
 		Log:  d.Log.With("protocol", "outgoing_bootstrap_neighbor"),

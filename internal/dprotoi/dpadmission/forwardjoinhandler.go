@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dprotoi"
-	"github.com/quic-go/quic-go"
 )
 
 type forwardJoinHandler struct {
@@ -15,7 +15,7 @@ type forwardJoinHandler struct {
 }
 
 func (h forwardJoinHandler) Handle(
-	ctx context.Context, s quic.Stream, res *Result,
+	ctx context.Context, s dquic.Stream, res *Result,
 ) (handler, error) {
 	// Now that we know we are reading a forward join message,
 	// we can set an appropriate deadline.

@@ -12,10 +12,10 @@ import (
 	"github.com/bits-and-blooms/bitset"
 	"github.com/gordian-engine/dragon/breathcast/bcmerkle/bcsha256"
 	"github.com/gordian-engine/dragon/breathcast/internal/bci"
+	"github.com/gordian-engine/dragon/dquic"
+	"github.com/gordian-engine/dragon/dquic/dquictest"
 	"github.com/gordian-engine/dragon/internal/dbitset"
-	"github.com/gordian-engine/dragon/internal/dquic/dquictest"
 	"github.com/gordian-engine/dragon/internal/dtest"
-	"github.com/quic-go/quic-go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -143,7 +143,7 @@ func TestRunOrigination_missedAllUnreliableDatagrams(t *testing.T) {
 	cOrig, cClient := fx.ListenerSet.Dial(t, 0, 1)
 
 	// Run with a connection that drops datagrams.
-	fx.Run(t, ctx, nil, dquictest.DatagramDropper{Connection: cOrig})
+	fx.Run(t, ctx, nil, dquictest.DatagramDropper{Conn: cOrig})
 
 	s, err := cClient.AcceptStream(ctx)
 	require.NoError(t, err)
@@ -245,7 +245,7 @@ func (f *OriginationFixture) Run(
 	t *testing.T,
 	ctx context.Context,
 	log *slog.Logger,
-	conn quic.Connection,
+	conn dquic.Conn,
 ) {
 	t.Helper()
 

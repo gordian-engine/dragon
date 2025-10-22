@@ -7,9 +7,9 @@ import (
 	"github.com/gordian-engine/dragon/breathcast"
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/dpubsub"
-	"github.com/gordian-engine/dragon/internal/dquic/dquictest"
+	"github.com/gordian-engine/dragon/dquic"
+	"github.com/gordian-engine/dragon/dquic/dquictest"
 	"github.com/gordian-engine/dragon/internal/dtest"
-	"github.com/quic-go/quic-go"
 )
 
 // ProtocolFixture is a fixture for testing the breathcast protocol.
@@ -71,7 +71,7 @@ func NewProtocolFixture(
 // [*dquictest.ListenerSet.Dial] (in order for the first returned connection,
 // and swapped for the second returned connection).
 func (f *ProtocolFixture) AddConnection(
-	conn quic.Connection,
+	conn dquic.Conn,
 	ownerIdx, peerIdx int,
 ) {
 	f.ConnChanges[ownerIdx].Publish(dconn.Change{

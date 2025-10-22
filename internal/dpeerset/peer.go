@@ -3,11 +3,11 @@ package dpeerset
 import (
 	"github.com/gordian-engine/dragon/daddr"
 	"github.com/gordian-engine/dragon/dcert"
-	"github.com/quic-go/quic-go"
+	"github.com/gordian-engine/dragon/dquic"
 )
 
 type Peer struct {
-	Conn quic.Connection
+	Conn dquic.Conn
 
 	Chain dcert.Chain
 	AA    daddr.AddressAttestation
@@ -15,7 +15,7 @@ type Peer struct {
 	// TODO: this could possibly be just a quic.SendStream,
 	// as the read side happens in the peerInboundProcessor type,
 	// and we must not interfere with that work.
-	Admission quic.Stream
+	Admission dquic.Stream
 }
 
 func (p Peer) toInternal() iPeer {
@@ -35,12 +35,12 @@ func (p Peer) toInternal() iPeer {
 // iPeer is an internal representation of a peer.
 // It contains some extra fields that seem worth calculating only once.
 type iPeer struct {
-	Conn quic.Connection
+	Conn dquic.Conn
 
 	Chain dcert.Chain
 	AA    daddr.AddressAttestation
 
-	Admission quic.Stream
+	Admission dquic.Stream
 
 	CACertHandle   dcert.CACertHandle
 	LeafCertHandle dcert.LeafCertHandle

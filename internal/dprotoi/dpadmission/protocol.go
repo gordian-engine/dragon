@@ -6,14 +6,14 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dprotoi"
-	"github.com/quic-go/quic-go"
 )
 
 type Protocol struct {
 	Log *slog.Logger
 
-	Stream quic.Stream
+	Stream dquic.Stream
 
 	Cfg Config
 }
@@ -65,7 +65,7 @@ func (p *Protocol) Run(ctx context.Context) (Result, error) {
 
 type handler interface {
 	Handle(
-		context.Context, quic.Stream, *Result,
+		context.Context, dquic.Stream, *Result,
 	) (handler, error)
 
 	// User-facing name for logging and debugging.

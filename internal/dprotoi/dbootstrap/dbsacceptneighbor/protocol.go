@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dprotoi"
-	"github.com/quic-go/quic-go"
 )
 
 type Protocol struct {
@@ -15,9 +15,9 @@ type Protocol struct {
 
 	Cfg Config
 
-	Conn quic.Connection
+	Conn dquic.Conn
 
-	Admission quic.Stream
+	Admission dquic.Stream
 }
 
 type Config struct {
@@ -81,6 +81,6 @@ func (p *Protocol) RunReject(ctx context.Context) error {
 }
 
 type handler interface {
-	Handle(context.Context, quic.Connection, quic.Stream, *Result) (handler, error)
+	Handle(context.Context, dquic.Conn, dquic.Stream, *Result) (handler, error)
 	Name() string
 }

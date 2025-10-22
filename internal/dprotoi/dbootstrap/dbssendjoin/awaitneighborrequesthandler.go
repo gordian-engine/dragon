@@ -6,8 +6,8 @@ import (
 	"io"
 	"log/slog"
 
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dprotoi"
-	"github.com/quic-go/quic-go"
 )
 
 // awaitNeighborRequestHandler is a handler for a joining node.
@@ -21,7 +21,7 @@ type awaitNeighborRequestHandler struct {
 }
 
 func (h awaitNeighborRequestHandler) Handle(
-	ctx context.Context, c quic.Connection, res *Result,
+	ctx context.Context, c dquic.Conn, res *Result,
 ) (streamHandler, error) {
 	s := res.AdmissionStream
 	if err := s.SetReadDeadline(h.Cfg.Now().Add(h.Cfg.AwaitNeighborTimeout)); err != nil {

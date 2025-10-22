@@ -9,7 +9,7 @@ import (
 
 	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dcert/dcerttest"
-	"github.com/gordian-engine/dragon/internal/dquic"
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dtest"
 	"github.com/quic-go/quic-go"
 	"github.com/stretchr/testify/require"
@@ -122,7 +122,7 @@ func NewListenerSet(t *testing.T, ctx context.Context, count int) *ListenerSet {
 // accepts a connection on the destination listener.
 // If there is already an attempt to accept a connection there,
 // the two attempts will race and the test will be inconsistent.
-func (ls *ListenerSet) Dial(t *testing.T, srcIdx, dstIdx int) (srcConn, dstConn quic.Connection) {
+func (ls *ListenerSet) Dial(t *testing.T, srcIdx, dstIdx int) (srcConn, dstConn dquic.Conn) {
 	t.Helper()
 
 	if srcIdx < 0 || srcIdx >= len(ls.UDPConns) || dstIdx < 0 || dstIdx >= len(ls.UDPConns) {
@@ -156,7 +156,7 @@ func (ls *ListenerSet) Dial(t *testing.T, srcIdx, dstIdx int) (srcConn, dstConn 
 	acceptedConn := dtest.ReceiveSoon(t, connAcceptedCh)
 	require.NotNil(t, acceptedConn)
 
-	return res.Conn, acceptedConn
+	return res.Conn, dquic.WrapConn(acceptedConn)
 }
 
 func (ls *ListenerSet) Dialer(idx int) dquic.Dialer {

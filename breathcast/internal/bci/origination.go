@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/bits-and-blooms/bitset"
+	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dbitset"
 	"github.com/quic-go/quic-go"
 )
@@ -20,7 +21,7 @@ type OriginationConfig struct {
 	WG *sync.WaitGroup
 
 	// The connection on which we will open the stream.
-	Conn quic.Connection
+	Conn dquic.Conn
 
 	// The protocol header that indicates the specific broadcast operation.
 	ProtocolHeader ProtocolHeader
@@ -38,7 +39,7 @@ type OriginationConfig struct {
 // required for [sendOriginationPackets],
 // and it is created in [openOriginationStream].
 type initialOriginationState struct {
-	Stream  quic.SendStream
+	Stream  dquic.SendStream
 	PeerHas *bitset.BitSet
 }
 
@@ -104,7 +105,7 @@ func openOriginationStream(
 	ctx context.Context,
 	log *slog.Logger,
 	wg *sync.WaitGroup,
-	conn quic.Connection,
+	conn dquic.Conn,
 	pHeader ProtocolHeader,
 	appHeader []byte,
 	packets [][]byte,
@@ -181,7 +182,7 @@ func sendOriginationPackets(
 	ctx context.Context,
 	log *slog.Logger,
 	wg *sync.WaitGroup,
-	conn quic.Connection,
+	conn dquic.Conn,
 	packets [][]byte,
 	nData uint16,
 	initialStateCh <-chan initialOriginationState,
@@ -191,7 +192,7 @@ func sendOriginationPackets(
 	defer wg.Done()
 
 	var peerHas *bitset.BitSet
-	var s quic.SendStream
+	var s dquic.SendStream
 	select {
 	case <-ctx.Done():
 		return
@@ -228,7 +229,7 @@ func sendOriginationPackets(
 func synchronizeMissedPackets(
 	ctx context.Context,
 	log *slog.Logger,
-	s quic.SendStream,
+	s dquic.SendStream,
 	peerHas *bitset.BitSet,
 	peerBitsetUpdates <-chan *bitset.BitSet,
 	packets [][]byte,
@@ -286,8 +287,8 @@ func synchronizeMissedPackets(
 	); err != nil {
 		var streamErr *quic.StreamError
 		if errors.As(err, &streamErr) {
-			if streamErr.ErrorCode == GotFullDataErrorCode ||
-				streamErr.ErrorCode == InterruptedErrorCode {
+			if dquic.StreamErrorCode(streamErr.ErrorCode) == GotFullDataErrorCode ||
+				dquic.StreamErrorCode(streamErr.ErrorCode) == InterruptedErrorCode {
 				// Silently stop here.
 				return
 			}
@@ -336,7 +337,7 @@ func isCloseOfCanceledStreamError(e error) bool {
 //
 // sendUnreliableDatagrams ensures that the timer is stopped upon return.
 func sendUnreliableDatagrams(
-	conn quic.Connection,
+	conn dquic.Conn,
 	packets [][]byte,
 	alreadySent *bitset.BitSet,
 	peerHas *bitset.BitSet,
@@ -402,7 +403,7 @@ func sendUnreliableDatagrams(
 // Delta updates sent over the peerHasDeltaCh are checked
 // between individual sends.
 func sendSyncPackets(
-	s quic.SendStream,
+	s dquic.SendStream,
 	packets [][]byte,
 	nData uint16,
 	peerHas *bitset.BitSet,

@@ -23,7 +23,7 @@ type Dialer struct {
 
 // DialResult is the return type for [Dialer.Dial].
 type DialResult struct {
-	Conn quic.Connection
+	Conn Conn
 
 	// A channel that is closed when the peer's CA certificate
 	// is removed from the trusted CA pool.
@@ -41,14 +41,16 @@ func (d Dialer) Dial(ctx context.Context, addr net.Addr) (DialResult, error) {
 	tlsConf := d.BaseTLSConf.Clone()
 	tlsConf.RootCAs = d.CAPool.CertPool()
 
-	qc, err := d.QUICTransport.Dial(ctx, addr, tlsConf, d.QUICConfig)
+	rawQC, err := d.QUICTransport.Dial(ctx, addr, tlsConf, d.QUICConfig)
 	if err != nil {
 		return DialResult{}, fmt.Errorf("failed to dial desired neighbor: %w", err)
 	}
 
+	qc := WrapConn(rawQC)
+
 	// Now that we have a raw connection to that peer,
 	// we need to ensure that we close it if that certificate is removed.
-	vcs := qc.ConnectionState().TLS.VerifiedChains
+	vcs := qc.TLSConnectionState().VerifiedChains
 	if len(vcs) == 0 {
 		panic(fmt.Errorf(
 			"IMPOSSIBLE: no verified chains after dialing remote host %q",

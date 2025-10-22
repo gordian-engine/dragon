@@ -4,15 +4,15 @@ import (
 	"context"
 
 	"github.com/gordian-engine/dragon/dpubsub"
-	"github.com/quic-go/quic-go"
+	"github.com/gordian-engine/dragon/dquic"
 )
 
-// SyncDatagramSender wraps a quic.Connection
+// SyncDatagramSender wraps a dquic.Conn
 // and allows real calls to SendDatagram,
 // but every call is blocked until a corresponding value
 // arrives on the Continue channel.
 type SyncDatagramSender struct {
-	quic.Connection
+	dquic.Conn
 
 	Ctx      context.Context
 	Continue <-chan struct{}
@@ -26,7 +26,7 @@ func (s SyncDatagramSender) SendDatagram(d []byte) error {
 		// Go to the send.
 	}
 
-	return s.Connection.SendDatagram(d)
+	return s.Conn.SendDatagram(d)
 }
 
 // DatagramDropper wraps a quic.Connection
@@ -35,21 +35,21 @@ func (s SyncDatagramSender) SendDatagram(d []byte) error {
 // This is useful for tests that need to simulate
 // datagrams that do not reach the destination.
 type DatagramDropper struct {
-	quic.Connection
+	dquic.Conn
 }
 
 func (d DatagramDropper) SendDatagram([]byte) error {
 	return nil
 }
 
-// PubsubDatagramSender wraps a quic.Connection
+// PubsubDatagramSender wraps a dquic.Conn
 // that reroutes SendDatagram to put the byte values
 // on a provided [*dpubsub.Stream].
 // This allows unblocked behavior of SendDatagram
 // but still allows test synchronization,
 // without using particularly sized buffered channels.
 type PubsubDatagramSender struct {
-	quic.Connection
+	dquic.Conn
 
 	Stream *dpubsub.Stream[[]byte]
 }

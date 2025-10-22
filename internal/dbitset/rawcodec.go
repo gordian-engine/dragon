@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/bits-and-blooms/bitset"
-	"github.com/quic-go/quic-go"
+	"github.com/gordian-engine/dragon/dquic"
 )
 
 type RawEncoder struct {
@@ -45,7 +45,7 @@ func (e *RawEncoder) encode(
 }
 
 func (e *RawEncoder) SendBitset(
-	s quic.SendStream,
+	s dquic.SendStream,
 	timeout time.Duration,
 	bs *bitset.BitSet,
 ) error {
@@ -55,7 +55,7 @@ func (e *RawEncoder) SendBitset(
 }
 
 func (e *RawEncoder) send(
-	s quic.SendStream,
+	s dquic.SendStream,
 	timeout time.Duration,
 ) error {
 	if err := s.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
@@ -74,7 +74,7 @@ type RawDecoder struct {
 }
 
 func (d *RawDecoder) ReceiveBitset(
-	s quic.ReceiveStream,
+	s dquic.ReceiveStream,
 	timeout time.Duration,
 	bs *bitset.BitSet,
 ) error {
