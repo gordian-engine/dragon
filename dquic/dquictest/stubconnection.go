@@ -9,10 +9,6 @@ import (
 )
 
 type StubConnection struct {
-	// The value to return from the Context method.
-	// If nil, the method returns [context.Background()].
-	ContextValue context.Context
-
 	// The value to return from the TLSConnectionState method.
 	TLSConnectionStateValue tls.ConnectionState
 

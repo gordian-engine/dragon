@@ -698,6 +698,8 @@ func (o *BroadcastOperation) AcceptBroadcast(
 //
 // If the raw packet is valid and if it is new to this operation,
 // it is forwarded to any peers who do not have it yet.
+//
+// HandlePacket is safe to be called concurrently.
 func (o *BroadcastOperation) HandlePacket(
 	ctx context.Context,
 	raw []byte,
