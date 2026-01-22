@@ -7,7 +7,7 @@ import (
 
 // Pool is a collection of CA certificates.
 type Pool struct {
-	mu     sync.RWMutex
+	mu     sync.Mutex
 	cas    map[string]*x509.Certificate
 	notify map[string]chan struct{}
 
@@ -42,6 +42,9 @@ func NewPoolFromCerts(certs []*x509.Certificate) *Pool {
 // This pool is shared until p's CA set changes,
 // so the returned value must not be modified.
 func (p *Pool) CertPool() *x509.CertPool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	return p.lazyCertPool()
 }
 
