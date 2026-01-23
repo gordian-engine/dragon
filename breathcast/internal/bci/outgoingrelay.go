@@ -2,6 +2,7 @@ package bci
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/gordian-engine/dragon/dpubsub"
 	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dbitset"
+	"github.com/quic-go/quic-go"
 )
 
 // OutgoingRelayConfig is the configuration for [RunOutgoingRelay].
@@ -138,6 +140,14 @@ func openOutgoingRelayStream(
 	defer close(ssCh)
 	defer close(initialPeerHas)
 
+	// TODO: it would be better to simply not open the stream at all
+	// if we know the peer has reported having the full data.
+	// We got their ratio byte during breathcast.ExtractStreamApplicationHeader;
+	// but then the application associates that stream with a particular broadcast operation,
+	// so the API that needs to change is probably [*BroadcastOperation.AcceptStream],
+	// where we would note whether the peer sharing the broadcast
+	// already has the full data.
+
 	s, err := OpenStream(ctx, cfg.Conn, OpenStreamConfig{
 		// TODO: make these configurable.
 		OpenStreamTimeout: 20 * time.Millisecond,
@@ -161,6 +171,15 @@ func openOutgoingRelayStream(
 
 	dec := new(dbitset.AdaptiveDecoder)
 	if err := dec.ReceiveBitset(s, receiveBitsetTimeout, peerHas); err != nil {
+		var streamErr *quic.StreamError
+		if errors.As(err, &streamErr) {
+			if dquic.StreamErrorCode(streamErr.ErrorCode) == GotFullDataErrorCode ||
+				dquic.StreamErrorCode(streamErr.ErrorCode) == InterruptedErrorCode {
+				// Silently stop here. The remote closed the stream.
+				return
+			}
+		}
+
 		log.Info(
 			"Failed to receive initial bitset acknowledgement to relay stream",
 			"err", err,

@@ -421,6 +421,35 @@ func TestProtocol_allDatagramsDropped(t *testing.T) {
 		s,
 	))
 
+	// Just to simplify outstanding streams and the logs a bit,
+	// the originator's broadcast operation should "accept" (but immediately close)
+	// the relay stream from the recipient.
+	{
+		relayStream, err := c0.AcceptStream(ctx)
+		require.NoError(t, err)
+		_, err = io.ReadFull(relayStream, oneByte[:])
+		require.NoError(t, err)
+		require.Equal(t, byte(0xFE), oneByte[0])
+
+		bid, err := fx.Protocols[0].ExtractStreamBroadcastID(relayStream, nil)
+		require.NoError(t, err)
+		require.Equal(t, []byte("xyz"), bid)
+
+		appHeader, ratio, err := breathcast.ExtractStreamApplicationHeader(relayStream, nil)
+		require.NoError(t, err)
+		require.Equal(t, []byte("fake app header"), appHeader)
+		require.Less(t, ratio, byte(0xff)) // We can't rely on the ratio being zero by the time of accepting.
+
+		require.NoError(t, bop0.AcceptBroadcast(
+			ctx,
+			dconn.Conn{
+				QUIC:  c0,
+				Chain: fx.ListenerSet.Leaves[1].Chain,
+			},
+			relayStream,
+		))
+	}
+
 	// And the data becomes ready shortly thereafter.
 	_ = dtest.ReceiveSoon(t, bop1.DataReady())
 
