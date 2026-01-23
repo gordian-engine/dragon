@@ -450,6 +450,12 @@ func sendSyncPackets(
 		if need == 0 {
 			return nil
 		}
+
+		// Our copy of peerHas must be up to date,
+		// because the iterator works on a copy,
+		// and we refresh the remaining need count
+		// upon receiving a peer delta update.
+		peerHas.Set(cb.Idx)
 	}
 
 	return nil
