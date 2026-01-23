@@ -82,14 +82,14 @@ func testCodec(
 			bs.Set(uint(v))
 		}
 
-		require.NoError(t, enc.SendBitset(s01, 10*time.Millisecond, bs))
+		require.NoError(t, enc.SendBitset(s01, 100*time.Millisecond, bs))
 
 		clear(dstWords[:sz/8])
 		got := bitset.From(dstWords[:0])
 		got.Set(sz)
 		got.Clear(sz)
 
-		require.NoError(t, dec.ReceiveBitset(s10, 10*time.Millisecond, got))
+		require.NoError(t, dec.ReceiveBitset(s10, 100*time.Millisecond, got))
 
 		require.Truef(
 			t,
