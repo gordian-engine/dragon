@@ -50,6 +50,7 @@ func RunAcceptBroadcast(
 	// Unbuffered because the two goroutines using this
 	// need to synchronize across it.
 	newHaveLeaves := make(chan *bitset.BitSet)
+	peerNeedsFinalizeUpdate := make(chan struct{})
 
 	cfg.WG.Add(3)
 	go runPeriodicBitsetUpdates(
@@ -60,8 +61,9 @@ func RunAcceptBroadcast(
 		cfg.InitialHaveLeaves.Clone(),
 		cfg.AddedLeaves,
 		newHaveLeaves,
+		peerNeedsFinalizeUpdate,
 		4*time.Millisecond,
-		2*time.Millisecond,
+		cfg.BitsetSendPeriod,
 		cfg.DataReady,
 	)
 	go acceptSyncUpdates(
@@ -72,6 +74,7 @@ func RunAcceptBroadcast(
 		cfg.PacketDecoder,
 		cfg.PacketHandler,
 		newHaveLeaves,
+		peerNeedsFinalizeUpdate,
 		5*time.Millisecond,
 		cfg.DataReady,
 	)
@@ -91,6 +94,7 @@ func runPeriodicBitsetUpdates(
 	haveLeaves *bitset.BitSet,
 	addedLeaves *dpubsub.Stream[uint],
 	newHaveLeaves chan<- *bitset.BitSet,
+	peerNeedsFinalizeUpdate <-chan struct{},
 	sendTimeout time.Duration,
 	sendPeriod time.Duration,
 	dataReady <-chan struct{},
@@ -187,7 +191,23 @@ func runPeriodicBitsetUpdates(
 			}
 
 			delta.ClearAll()
+			due.Reset(sendPeriod)
 
+		case <-peerNeedsFinalizeUpdate:
+			// The finalize update can only happen once.
+			// Clear the channel value so we don't attempt to receive again.
+			peerNeedsFinalizeUpdate = nil
+
+			// Our final update is just a typical send bitset.
+			if err := enc.SendBitset(s, sendTimeout, delta); err != nil {
+				log.Info(
+					"Failed to send final bitset update",
+					"err", err,
+				)
+				return
+			}
+
+			delta.ClearAll()
 			due.Reset(sendPeriod)
 		}
 	}
@@ -206,6 +226,7 @@ func acceptSyncUpdates(
 	pDec *PacketDecoder,
 	dh PacketHandler,
 	newHaveLeaves <-chan *bitset.BitSet,
+	peerNeedsFinalizeUpdate chan<- struct{},
 	readSyncTimeout time.Duration,
 	dataReady <-chan struct{},
 ) {
@@ -288,6 +309,11 @@ UNFINISHED:
 			return
 		}
 	}
+
+	// Signal to the runPeriodicBitsetUpdates goroutine
+	// that we must send a delta update immediately
+	// in response to the peer telling us datagrams are finished.
+	close(peerNeedsFinalizeUpdate)
 
 	// Here, we have received the datagram finished ID,
 	// so we just loop until the data is ready.

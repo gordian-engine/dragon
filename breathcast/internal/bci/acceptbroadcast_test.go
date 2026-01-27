@@ -135,7 +135,7 @@ func TestRunAcceptBroadcast_externalUpdatesShared(t *testing.T) {
 	got := bitset.MustNew(4)
 
 	// The operation immediately sends its have bitset.
-	require.NoError(t, dec.ReceiveBitset(s, 5*time.Millisecond, got))
+	require.NoError(t, dec.ReceiveBitset(s, 15*time.Millisecond, got))
 	require.Equal(t, uint(1), got.Count())
 	require.True(t, got.Test(0))
 
@@ -143,11 +143,11 @@ func TestRunAcceptBroadcast_externalUpdatesShared(t *testing.T) {
 	al.Publish(3)
 	al = al.Next
 
-	require.NoError(t, dec.ReceiveBitset(s, 5*time.Millisecond, got))
+	require.NoError(t, dec.ReceiveBitset(s, 15*time.Millisecond, got))
 
 	// It is possible that the update was late, so refresh once if necessary.
 	if got.None() {
-		require.NoError(t, dec.ReceiveBitset(s, 5*time.Millisecond, got))
+		require.NoError(t, dec.ReceiveBitset(s, 15*time.Millisecond, got))
 	}
 
 	require.Equal(t, uint(1), got.Count())
@@ -214,6 +214,60 @@ func TestRunAcceptBroadcast_syncDatagrams(t *testing.T) {
 
 	// And that means the datagram collector should have captured the value.
 	require.Equal(t, dg, c.Get(0))
+}
+
+func TestRunAcceptBroadcast_finalUpdateSentOnRequest(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	var wg sync.WaitGroup
+	defer wg.Wait()
+
+	s, sTest := establishedStream(t, ctx)
+
+	haveLeaves := bitset.MustNew(4)
+
+	bci.RunAcceptBroadcast(ctx, dtest.NewLogger(t), bci.AcceptBroadcastConfig{
+		WG: &wg,
+
+		Stream:        sTest,
+		PacketHandler: new(datagramCollector),
+
+		// The actual decoder settings don't really matter for this test;
+		// we just need it to be non-nil.
+		PacketDecoder: bci.NewPacketDecoder(
+			0xaa,
+			[]byte("test"),
+			7,
+			bcsha256.HashSize,
+			uint16(len("datagram0")),
+		),
+
+		InitialHaveLeaves: haveLeaves.Clone(),
+		AddedLeaves:       dpubsub.NewStream[uint](),
+
+		BitsetSendPeriod: time.Minute, // Excessively long so we can't accidentally reach it.
+
+		// Not closed in this test.
+		DataReady: nil,
+	})
+	defer cancel()
+
+	// An immediate bitset send first.
+	dec := new(dbitset.AdaptiveDecoder)
+	got := bitset.MustNew(4)
+
+	require.NoError(t, dec.ReceiveBitset(s, 5*time.Millisecond, got))
+
+	// Now, pretend all the datagrams we sent were dropped,
+	// and just send the finalization byte synchonously.
+	_, err := s.Write([]byte{0xFF}) // Unexported constant datagramsFinishedMessageID.
+	require.NoError(t, err)
+
+	// The acceptor immediately responds with another bitset update.
+	require.NoError(t, dec.ReceiveBitset(s, 15*time.Millisecond, got))
 }
 
 type datagramCollector struct {

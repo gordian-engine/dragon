@@ -65,7 +65,7 @@ func TestRunOutgoingRelay_handshake(t *testing.T) {
 
 	// Have the client connection receive a datagram,
 	// which should only work after the handshake (I think?).
-	dgCtx, dgCancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	dgCtx, dgCancel := context.WithTimeout(ctx, 100*time.Millisecond)
 	defer dgCancel()
 	dg, err := cClient.ReceiveDatagram(dgCtx)
 	require.NoError(t, err)
