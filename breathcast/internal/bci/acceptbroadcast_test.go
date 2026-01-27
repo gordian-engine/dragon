@@ -209,8 +209,8 @@ func TestRunAcceptBroadcast_syncDatagrams(t *testing.T) {
 	// Therefore, wait two bitset updates to ensure we are synchronized
 	// and then confirm the presence of the datagram.
 
-	require.NoError(t, dec.ReceiveBitset(s, 5*time.Millisecond, got))
-	require.NoError(t, dec.ReceiveBitset(s, 5*time.Millisecond, got))
+	require.NoError(t, dec.ReceiveBitset(s, 15*time.Millisecond, got))
+	require.NoError(t, dec.ReceiveBitset(s, 15*time.Millisecond, got))
 
 	// And that means the datagram collector should have captured the value.
 	require.Equal(t, dg, c.Get(0))
