@@ -293,7 +293,7 @@ UNFINISHED:
 				readSyncTimeout,
 			); err != nil {
 				log.Info(
-					"Failed to read synchronous missed datagram",
+					"Failed to read synchronous missed packet (before datagrams finished)",
 					"err", err,
 				)
 				return
@@ -355,7 +355,7 @@ UNFINISHED:
 			}
 
 			log.Info(
-				"Failed to read synchronous missed datagram",
+				"Failed to read synchronous missed packet (after datagrams finished)",
 				"err", err,
 			)
 			return
