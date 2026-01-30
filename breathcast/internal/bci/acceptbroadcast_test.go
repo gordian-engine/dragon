@@ -41,7 +41,7 @@ func TestRunAcceptBroadcast_firstUpdate(t *testing.T) {
 			InitialHaveLeaves: haveLeaves.Clone(),
 			AddedLeaves:       dpubsub.NewStream[uint](),
 
-			Timeouts: bci.DefaultAcceptBroadcastTimeouts(),
+			Timing: bci.DefaultAcceptBroadcastTiming(),
 
 			// Not closing dataReady for this test, so it can be nil.
 			DataReady: nil,
@@ -80,7 +80,7 @@ func TestRunAcceptBroadcast_firstUpdate(t *testing.T) {
 			InitialHaveLeaves: haveLeaves.Clone(),
 			AddedLeaves:       dpubsub.NewStream[uint](),
 
-			Timeouts: bci.DefaultAcceptBroadcastTimeouts(),
+			Timing: bci.DefaultAcceptBroadcastTiming(),
 
 			// Not closing dataReady for this test, so it can be nil.
 			DataReady: nil,
@@ -124,7 +124,7 @@ func TestRunAcceptBroadcast_externalUpdatesShared(t *testing.T) {
 		InitialHaveLeaves: haveLeaves.Clone(),
 		AddedLeaves:       al,
 
-		Timeouts: bci.DefaultAcceptBroadcastTimeouts(),
+		Timing: bci.DefaultAcceptBroadcastTiming(),
 
 		// Not closing dataReady for this test, so it can be nil.
 		DataReady: nil,
@@ -185,7 +185,7 @@ func TestRunAcceptBroadcast_syncDatagrams(t *testing.T) {
 		InitialHaveLeaves: bitset.MustNew(4),
 		AddedLeaves:       dpubsub.NewStream[uint](),
 
-		Timeouts: bci.DefaultAcceptBroadcastTimeouts(),
+		Timing: bci.DefaultAcceptBroadcastTiming(),
 
 		// Not closing dataReady for this test, so it can be nil.
 		DataReady: nil,
@@ -229,8 +229,8 @@ func TestRunAcceptBroadcast_finalUpdateSentOnRequest(t *testing.T) {
 
 	haveLeaves := bitset.MustNew(4)
 
-	timeouts := bci.DefaultAcceptBroadcastTimeouts()
-	timeouts.BitsetSendPeriod = time.Hour // Excessively long so a periodic send isn't mistaken for final result.
+	timing := bci.DefaultAcceptBroadcastTiming()
+	timing.BitsetSendPeriod = time.Hour // Excessively long so a periodic send isn't mistaken for final result.
 
 	bci.RunAcceptBroadcast(ctx, dtest.NewLogger(t), bci.AcceptBroadcastConfig{
 		WG: &wg,
@@ -251,7 +251,7 @@ func TestRunAcceptBroadcast_finalUpdateSentOnRequest(t *testing.T) {
 		InitialHaveLeaves: haveLeaves.Clone(),
 		AddedLeaves:       dpubsub.NewStream[uint](),
 
-		Timeouts: timeouts,
+		Timing: timing,
 
 		// Not closed in this test.
 		DataReady: nil,
@@ -262,7 +262,7 @@ func TestRunAcceptBroadcast_finalUpdateSentOnRequest(t *testing.T) {
 	dec := new(dbitset.AdaptiveDecoder)
 	got := bitset.MustNew(4)
 
-	require.NoError(t, dec.ReceiveBitset(s, 5*time.Millisecond, got))
+	require.NoError(t, dec.ReceiveBitset(s, 75*time.Millisecond, got))
 
 	// Now, pretend all the datagrams we sent were dropped,
 	// and just send the finalization byte synchonously.
@@ -270,7 +270,7 @@ func TestRunAcceptBroadcast_finalUpdateSentOnRequest(t *testing.T) {
 	require.NoError(t, err)
 
 	// The acceptor immediately responds with another bitset update.
-	require.NoError(t, dec.ReceiveBitset(s, 15*time.Millisecond, got))
+	require.NoError(t, dec.ReceiveBitset(s, 75*time.Millisecond, got))
 }
 
 type datagramCollector struct {

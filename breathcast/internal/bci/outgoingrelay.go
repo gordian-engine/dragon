@@ -46,8 +46,8 @@ type OutgoingRelayConfig struct {
 	// Count of data and parity shards.
 	NData, NParity uint16
 
-	// Timeout values to use when sending origination data.
-	Timeouts OriginationTimeouts
+	// Timing to use when sending origination data.
+	Timing OriginationTiming
 }
 
 // RunOutgoingRelay starts several background goroutines
@@ -57,7 +57,7 @@ func RunOutgoingRelay(
 	log *slog.Logger,
 	cfg OutgoingRelayConfig,
 ) {
-	if cfg.Timeouts.IsZero() {
+	if cfg.Timing.IsZero() {
 		panic(errors.New("ILLEGAL: RunOutgoingRelay called with zero timeouts"))
 	}
 	// Buffered so that writes in openOutgoingRelayStream don't block.
@@ -114,9 +114,9 @@ func RunOutgoingRelay(
 		syncRequests, syncReturns,
 		ssEndCh,
 		clearDeltaTimeoutCh,
-		cfg.Timeouts.OccasionalDatagramSleep,
-		cfg.Timeouts.FinalBitsetWaitTimeout,
-		cfg.Timeouts.SendSyncPacketTimeout,
+		cfg.Timing.OccasionalDatagramSleep,
+		cfg.Timing.FinalBitsetWaitTimeout,
+		cfg.Timing.SendSyncPacketTimeout,
 	)
 	go sendMissedPackets(
 		ctx,

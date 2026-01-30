@@ -40,7 +40,7 @@ func TestBroadcastOperation_origination_reader(t *testing.T) {
 		ProtocolID:        0xFE,
 		BroadcastIDLength: 3,
 
-		Timeouts: breathcast.DefaultProtocolTimeouts(),
+		Timing: breathcast.DefaultProtocolTiming(),
 	})
 	defer p.Wait()
 	defer cancel()

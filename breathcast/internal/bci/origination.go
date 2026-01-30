@@ -34,12 +34,12 @@ type OriginationConfig struct {
 	// Required to limit number of reliable chunks sent.
 	NData uint16
 
-	Timeouts OriginationTimeouts
+	Timing OriginationTiming
 }
 
-// OriginationTimeouts is a copy of breathcast.OriginationTimeouts.
+// OriginationTiming is a copy of breathcast.OriginationTiming.
 // We could use an alias but for a small struct that just hurts readability.
-type OriginationTimeouts struct {
+type OriginationTiming struct {
 	// How long to wait for recipient to send initial bitset,
 	// and how long to allow between each subsequent bitset.
 	ReceiveBitsetTimeout time.Duration
@@ -60,15 +60,15 @@ type OriginationTimeouts struct {
 }
 
 // IsZero reports whether t has all zero duration values.
-func (t OriginationTimeouts) IsZero() bool {
+func (t OriginationTiming) IsZero() bool {
 	return t.ReceiveBitsetTimeout == 0 &&
 		t.OccasionalDatagramSleep == 0 &&
 		t.FinalBitsetWaitTimeout == 0 &&
 		t.SendSyncPacketTimeout == 0
 }
 
-func DefaultOriginationTimeouts() OriginationTimeouts {
-	return OriginationTimeouts{
+func DefaultOriginationTiming() OriginationTiming {
+	return OriginationTiming{
 		ReceiveBitsetTimeout: 50 * time.Millisecond,
 
 		OccasionalDatagramSleep: 75 * time.Microsecond, // Yes, sub-millisecond.
@@ -117,7 +117,7 @@ func RunOrigination(
 		cfg.ProtocolHeader,
 		cfg.AppHeader,
 		cfg.Packets,
-		cfg.Timeouts.ReceiveBitsetTimeout,
+		cfg.Timing.ReceiveBitsetTimeout,
 		bsdCh,
 		iosCh,
 	)
@@ -131,15 +131,15 @@ func RunOrigination(
 		iosCh,
 		peerHasDeltaCh,
 		clearDeltaTimeoutCh,
-		cfg.Timeouts.OccasionalDatagramSleep,
-		cfg.Timeouts.FinalBitsetWaitTimeout,
-		cfg.Timeouts.SendSyncPacketTimeout,
+		cfg.Timing.OccasionalDatagramSleep,
+		cfg.Timing.FinalBitsetWaitTimeout,
+		cfg.Timing.SendSyncPacketTimeout,
 	)
 	go receiveBitsetDeltas(
 		ctx,
 		cfg.WG,
 		uint(len(cfg.Packets)),
-		cfg.Timeouts.ReceiveBitsetTimeout,
+		cfg.Timing.ReceiveBitsetTimeout,
 		func(string, error) {
 			// TODO: cancel the whole stream here, I think.
 		},

@@ -27,23 +27,24 @@ type AcceptBroadcastConfig struct {
 	InitialHaveLeaves *bitset.BitSet
 	AddedLeaves       *dpubsub.Stream[uint]
 
-	Timeouts AcceptBroadcastTimeouts
+	Timing AcceptBroadcastTiming
 
 	DataReady <-chan struct{}
 }
 
-type AcceptBroadcastTimeouts struct {
+type AcceptBroadcastTiming struct {
 	// Maximum duration that sending the initial bitset is allowed to block.
 	SendInitialBitsetTimeout time.Duration
 
 	// Maximum duration before failing to synchronously read a missed packet.
 	ReadSyncPacketTimeout time.Duration
 
+	// How frequently to synchronously send our bitset updates.
 	BitsetSendPeriod time.Duration
 }
 
-func DefaultAcceptBroadcastTimeouts() AcceptBroadcastTimeouts {
-	return AcceptBroadcastTimeouts{
+func DefaultAcceptBroadcastTiming() AcceptBroadcastTiming {
+	return AcceptBroadcastTiming{
 		SendInitialBitsetTimeout: 30 * time.Millisecond,
 
 		ReadSyncPacketTimeout: 75 * time.Millisecond,
@@ -82,8 +83,8 @@ func RunAcceptBroadcast(
 		cfg.AddedLeaves,
 		newHaveLeaves,
 		peerNeedsFinalizeUpdate,
-		cfg.Timeouts.SendInitialBitsetTimeout,
-		cfg.Timeouts.BitsetSendPeriod,
+		cfg.Timing.SendInitialBitsetTimeout,
+		cfg.Timing.BitsetSendPeriod,
 		cfg.DataReady,
 	)
 	go acceptSyncUpdates(
@@ -95,7 +96,7 @@ func RunAcceptBroadcast(
 		cfg.PacketHandler,
 		newHaveLeaves,
 		peerNeedsFinalizeUpdate,
-		cfg.Timeouts.ReadSyncPacketTimeout,
+		cfg.Timing.ReadSyncPacketTimeout,
 		cfg.DataReady,
 	)
 	go terminateStreamWhenDone(

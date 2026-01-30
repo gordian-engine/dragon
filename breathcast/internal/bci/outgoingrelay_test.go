@@ -625,7 +625,7 @@ func NewOutgoingRelayFixture(
 		NData:   nData,
 		NParity: nParity,
 
-		Timeouts: bci.DefaultOriginationTimeouts(),
+		Timing: bci.DefaultOriginationTiming(),
 	}
 
 	return &OutgoingRelayFixture{

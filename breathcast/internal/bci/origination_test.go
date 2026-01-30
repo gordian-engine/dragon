@@ -229,7 +229,7 @@ func NewOriginationFixture(
 
 		NData: nData,
 
-		Timeouts: bci.DefaultOriginationTimeouts(),
+		Timing: bci.DefaultOriginationTiming(),
 	}
 
 	return &OriginationFixture{

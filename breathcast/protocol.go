@@ -64,7 +64,7 @@ type Protocol struct {
 	// use a cryptographic hash of the underlying data.
 	broadcastIDLength uint8
 
-	timeouts ProtocolTimeouts
+	timing ProtocolTiming
 
 	// Separate from the wait group,
 	// to avoid possible race condition when closing.
@@ -100,12 +100,12 @@ type ProtocolConfig struct {
 	// and it consumes space in chunk packets.
 	BroadcastIDLength uint8
 
-	Timeouts ProtocolTimeouts
+	Timing ProtocolTiming
 }
 
-// ProtocolTimeouts is the set of configurable timeouts
-// for originating or relaying a broadcast.
-type ProtocolTimeouts struct {
+// ProtocolTiming is the set of configurable timing
+// for originating, relaying, and/or receiving a broadcast.
+type ProtocolTiming struct {
 	// How long to wait for recipient to send initial bitset,
 	// and how long to allow between each subsequent bitset.
 	ReceiveBitsetTimeout time.Duration
@@ -123,20 +123,34 @@ type ProtocolTimeouts struct {
 	// Both sides of the connection should be configured with gracious buffer space,
 	// so it should be okay for this to be a relatively short duration.
 	SendSyncPacketTimeout time.Duration
+
+	// Maximum duration that sending the initial bitset is allowed to block.
+	SendInitialBitsetTimeout time.Duration
+
+	// Maximum duration before failing to synchronously read a missed packet.
+	ReadSyncPacketTimeout time.Duration
+
+	// How frequently to update peers of which packets we have.
+	BitsetSendPeriod time.Duration
 }
 
-func DefaultProtocolTimeouts() ProtocolTimeouts {
-	def := bci.DefaultOriginationTimeouts()
-	return ProtocolTimeouts{
-		ReceiveBitsetTimeout:    def.ReceiveBitsetTimeout,
-		OccasionalDatagramSleep: def.OccasionalDatagramSleep,
-		FinalBitsetWaitTimeout:  def.FinalBitsetWaitTimeout,
-		SendSyncPacketTimeout:   def.SendSyncPacketTimeout,
+func DefaultProtocolTiming() ProtocolTiming {
+	o := bci.DefaultOriginationTiming()
+	a := bci.DefaultAcceptBroadcastTiming()
+	return ProtocolTiming{
+		ReceiveBitsetTimeout:    o.ReceiveBitsetTimeout,
+		OccasionalDatagramSleep: o.OccasionalDatagramSleep,
+		FinalBitsetWaitTimeout:  o.FinalBitsetWaitTimeout,
+		SendSyncPacketTimeout:   o.SendSyncPacketTimeout,
+
+		SendInitialBitsetTimeout: a.SendInitialBitsetTimeout,
+		ReadSyncPacketTimeout:    a.ReadSyncPacketTimeout,
+		BitsetSendPeriod:         a.BitsetSendPeriod,
 	}
 }
 
-func (t ProtocolTimeouts) originationTimeouts() bci.OriginationTimeouts {
-	return bci.OriginationTimeouts{
+func (t ProtocolTiming) originationTiming() bci.OriginationTiming {
+	return bci.OriginationTiming{
 		ReceiveBitsetTimeout:    t.ReceiveBitsetTimeout,
 		OccasionalDatagramSleep: t.OccasionalDatagramSleep,
 		FinalBitsetWaitTimeout:  t.FinalBitsetWaitTimeout,
@@ -144,11 +158,23 @@ func (t ProtocolTimeouts) originationTimeouts() bci.OriginationTimeouts {
 	}
 }
 
+func (t ProtocolTiming) acceptTiming() bci.AcceptBroadcastTiming {
+	return bci.AcceptBroadcastTiming{
+		SendInitialBitsetTimeout: t.SendInitialBitsetTimeout,
+		ReadSyncPacketTimeout:    t.ReadSyncPacketTimeout,
+		BitsetSendPeriod:         t.BitsetSendPeriod,
+	}
+}
+
 func NewProtocol(ctx context.Context, log *slog.Logger, cfg ProtocolConfig) *Protocol {
-	if cfg.Timeouts.ReceiveBitsetTimeout == 0 ||
-		cfg.Timeouts.OccasionalDatagramSleep == 0 ||
-		cfg.Timeouts.FinalBitsetWaitTimeout == 0 {
-		panic(errors.New("BUG: ProtocolConfig.Timeouts must be provided and must be non-zero"))
+	if cfg.Timing.ReceiveBitsetTimeout == 0 ||
+		cfg.Timing.OccasionalDatagramSleep == 0 ||
+		cfg.Timing.FinalBitsetWaitTimeout == 0 ||
+		cfg.Timing.SendSyncPacketTimeout == 0 ||
+		cfg.Timing.SendInitialBitsetTimeout == 0 ||
+		cfg.Timing.ReadSyncPacketTimeout == 0 ||
+		cfg.Timing.BitsetSendPeriod == 0 {
+		panic(errors.New("BUG: ProtocolConfig.Timeouts must be provided and no value may be zero"))
 	}
 
 	if cfg.BroadcastIDLength == 0 {
@@ -170,7 +196,7 @@ func NewProtocol(ctx context.Context, log *slog.Logger, cfg ProtocolConfig) *Pro
 
 		protocolID: cfg.ProtocolID,
 
-		timeouts: cfg.Timeouts,
+		timing: cfg.Timing,
 
 		broadcastIDLength: cfg.BroadcastIDLength,
 
@@ -291,7 +317,8 @@ func (p *Protocol) NewOrigination(
 		totalDataSize: cfg.TotalDataSize,
 		chunkSize:     cfg.ChunkSize,
 
-		origTimeouts: p.timeouts.originationTimeouts(),
+		origTiming: p.timing.originationTiming(),
+		acceptTiming: p.timing.acceptTiming(),
 
 		dataReady: make(chan struct{}),
 
@@ -445,7 +472,8 @@ func (p *Protocol) NewIncomingBroadcast(
 		hashSize:       cfg.HashSize,
 		rootProofCount: len(cfg.RootProofs),
 
-		origTimeouts: p.timeouts.originationTimeouts(),
+		origTiming: p.timing.originationTiming(),
+		acceptTiming: p.timing.acceptTiming(),
 
 		dataReady: make(chan struct{}),
 

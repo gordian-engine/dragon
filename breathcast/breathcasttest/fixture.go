@@ -57,7 +57,7 @@ func NewProtocolFixture(
 			ProtocolID:        cfg.ProtocolID,
 			BroadcastIDLength: cfg.BroadcastIDLength,
 
-			Timeouts: breathcast.DefaultProtocolTimeouts(),
+			Timing: breathcast.DefaultProtocolTiming(),
 		})
 		t.Cleanup(p.Wait)
 

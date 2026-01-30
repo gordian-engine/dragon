@@ -42,7 +42,8 @@ type BroadcastOperation struct {
 	hashSize       int
 	rootProofCount int
 
-	origTimeouts bci.OriginationTimeouts
+	origTiming   bci.OriginationTiming
+	acceptTiming bci.AcceptBroadcastTiming
 
 	// Channel that is closed when we have the entire set of packets
 	// and the reconstituted data.
@@ -230,7 +231,7 @@ func (o *BroadcastOperation) runOrigination(
 			AppHeader:      o.appHeader,
 			Packets:        o.packets,
 			NData:          o.nData,
-			Timeouts:       o.origTimeouts,
+			Timing:         o.origTiming,
 		},
 	)
 }
@@ -289,7 +290,7 @@ func (o *BroadcastOperation) runAcceptBroadcast(
 			InitialHaveLeaves: is.pt.HaveLeaves().Clone(),
 			AddedLeaves:       is.addedLeafIndices,
 
-			Timeouts: bci.DefaultAcceptBroadcastTimeouts(),
+			Timing: o.acceptTiming,
 
 			DataReady: o.dataReady,
 		},
@@ -383,7 +384,7 @@ func (o *BroadcastOperation) runOutgoingRelay(
 			DataReady:           o.dataReady,
 			NData:               o.nData,
 			NParity:             o.nChunks - o.nData,
-			Timeouts:            o.origTimeouts,
+			Timing:              o.origTiming,
 		},
 	)
 }
