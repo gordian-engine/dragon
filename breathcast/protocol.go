@@ -10,8 +10,10 @@ import (
 	"maps"
 	"math/bits"
 	"sync"
+	"time"
 
 	"github.com/gordian-engine/dragon/breathcast/bcmerkle"
+	"github.com/gordian-engine/dragon/breathcast/internal/bci"
 	"github.com/gordian-engine/dragon/breathcast/internal/merkle/cbmt"
 	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dconn"
@@ -62,6 +64,8 @@ type Protocol struct {
 	// use a cryptographic hash of the underlying data.
 	broadcastIDLength uint8
 
+	timeouts ProtocolTimeouts
+
 	// Separate from the wait group,
 	// to avoid possible race condition when closing.
 	mainLoopDone chan struct{}
@@ -95,9 +99,58 @@ type ProtocolConfig struct {
 	// The broadcast ID needs to be extracted from the origination header
 	// and it consumes space in chunk packets.
 	BroadcastIDLength uint8
+
+	Timeouts ProtocolTimeouts
+}
+
+// ProtocolTimeouts is the set of configurable timeouts
+// for originating or relaying a broadcast.
+type ProtocolTimeouts struct {
+	// How long to wait for recipient to send initial bitset,
+	// and how long to allow between each subsequent bitset.
+	ReceiveBitsetTimeout time.Duration
+
+	// When sending datagrams, occasionally add a short pause of this duration
+	// to hopefully reduce UDP contention.
+	OccasionalDatagramSleep time.Duration
+
+	// After sending the "datagrams finished" message to the peer,
+	// how long to allow for the next bitset update
+	// (which informs the originator which packets need to be sent synchronously).
+	FinalBitsetWaitTimeout time.Duration
+
+	// How long to allow the send of a synchronous packet to be blocked.
+	// Both sides of the connection should be configured with gracious buffer space,
+	// so it should be okay for this to be a relatively short duration.
+	SendSyncPacketTimeout time.Duration
+}
+
+func DefaultProtocolTimeouts() ProtocolTimeouts {
+	def := bci.DefaultOriginationTimeouts()
+	return ProtocolTimeouts{
+		ReceiveBitsetTimeout:    def.ReceiveBitsetTimeout,
+		OccasionalDatagramSleep: def.OccasionalDatagramSleep,
+		FinalBitsetWaitTimeout:  def.FinalBitsetWaitTimeout,
+		SendSyncPacketTimeout:   def.SendSyncPacketTimeout,
+	}
+}
+
+func (t ProtocolTimeouts) originationTimeouts() bci.OriginationTimeouts {
+	return bci.OriginationTimeouts{
+		ReceiveBitsetTimeout:    t.ReceiveBitsetTimeout,
+		OccasionalDatagramSleep: t.OccasionalDatagramSleep,
+		FinalBitsetWaitTimeout:  t.FinalBitsetWaitTimeout,
+		SendSyncPacketTimeout:   t.SendSyncPacketTimeout,
+	}
 }
 
 func NewProtocol(ctx context.Context, log *slog.Logger, cfg ProtocolConfig) *Protocol {
+	if cfg.Timeouts.ReceiveBitsetTimeout == 0 ||
+		cfg.Timeouts.OccasionalDatagramSleep == 0 ||
+		cfg.Timeouts.FinalBitsetWaitTimeout == 0 {
+		panic(errors.New("BUG: ProtocolConfig.Timeouts must be provided and must be non-zero"))
+	}
+
 	if cfg.BroadcastIDLength == 0 {
 		// It's plausible that there would be a use case
 		// for saving the space required for broadcast IDs,
@@ -116,6 +169,8 @@ func NewProtocol(ctx context.Context, log *slog.Logger, cfg ProtocolConfig) *Pro
 		newBroadcastRequests: make(chan newBroadcastRequest),
 
 		protocolID: cfg.ProtocolID,
+
+		timeouts: cfg.Timeouts,
 
 		broadcastIDLength: cfg.BroadcastIDLength,
 
@@ -235,6 +290,8 @@ func (p *Protocol) NewOrigination(
 		nData:         cfg.NData,
 		totalDataSize: cfg.TotalDataSize,
 		chunkSize:     cfg.ChunkSize,
+
+		origTimeouts: p.timeouts.originationTimeouts(),
 
 		dataReady: make(chan struct{}),
 
@@ -387,6 +444,8 @@ func (p *Protocol) NewIncomingBroadcast(
 		nChunks:        cfg.NData + cfg.NParity,
 		hashSize:       cfg.HashSize,
 		rootProofCount: len(cfg.RootProofs),
+
+		origTimeouts: p.timeouts.originationTimeouts(),
 
 		dataReady: make(chan struct{}),
 

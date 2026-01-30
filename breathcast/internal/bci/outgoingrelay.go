@@ -45,6 +45,9 @@ type OutgoingRelayConfig struct {
 
 	// Count of data and parity shards.
 	NData, NParity uint16
+
+	// Timeout values to use when sending origination data.
+	Timeouts OriginationTimeouts
 }
 
 // RunOutgoingRelay starts several background goroutines
@@ -54,6 +57,9 @@ func RunOutgoingRelay(
 	log *slog.Logger,
 	cfg OutgoingRelayConfig,
 ) {
+	if cfg.Timeouts.IsZero() {
+		panic(errors.New("ILLEGAL: RunOutgoingRelay called with zero timeouts"))
+	}
 	// Buffered so that writes in openOutgoingRelayStream don't block.
 	ssStartCh := make(chan dquic.SendStream, 1)
 	ssEndCh := make(chan dquic.SendStream, 1)
@@ -63,7 +69,7 @@ func RunOutgoingRelay(
 	// Unbuffered because the goroutines need to track sends and receives.
 	peerBitsetUpdates := make(chan *bitset.BitSet)
 
-	clearDeltaTimeout := make(chan struct{})
+	clearDeltaTimeoutCh := make(chan struct{})
 
 	// Unbuffered so the relayNewDatagrams is aware of when the bitset changes ownership.
 	syncRequests := make(chan *bitset.BitSet)
@@ -91,7 +97,7 @@ func RunOutgoingRelay(
 		},
 		bsdCh,
 		peerBitsetUpdates,
-		clearDeltaTimeout,
+		clearDeltaTimeoutCh,
 	)
 	go relayNewDatagrams(
 		ctx,
@@ -107,7 +113,10 @@ func RunOutgoingRelay(
 		cfg.DataReady,
 		syncRequests, syncReturns,
 		ssEndCh,
-		clearDeltaTimeout,
+		clearDeltaTimeoutCh,
+		cfg.Timeouts.OccasionalDatagramSleep,
+		cfg.Timeouts.FinalBitsetWaitTimeout,
+		cfg.Timeouts.SendSyncPacketTimeout,
 	)
 	go sendMissedPackets(
 		ctx,
@@ -224,7 +233,10 @@ func relayNewDatagrams(
 	syncOutCh chan<- *bitset.BitSet,
 	syncReturnCh <-chan *bitset.BitSet,
 	ssEndCh <-chan dquic.SendStream,
-	clearDeltaTimeout chan<- struct{},
+	clearDeltaTimeoutCh chan<- struct{},
+	occasionalDatagramSleep time.Duration,
+	finalBitsetWaitTimeout time.Duration,
+	sendSyncPacketTimeout time.Duration,
 ) {
 	defer wg.Done()
 
@@ -253,7 +265,7 @@ AWAIT_PEER_HAS:
 	// and we know which packets they already have.
 	// Send datagrams for everything we have that they don't.
 	sent := havePackets.Difference(peerHas)
-	sendExistingDatagrams(log, conn, packets, sent)
+	sendExistingDatagrams(log, conn, packets, sent, occasionalDatagramSleep)
 
 	// The missed bitset indicates which datagrams we sent
 	// and were absent from at least one peer delta update.
@@ -302,7 +314,8 @@ AWAIT_PEER_HAS:
 				packets,
 				sent,
 				nData,
-				clearDeltaTimeout,
+				clearDeltaTimeoutCh,
+				occasionalDatagramSleep, finalBitsetWaitTimeout, sendSyncPacketTimeout,
 			)
 			return
 
@@ -376,13 +389,14 @@ func sendExistingDatagrams(
 	conn dquic.Conn,
 	packets [][]byte,
 	toSend *bitset.BitSet,
+	occasionalDatagramSleep time.Duration,
 ) {
 	nSent := 0
 	for sb := range dbitset.RandomSetBitIterator(toSend) {
 		if (nSent & 7) == 7 {
 			// Micro-sleep to give outgoing datagram buffers a chance to flush.
 			// Not actually measured, but seems likely to avoid dropped packets.
-			time.Sleep(5 * time.Microsecond)
+			time.Sleep(occasionalDatagramSleep)
 		}
 
 		if err := conn.SendDatagram(packets[sb.Idx]); err != nil {
@@ -473,15 +487,17 @@ func finishRelay(
 	packets [][]byte,
 	alreadySent *bitset.BitSet,
 	nData uint16,
-	clearDeltaTimeout chan<- struct{},
+	clearDeltaTimeoutCh chan<- struct{},
+	occasionalDatagramSleep time.Duration,
+	finalBitsetWaitTimeout time.Duration,
+	sendSyncPacketTimeout time.Duration,
 ) {
-	// Make a timer to share with sendUnreliableDatagrams
-	// and to also use here.
+	// Make a non-nil timer to use in both sendUnreliableDatagrams and synchronizeMissedPackets.
 	timer := time.NewTimer(time.Hour)
 	timer.Stop()
 
 	sendUnreliableDatagrams(
-		conn, packets, alreadySent, peerHas, peerBitsetUpdates, timer,
+		conn, packets, alreadySent, peerHas, peerBitsetUpdates, timer, occasionalDatagramSleep,
 	)
 
 	// Now that we've sent the datagrams that we haven't sent before,
@@ -521,6 +537,7 @@ AWAIT_STREAM_CONTROL:
 		s,
 		peerHas, peerBitsetUpdates,
 		packets, nData,
-		timer, clearDeltaTimeout,
+		timer, finalBitsetWaitTimeout, sendSyncPacketTimeout,
+		clearDeltaTimeoutCh,
 	)
 }

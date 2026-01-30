@@ -43,6 +43,8 @@ type BroadcastOperation struct {
 	hashSize       int
 	rootProofCount int
 
+	origTimeouts bci.OriginationTimeouts
+
 	// Channel that is closed when we have the entire set of packets
 	// and the reconstituted data.
 	dataReady chan struct{}
@@ -229,6 +231,7 @@ func (o *BroadcastOperation) runOrigination(
 			AppHeader:      o.appHeader,
 			Packets:        o.packets,
 			NData:          o.nData,
+			Timeouts:       o.origTimeouts,
 		},
 	)
 }
@@ -382,6 +385,7 @@ func (o *BroadcastOperation) runOutgoingRelay(
 			DataReady:           o.dataReady,
 			NData:               o.nData,
 			NParity:             o.nChunks - o.nData,
+			Timeouts:            o.origTimeouts,
 		},
 	)
 }

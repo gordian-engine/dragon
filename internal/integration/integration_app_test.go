@@ -94,6 +94,8 @@ func NewIntegrationApp(
 				ProtocolID: breathcastProtocolID,
 
 				BroadcastIDLength: 4, // Format: bc##.
+
+				Timeouts: breathcast.DefaultProtocolTimeouts(),
 			},
 		),
 

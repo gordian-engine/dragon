@@ -228,6 +228,8 @@ func NewOriginationFixture(
 		Packets: packets,
 
 		NData: nData,
+
+		Timeouts: bci.DefaultOriginationTimeouts(),
 	}
 
 	return &OriginationFixture{

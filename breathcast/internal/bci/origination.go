@@ -33,6 +33,50 @@ type OriginationConfig struct {
 
 	// Required to limit number of reliable chunks sent.
 	NData uint16
+
+	Timeouts OriginationTimeouts
+}
+
+// OriginationTimeouts is a copy of breathcast.OriginationTimeouts.
+// We could use an alias but for a small struct that just hurts readability.
+type OriginationTimeouts struct {
+	// How long to wait for recipient to send initial bitset,
+	// and how long to allow between each subsequent bitset.
+	ReceiveBitsetTimeout time.Duration
+
+	// When sending datagrams, occasionally add a short pause of this duration
+	// to hopefully reduce UDP contention.
+	OccasionalDatagramSleep time.Duration
+
+	// After sending the "datagrams finished" message to the peer,
+	// how long to allow for the next bitset update
+	// (which informs the originator which packets need to be sent synchronously).
+	FinalBitsetWaitTimeout time.Duration
+
+	// How long to allow the send of a synchronous packet to be blocked.
+	// Both sides of the connection should be configured with gracious buffer space,
+	// so it should be okay for this to be a relatively short duration.
+	SendSyncPacketTimeout time.Duration
+}
+
+// IsZero reports whether t has all zero duration values.
+func (t OriginationTimeouts) IsZero() bool {
+	return t.ReceiveBitsetTimeout == 0 &&
+		t.OccasionalDatagramSleep == 0 &&
+		t.FinalBitsetWaitTimeout == 0 &&
+		t.SendSyncPacketTimeout == 0
+}
+
+func DefaultOriginationTimeouts() OriginationTimeouts {
+	return OriginationTimeouts{
+		ReceiveBitsetTimeout: 50 * time.Millisecond,
+
+		OccasionalDatagramSleep: 75 * time.Microsecond, // Yes, sub-millisecond.
+
+		FinalBitsetWaitTimeout: 250 * time.Millisecond,
+
+		SendSyncPacketTimeout: 20 * time.Millisecond,
+	}
 }
 
 // initialOriginationState is the set of initial values
@@ -54,12 +98,15 @@ func RunOrigination(
 		panic(errors.New("BUG: OriginationConfig.NData must not be zero"))
 	}
 
-	// Buffered so the openOriginationStream work does not block.
+	// openOriginationStream sends on these two channels,
+	// allowing the other two goroutines to proceed from initial state.
+	// On error, openOriginationStream closes the channels without sending,
+	// and the other goroutines understand that to be an error state.
 	bsdCh := make(chan bsdState, 1)
 	iosCh := make(chan initialOriginationState, 1)
 
 	peerHasDeltaCh := make(chan *bitset.BitSet)
-	clearDeltaTimeout := make(chan struct{})
+	clearDeltaTimeoutCh := make(chan struct{})
 
 	cfg.WG.Add(3)
 	go openOriginationStream(
@@ -70,6 +117,7 @@ func RunOrigination(
 		cfg.ProtocolHeader,
 		cfg.AppHeader,
 		cfg.Packets,
+		cfg.Timeouts.ReceiveBitsetTimeout,
 		bsdCh,
 		iosCh,
 	)
@@ -82,19 +130,22 @@ func RunOrigination(
 		cfg.NData,
 		iosCh,
 		peerHasDeltaCh,
-		clearDeltaTimeout,
+		clearDeltaTimeoutCh,
+		cfg.Timeouts.OccasionalDatagramSleep,
+		cfg.Timeouts.FinalBitsetWaitTimeout,
+		cfg.Timeouts.SendSyncPacketTimeout,
 	)
 	go receiveBitsetDeltas(
 		ctx,
 		cfg.WG,
 		uint(len(cfg.Packets)),
-		5*time.Millisecond, // TODO: make configurable
+		cfg.Timeouts.ReceiveBitsetTimeout,
 		func(string, error) {
 			// TODO: cancel the whole stream here, I think.
 		},
 		bsdCh,
 		peerHasDeltaCh,
-		clearDeltaTimeout,
+		clearDeltaTimeoutCh,
 	)
 }
 
@@ -109,12 +160,14 @@ func openOriginationStream(
 	pHeader ProtocolHeader,
 	appHeader []byte,
 	packets [][]byte,
+	initialReceiveTimeout time.Duration,
 	bsdCh chan<- bsdState,
 	iosCh chan<- initialOriginationState,
 ) {
 	defer wg.Done()
 
 	defer close(iosCh)
+	defer close(bsdCh)
 
 	s, err := OpenStream(ctx, conn, OpenStreamConfig{
 		// TODO: make these configurable.
@@ -141,16 +194,9 @@ func openOriginationStream(
 	peerHas := bitset.MustNew(uint(len(packets)))
 	dec := new(dbitset.AdaptiveDecoder)
 
-	// I would prefer the timeout for receiving the bitset to be lower,
-	// but at 10 milliseconds the broadcast integration test
-	// fails unacceptably frequently.
-	// I don't yet have an explanation on why
-	// the first bitset receive would possibly take that long.
-	const receiveBitsetTimeout = 20 * time.Millisecond
-
 	if err := dec.ReceiveBitset(
 		s,
-		receiveBitsetTimeout,
+		initialReceiveTimeout,
 		peerHas,
 	); err != nil {
 		log.Info(
@@ -187,7 +233,10 @@ func sendOriginationPackets(
 	nData uint16,
 	initialStateCh <-chan initialOriginationState,
 	peerHasDeltaCh <-chan *bitset.BitSet,
-	clearDeltaTimeout chan<- struct{},
+	clearDeltaTimeoutCh chan<- struct{},
+	occasionalDatagramSleep time.Duration,
+	finalBitsetWaitTimeout time.Duration,
+	sendSyncPacketTimeout time.Duration,
 ) {
 	defer wg.Done()
 
@@ -204,13 +253,12 @@ func sendOriginationPackets(
 		peerHas = x.PeerHas
 	}
 
-	// Make a non-nil timer to share with sendUnreliableDatagrams
-	// and to also use here.
+	// Make a non-nil timer to use in both sendUnreliableDatagrams and synchronizeMissedPackets.
 	timer := time.NewTimer(time.Hour) // Arbitrarily long so it doesn't fire before Stop.
 	timer.Stop()
 
 	sendUnreliableDatagrams(
-		conn, packets, nil, peerHas, peerHasDeltaCh, timer,
+		conn, packets, nil, peerHas, peerHasDeltaCh, timer, occasionalDatagramSleep,
 	)
 
 	synchronizeMissedPackets(
@@ -218,7 +266,8 @@ func sendOriginationPackets(
 		s,
 		peerHas, peerHasDeltaCh,
 		packets, nData,
-		timer, clearDeltaTimeout,
+		timer, finalBitsetWaitTimeout, sendSyncPacketTimeout,
+		clearDeltaTimeoutCh,
 	)
 }
 
@@ -234,8 +283,10 @@ func synchronizeMissedPackets(
 	peerBitsetUpdates <-chan *bitset.BitSet,
 	packets [][]byte,
 	nData uint16,
-	timer *time.Timer,
-	clearDeltaTimeout chan<- struct{},
+	finalBitsetWaitTimer *time.Timer,
+	finalBitsetWaitTimeout time.Duration,
+	sendSyncPacketTimeout time.Duration,
+	clearDeltaTimeoutCh chan<- struct{},
 ) {
 	// Indicate that we are done with the unreliable datagrams.
 	const sendCompletionTimeout = 20 * time.Millisecond // TODO: make configurable.
@@ -258,32 +309,31 @@ func synchronizeMissedPackets(
 	// It is possible that there are multiple bitset updates on the way,
 	// but if we receive another one in the middle of sync updates,
 	// we will adjust accordingly anyway.
-	const finalBitsetWaitTimeout = 100 * time.Millisecond // TODO: make configurable.
-	timer.Reset(finalBitsetWaitTimeout)
+	finalBitsetWaitTimer.Reset(finalBitsetWaitTimeout)
 
 	select {
 	case <-ctx.Done():
-		timer.Stop()
+		finalBitsetWaitTimer.Stop()
 		log.Info(
 			"Context canceled while waiting for final bitset update",
 			"cause", context.Cause(ctx),
 		)
 		return
-	case <-timer.C:
+	case <-finalBitsetWaitTimer.C:
 		log.Info("Timed out waiting for final bitset update")
 		return
 	case u := <-peerBitsetUpdates:
-		timer.Stop()
+		finalBitsetWaitTimer.Stop()
 		peerHas.InPlaceUnion(u)
 	}
 
 	// Now that we've gotten a final bitset,
 	// let the other goroutine know we don't have a deadline
 	// for futher delta bitsets.
-	close(clearDeltaTimeout)
+	close(clearDeltaTimeoutCh)
 
 	if err := sendSyncPackets(
-		s, packets, nData, peerHas, peerBitsetUpdates,
+		s, packets, nData, peerHas, peerBitsetUpdates, sendSyncPacketTimeout,
 	); err != nil {
 		var streamErr *quic.StreamError
 		if errors.As(err, &streamErr) {
@@ -342,10 +392,12 @@ func sendUnreliableDatagrams(
 	alreadySent *bitset.BitSet,
 	peerHas *bitset.BitSet,
 	peerHasDeltaCh <-chan *bitset.BitSet,
-	delay *time.Timer,
+	delayTimer *time.Timer,
+	occasionalSleepDur time.Duration,
 ) {
+	defer delayTimer.Stop()
+
 	nSent := 0
-	const timeout = 2 * time.Microsecond // Arbitrarily chosen.
 	it := alreadySent
 	if it == nil {
 		it = peerHas
@@ -357,7 +409,7 @@ func sendUnreliableDatagrams(
 		// Every iteration, check for an update.
 		if nSent&7 == 7 {
 			// But every 8th iteration, include a sleep.
-			delay.Reset(timeout)
+			delayTimer.Reset(occasionalSleepDur)
 		DELAY:
 			for {
 				select {
@@ -368,7 +420,7 @@ func sendUnreliableDatagrams(
 						skip = peerHas.Test(cb.Idx)
 					}
 					continue DELAY
-				case <-delay.C:
+				case <-delayTimer.C:
 					break DELAY
 				}
 			}
@@ -408,6 +460,7 @@ func sendSyncPackets(
 	nData uint16,
 	peerHas *bitset.BitSet,
 	peerHasDeltaCh <-chan *bitset.BitSet,
+	sendSyncPacketTimeout time.Duration,
 ) error {
 	// Track how many packets the peer is missing
 	// to be able to reconstruct the data.
@@ -417,7 +470,6 @@ func sendSyncPackets(
 	}
 	need := nData - uint16(haveCount)
 
-	const sendSyncPacketTimeout = time.Millisecond // TODO: make configurable.
 	for cb := range dbitset.RandomClearBitIterator(peerHas) {
 		// Each iteration, check if there is an updated delta.
 		select {

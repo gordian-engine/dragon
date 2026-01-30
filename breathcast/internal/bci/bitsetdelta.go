@@ -46,7 +46,7 @@ func receiveBitsetDeltas(
 
 	// When this channel is closed,
 	// there is no more read timeout applied.
-	clearTimeout <-chan struct{},
+	clearTimeoutCh <-chan struct{},
 ) {
 	defer wg.Done()
 
@@ -123,9 +123,9 @@ func receiveBitsetDeltas(
 		case deltaUpdates <- rbs:
 			// Okay.
 
-		case <-clearTimeout:
+		case <-clearTimeoutCh:
 			receiveTimeout = -1
-			clearTimeout = nil
+			clearTimeoutCh = nil
 			select {
 			case <-ctx.Done():
 				return

@@ -39,6 +39,8 @@ func TestBroadcastOperation_origination_reader(t *testing.T) {
 		ConnectionChanges: dpubsub.NewStream[dconn.Change](),
 		ProtocolID:        0xFE,
 		BroadcastIDLength: 3,
+
+		Timeouts: breathcast.DefaultProtocolTimeouts(),
 	})
 	defer p.Wait()
 	defer cancel()
