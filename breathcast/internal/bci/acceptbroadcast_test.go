@@ -41,7 +41,7 @@ func TestRunAcceptBroadcast_firstUpdate(t *testing.T) {
 			InitialHaveLeaves: haveLeaves.Clone(),
 			AddedLeaves:       dpubsub.NewStream[uint](),
 
-			BitsetSendPeriod: 2 * time.Millisecond, // Arbitrary for test.
+			Timeouts: bci.DefaultAcceptBroadcastTimeouts(),
 
 			// Not closing dataReady for this test, so it can be nil.
 			DataReady: nil,
@@ -80,7 +80,7 @@ func TestRunAcceptBroadcast_firstUpdate(t *testing.T) {
 			InitialHaveLeaves: haveLeaves.Clone(),
 			AddedLeaves:       dpubsub.NewStream[uint](),
 
-			BitsetSendPeriod: 2 * time.Millisecond, // Arbitrary for test.
+			Timeouts: bci.DefaultAcceptBroadcastTimeouts(),
 
 			// Not closing dataReady for this test, so it can be nil.
 			DataReady: nil,
@@ -124,7 +124,7 @@ func TestRunAcceptBroadcast_externalUpdatesShared(t *testing.T) {
 		InitialHaveLeaves: haveLeaves.Clone(),
 		AddedLeaves:       al,
 
-		BitsetSendPeriod: 5 * time.Millisecond, // Arbitrary for test.
+		Timeouts: bci.DefaultAcceptBroadcastTimeouts(),
 
 		// Not closing dataReady for this test, so it can be nil.
 		DataReady: nil,
@@ -143,11 +143,11 @@ func TestRunAcceptBroadcast_externalUpdatesShared(t *testing.T) {
 	al.Publish(3)
 	al = al.Next
 
-	require.NoError(t, dec.ReceiveBitset(s, 15*time.Millisecond, got))
+	require.NoError(t, dec.ReceiveBitset(s, 75*time.Millisecond, got))
 
 	// It is possible that the update was late, so refresh once if necessary.
 	if got.None() {
-		require.NoError(t, dec.ReceiveBitset(s, 15*time.Millisecond, got))
+		require.NoError(t, dec.ReceiveBitset(s, 75*time.Millisecond, got))
 	}
 
 	require.Equal(t, uint(1), got.Count())
@@ -185,7 +185,7 @@ func TestRunAcceptBroadcast_syncDatagrams(t *testing.T) {
 		InitialHaveLeaves: bitset.MustNew(4),
 		AddedLeaves:       dpubsub.NewStream[uint](),
 
-		BitsetSendPeriod: 5 * time.Millisecond, // Arbitrary for test.
+		Timeouts: bci.DefaultAcceptBroadcastTimeouts(),
 
 		// Not closing dataReady for this test, so it can be nil.
 		DataReady: nil,
@@ -196,7 +196,7 @@ func TestRunAcceptBroadcast_syncDatagrams(t *testing.T) {
 	got := bitset.MustNew(4)
 
 	// The operation immediately sends its have bitset, which is empty.
-	require.NoError(t, dec.ReceiveBitset(s, 5*time.Millisecond, got))
+	require.NoError(t, dec.ReceiveBitset(s, 50*time.Millisecond, got))
 	require.Zero(t, got.Count())
 
 	// Now we send a synchronous datagram.
@@ -209,8 +209,8 @@ func TestRunAcceptBroadcast_syncDatagrams(t *testing.T) {
 	// Therefore, wait two bitset updates to ensure we are synchronized
 	// and then confirm the presence of the datagram.
 
-	require.NoError(t, dec.ReceiveBitset(s, 15*time.Millisecond, got))
-	require.NoError(t, dec.ReceiveBitset(s, 15*time.Millisecond, got))
+	require.NoError(t, dec.ReceiveBitset(s, 75*time.Millisecond, got))
+	require.NoError(t, dec.ReceiveBitset(s, 75*time.Millisecond, got))
 
 	// And that means the datagram collector should have captured the value.
 	require.Equal(t, dg, c.Get(0))
@@ -228,6 +228,9 @@ func TestRunAcceptBroadcast_finalUpdateSentOnRequest(t *testing.T) {
 	s, sTest := establishedStream(t, ctx)
 
 	haveLeaves := bitset.MustNew(4)
+
+	timeouts := bci.DefaultAcceptBroadcastTimeouts()
+	timeouts.BitsetSendPeriod = time.Hour // Excessively long so a periodic send isn't mistaken for final result.
 
 	bci.RunAcceptBroadcast(ctx, dtest.NewLogger(t), bci.AcceptBroadcastConfig{
 		WG: &wg,
@@ -248,7 +251,7 @@ func TestRunAcceptBroadcast_finalUpdateSentOnRequest(t *testing.T) {
 		InitialHaveLeaves: haveLeaves.Clone(),
 		AddedLeaves:       dpubsub.NewStream[uint](),
 
-		BitsetSendPeriod: time.Minute, // Excessively long so we can't accidentally reach it.
+		Timeouts: timeouts,
 
 		// Not closed in this test.
 		DataReady: nil,

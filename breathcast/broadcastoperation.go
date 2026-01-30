@@ -9,7 +9,6 @@ import (
 	"io"
 	"log/slog"
 	"sync"
-	"time"
 
 	"github.com/gordian-engine/dragon/breathcast/internal/bci"
 	"github.com/gordian-engine/dragon/breathcast/internal/merkle/cbmt"
@@ -290,8 +289,7 @@ func (o *BroadcastOperation) runAcceptBroadcast(
 			InitialHaveLeaves: is.pt.HaveLeaves().Clone(),
 			AddedLeaves:       is.addedLeafIndices,
 
-			// TODO: should be configurable.
-			BitsetSendPeriod: 2 * time.Millisecond,
+			Timeouts: bci.DefaultAcceptBroadcastTimeouts(),
 
 			DataReady: o.dataReady,
 		},

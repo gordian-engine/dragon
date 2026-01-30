@@ -68,7 +68,6 @@ func (d *AdaptiveDecoder) ReceiveBitset(
 	timeout time.Duration,
 	bs *bitset.BitSet,
 ) error {
-
 	var deadline time.Time
 	if timeout > 0 {
 		deadline = time.Now().Add(timeout)
