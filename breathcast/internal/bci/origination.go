@@ -298,10 +298,14 @@ func synchronizeMissedPackets(
 		return
 	}
 	if _, err := s.Write([]byte{datagramsFinishedMessageID}); err != nil {
-		log.Info(
-			"Failed to write completion indicator",
-			"err", err,
-		)
+		if isRemoteGotFullDataError(err) {
+			log.Info("Stopping origination for peer because peer reported full data")
+		} else {
+			log.Info(
+				"Failed to write completion indicator",
+				"err", err,
+			)
+		}
 		return
 	}
 

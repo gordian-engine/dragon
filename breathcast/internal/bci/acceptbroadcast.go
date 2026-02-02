@@ -131,7 +131,11 @@ func runPeriodicBitsetUpdates(
 	// which means they can be encoded in fewer bytes across the wire.
 
 	if err := enc.SendBitset(s, sendTimeout, haveLeaves); err != nil {
-		log.Info("Failed to send initial bitset", "err", err)
+		if isGotFullDataLocallyError(err) {
+			log.Info("Got full data locally before sending initial have bitset")
+		} else {
+			log.Info("Failed to send initial bitset", "err", err)
+		}
 		return
 	}
 
@@ -296,10 +300,17 @@ UNFINISHED:
 		}
 
 		if _, err := io.ReadFull(s, oneByte[:]); err != nil {
-			log.Info(
-				"Failed to read synchronous message ID byte",
-				"err", err,
-			)
+			if isGotFullDataLocallyError(err) {
+				log.Info(
+					"Accept canceled while waiting for synchronous datagrams due to full data reached locally",
+				)
+			} else {
+				log.Info(
+					"Failed to read synchronous message ID byte",
+					"err", err,
+				)
+			}
+
 			return
 		}
 

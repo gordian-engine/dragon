@@ -3,11 +3,13 @@ package bci
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/bits-and-blooms/bitset"
 	"github.com/gordian-engine/dragon/dquic"
+	"github.com/quic-go/quic-go"
 )
 
 const (
@@ -32,6 +34,32 @@ const (
 	// will immediately end the corresponding read or write.
 	InterruptedErrorCode dquic.StreamErrorCode = 0x2887_4027_c46b_3a10 // Decimal: 2920373422916319760
 )
+
+// isGotFullDataLocallyError reports whether the given error is
+// a locally set stream error with [GotFullDataErrorCode].
+//
+// This should be fine to remain unexported (at least for now)
+// because all stream operations are scoped to this package.
+// (TODO: evaluate if it could happen during initial stream acceptance?)
+func isGotFullDataLocallyError(e error) bool {
+	var streamErr *quic.StreamError
+	if !errors.As(e, &streamErr) {
+		return false
+	}
+
+	return !streamErr.Remote && dquic.StreamErrorCode(streamErr.ErrorCode) == GotFullDataErrorCode
+}
+
+// isRemoteGotFullDataError reports whether the given error is
+// a remote set stream error with [GotFullDataErrorCode].
+func isRemoteGotFullDataError(e error) bool {
+	var streamErr *quic.StreamError
+	if !errors.As(e, &streamErr) {
+		return false
+	}
+
+	return streamErr.Remote && dquic.StreamErrorCode(streamErr.ErrorCode) == GotFullDataErrorCode
+}
 
 // ProtocolHeader is a byte sequence containing:
 //   - the protocol ID byte
