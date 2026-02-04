@@ -91,14 +91,20 @@ func DefaultConfig() *quic.Config {
 		// Those windows were individual streams, this is for an entire connection.
 		// Also a total estimate for now.
 		InitialConnectionReceiveWindow: 4 * 32 * 1024,
-		MaxConnectionReceiveWindow:     4 * 1024 * 1024,
+		MaxConnectionReceiveWindow:     8 * 1024 * 1024,
 
 		// Skip: AllowConnectionWindowIncrease: we don't need a callback on this, at this point.
 
-		// How many streams allowed on a single connection.
-		// Just an estimate for now.
-		MaxIncomingStreams:    12, // Bidirectional.
-		MaxIncomingUniStreams: 6,
+		// How many bidirectional streams allowed on a single connection.
+		// There is one bidirectional stream for establishing the basic p2p connection,
+		// and there is one bidirectional stream for each active breathcast session.
+		MaxIncomingStreams: 120,
+
+		// Wingspan outbound workers are used for each connected peer,
+		// for each voting session.
+		// Assuming committing session, current voting, and maybe a couple invalid heights,
+		// this ought to be plenty of headroom to avoid blocking new incoming streams.
+		MaxIncomingUniStreams: 60,
 
 		// Skip: KeepAlivePeriod: for now assuming we don't need keepalives,
 		// but that could change if we find idle timeouts happening.

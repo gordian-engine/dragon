@@ -128,6 +128,10 @@ func (s *Session[PktIn, PktOut, DeltaIn, DeltaOut]) Run(
 	defer wg.Wait()
 
 	rs := s.initializeConns(ctx, &wg, conns)
+	if rs == nil {
+		// This can only happen with context cancellation.
+		return
+	}
 
 	for {
 		select {
@@ -140,7 +144,15 @@ func (s *Session[PktIn, PktOut, DeltaIn, DeltaOut]) Run(
 			lh := cc.Conn.Chain.LeafHandle
 			if cc.Adding {
 				conns[lh] = cc.Conn
-				rs[lh] = s.addRemoteState(ctx, &wg, cc.Conn)
+				state, err := s.addRemoteState(ctx, &wg, cc.Conn)
+				if err == nil {
+					rs[lh] = state
+				} else {
+					if errors.Is(err, context.Canceled) {
+						return
+					}
+					s.log.Info("TODO: handle failure to add remote state", "err", err)
+				}
 			} else {
 				rs[lh].Cancel(nil) // TODO: use sentinel error here.
 
@@ -161,6 +173,9 @@ func (s *Session[PktIn, PktOut, DeltaIn, DeltaOut]) Run(
 			// No select since this channel is one-buffered.
 			is, m, err := s.state.NewInboundRemoteState(ctx)
 			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					return
+				}
 				panic(fmt.Errorf(
 					"TODO: handle error from NewInboundRemoteState: %w", err,
 				))
@@ -218,18 +233,31 @@ type remoteState[
 
 // initializeConns sets up the workers for any pre-existing connections.
 // Further new connections are handled in the session's main loop.
+//
+// If the context is canceled while setting up workers,
+// initializeConns returns nil, as a signal to the caller.
 func (s *Session[PktIn, PktOut, DeltaIn, DeltaOut]) initializeConns(
 	ctx context.Context,
 	wg *sync.WaitGroup,
 	conns map[dcert.LeafCertHandle]dconn.Conn,
 ) map[dcert.LeafCertHandle]remoteState[PktIn, PktOut, DeltaIn, DeltaOut] {
-	rs := make(map[dcert.LeafCertHandle]remoteState[PktIn, PktOut, DeltaIn, DeltaOut], len(conns))
+	m := make(map[dcert.LeafCertHandle]remoteState[PktIn, PktOut, DeltaIn, DeltaOut], len(conns))
 
 	for h, conn := range conns {
-		rs[h] = s.addRemoteState(ctx, wg, conn)
+		rs, err := s.addRemoteState(ctx, wg, conn)
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				// Shutting down.
+				return nil
+			}
+
+			s.log.Info("TODO: handle error when adding remote state", "err", err)
+			continue
+		}
+		m[h] = rs
 	}
 
-	return rs
+	return m
 }
 
 // addRemoteState starts goroutines for the inbound and outbound workers
@@ -238,11 +266,11 @@ func (s *Session[PktIn, PktOut, DeltaIn, DeltaOut]) addRemoteState(
 	ctx context.Context,
 	wg *sync.WaitGroup,
 	conn dconn.Conn,
-) remoteState[PktIn, PktOut, DeltaIn, DeltaOut] {
+) (remoteState[PktIn, PktOut, DeltaIn, DeltaOut], error) {
 	rs, m, err := s.state.NewOutboundRemoteState(ctx)
 	if err != nil {
-		// TODO: probably should send back an error to the caller.
-		panic(err)
+		zero := remoteState[PktIn, PktOut, DeltaIn, DeltaOut]{}
+		return zero, fmt.Errorf("failed to make outbound remote state: %w", err)
 	}
 
 	log := s.log.With("remote", conn.QUIC.RemoteAddr().String())
@@ -278,7 +306,7 @@ func (s *Session[PktIn, PktOut, DeltaIn, DeltaOut]) addRemoteState(
 		InboundStreamCh: inboundStreamCh,
 
 		Cancel: cancel,
-	}
+	}, nil
 }
 
 func (s *Session[PktIn, PktOut, DeltaIn, DeltaOut]) AcceptStream(
