@@ -551,13 +551,18 @@ func (o *BroadcastOperation) finishReconstruction(is *incomingState) {
 	haveLeaves := is.pt.HaveLeaves()
 	missedCount := uint(is.nData) + uint(is.nParity) - haveLeaves.Count()
 
-	missedLeaves := make([][]byte, 0, missedCount)
-	for u, ok := haveLeaves.NextClear(0); ok; u, ok = haveLeaves.NextClear(u + 1) {
-		missedLeaves = append(missedLeaves, is.shards[u])
-	}
+	if missedCount > 0 {
+		// It is possible that missedCount is zero if the data was a single packet.
+		// It would be better to avoid using breathcast at all in that case,
+		// but for now we will allows it without doing packet restoration.
+		missedLeaves := make([][]byte, 0, missedCount)
+		for u, ok := haveLeaves.NextClear(0); ok; u, ok = haveLeaves.NextClear(u + 1) {
+			missedLeaves = append(missedLeaves, is.shards[u])
+		}
 
-	c := is.pt.Complete(missedLeaves)
-	o.restorePackets(c, is)
+		c := is.pt.Complete(missedLeaves)
+		o.restorePackets(c, is)
+	}
 
 	// Data has been reconstructed.
 	// Notify any watchers.

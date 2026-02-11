@@ -17,6 +17,131 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestProtocol_singlePacket(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	fx := breathcasttest.NewProtocolFixture(t, ctx, breathcasttest.ProtocolFixtureConfig{
+		Nodes: 2,
+
+		ProtocolID:        0xFE,
+		BroadcastIDLength: 3,
+	})
+	defer cancel()
+
+	// Say we have a very small amount of data that can trivially fit in a single packet.
+	data := []byte("hello")
+	nonce := []byte("nonce")
+
+	// We can still go through the standard PrepareOrigination step.
+	// As the caller, we know that the MaxChunkSize will be larger than our data
+	// and therefore we can also set the parity ratio to zero.
+	orig, err := breathcast.PrepareOrigination(data, breathcast.PrepareOriginationConfig{
+		MaxChunkSize:    1000,
+		ProtocolID:      0xFE,
+		BroadcastID:     []byte("xyz"),
+		ParityRatio:     0,
+		HeaderProofTier: 1,
+		Hasher:          bcsha256.Hasher{},
+		HashSize:        bcsha256.HashSize,
+		Nonce:           nonce,
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, 1, orig.NumData)
+	require.Zero(t, orig.NumParity)
+
+	bop0, err := fx.Protocols[0].NewOrigination(ctx, breathcast.OriginationConfig{
+		BroadcastID: []byte("xyz"),
+		AppHeader:   []byte("fake app header"),
+		Packets:     orig.Packets,
+
+		NData: uint16(orig.NumData),
+
+		TotalDataSize: len(data),
+		ChunkSize:     orig.ChunkSize,
+	})
+	require.NoError(t, err)
+	defer bop0.Wait()
+	defer cancel()
+
+	// The data is still reported ready immediately.
+	readyTimer := time.NewTimer(50 * time.Millisecond)
+	select {
+	case <-bop0.DataReady():
+		// Good.
+	case <-readyTimer.C:
+		t.Fatal("timed out waiting for originator data ready")
+	}
+	readyTimer.Stop()
+
+	bop1, err := fx.Protocols[1].NewIncomingBroadcast(ctx, breathcast.IncomingBroadcastConfig{
+		BroadcastID: []byte("xyz"),
+		AppHeader:   []byte("fake app header"),
+		NData:       uint16(orig.NumData),
+		NParity:     uint16(orig.NumParity),
+
+		Hasher:    bcsha256.Hasher{},
+		HashSize:  bcsha256.HashSize,
+		HashNonce: nonce,
+
+		RootProofs: orig.RootProof,
+
+		TotalDataSize: len(data),
+		ChunkSize:     uint16(orig.ChunkSize),
+	})
+	require.NoError(t, err)
+	defer bop1.Wait()
+	defer cancel()
+
+	// The broadcasts are known to each party now,
+	// but they aren't connected yet.
+	c0, c1 := fx.ListenerSet.Dial(t, 0, 1)
+
+	fx.AddConnection(c0, 0, 1)
+	fx.AddConnection(c1, 1, 0)
+
+	s, err := c1.AcceptStream(ctx)
+	require.NoError(t, err)
+
+	var oneByte [1]byte
+	_, err = io.ReadFull(s, oneByte[:])
+	require.NoError(t, err)
+	require.Equal(t, byte(0xFE), oneByte[0])
+
+	bid, err := fx.Protocols[1].ExtractStreamBroadcastID(s, nil)
+	require.NoError(t, err)
+	require.Equal(t, []byte("xyz"), bid)
+
+	// The incoming stream has the right application header.
+	appHeader, ratio, err := breathcast.ExtractStreamApplicationHeader(s, nil)
+	require.NoError(t, err)
+	require.Equal(t, []byte("fake app header"), appHeader)
+	require.Equal(t, byte(0xff), ratio)
+
+	// With all the header information extracted,
+	// the recipient can accept the broadcast.
+	require.NoError(t, bop1.AcceptBroadcast(
+		ctx,
+		dconn.Conn{
+			QUIC:  c1,
+			Chain: fx.ListenerSet.Leaves[0].Chain,
+		},
+		s,
+	))
+
+	// A little longer grace period for the receiver.
+	readyTimer.Reset(150 * time.Millisecond)
+	select {
+	case <-bop1.DataReady():
+		// Good.
+	case <-readyTimer.C:
+		t.Fatal("timed out waiting for recipient data ready")
+	}
+}
+
 func TestProtocol_allDatagramsSucceed(t *testing.T) {
 	t.Parallel()
 
