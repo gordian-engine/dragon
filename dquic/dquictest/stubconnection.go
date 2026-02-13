@@ -9,6 +9,10 @@ import (
 )
 
 type StubConnection struct {
+	// The value to return from the Context method.
+	// If nil, defaults to context.Background().
+	Ctx context.Context
+
 	// The value to return from the TLSConnectionState method.
 	TLSConnectionStateValue tls.ConnectionState
 
@@ -16,6 +20,14 @@ type StubConnection struct {
 }
 
 var _ dquic.Conn = (*StubConnection)(nil)
+
+func (c *StubConnection) Context() context.Context {
+	if c.Ctx == nil {
+		return context.Background()
+	}
+
+	return c.Ctx
+}
 
 // AcceptStream implements [dquic.Conn].
 func (c *StubConnection) AcceptStream(ctx context.Context) (dquic.Stream, error) {

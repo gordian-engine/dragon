@@ -43,6 +43,10 @@ func (c *Conn) WrapsConnection(conn dquic.Conn) bool {
 
 var _ dquic.Conn = (*Conn)(nil)
 
+func (c *Conn) Context() context.Context {
+	return c.dq.Context()
+}
+
 // AcceptStream implements [dquic.Conn].
 func (c *Conn) AcceptStream(ctx context.Context) (dquic.Stream, error) {
 	select {

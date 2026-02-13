@@ -17,6 +17,8 @@ type ApplicationErrorCode uint64
 // This is mostly a subset of the methods on [*quic.Conn],
 // only referencing the methods used in dragon.
 type Conn interface {
+	Context() context.Context
+
 	AcceptStream(context.Context) (Stream, error)
 	AcceptUniStream(context.Context) (ReceiveStream, error)
 
@@ -55,6 +57,10 @@ type ConnAdapter struct {
 // returning a value implementing [Conn].
 func WrapConn(qc *quic.Conn) ConnAdapter {
 	return ConnAdapter{qc: qc}
+}
+
+func (c ConnAdapter) Context() context.Context {
+	return c.qc.Context()
 }
 
 func (c ConnAdapter) AcceptStream(ctx context.Context) (Stream, error) {
