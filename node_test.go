@@ -363,6 +363,66 @@ func TestNode_DialAndJoin_rejectDuplicateConnectionByCert(t *testing.T) {
 	require.True(t, certErr.Chain.Leaf.Equal(nw.Chains[1].Leaf))
 }
 
+func TestNode_closeConnectionOnCARemoval(t *testing.T) {
+	t.Run("dialer removed from accepter", func(t *testing.T) {
+		t.Parallel()
+
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+
+		nw := dragontest.NewDefaultNetwork(
+			t, ctx,
+			dcerttest.FastConfig(), dcerttest.FastConfig(),
+		)
+		defer nw.Wait()
+		defer cancel()
+
+		// Node 0 joins Node 1 first.
+		require.NoError(t, nw.Nodes[0].Node.DialAndJoin(ctx, nw.Nodes[1].UDP.LocalAddr()))
+
+		ccAdd := dtest.ReceiveSoon(t, nw.ConnectionChanges[1])
+		require.True(t, ccAdd.Adding)
+
+		// Node 1 accepted the dial from Node 0,
+		// so clearing Node 1's allowed CAs should cause Node 0 to be disconnected.
+		//
+		// Due to how nodes are constructed, the CA pools are assumed
+		// to already be independent between all nodes.
+		// In other words, Node 0's CA pool should be unaffected by this call.
+		nw.Nodes[1].Node.UpdateCAs(nil)
+
+		ccRemove := dtest.ReceiveSoon(t, nw.ConnectionChanges[1])
+		require.False(t, ccRemove.Adding)
+	})
+
+	t.Run("accepter removed from dialer", func(t *testing.T) {
+		t.Parallel()
+
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+
+		nw := dragontest.NewDefaultNetwork(
+			t, ctx,
+			dcerttest.FastConfig(), dcerttest.FastConfig(),
+		)
+		defer nw.Wait()
+		defer cancel()
+
+		// Node 0 joins Node 1 first.
+		require.NoError(t, nw.Nodes[0].Node.DialAndJoin(ctx, nw.Nodes[1].UDP.LocalAddr()))
+
+		ccAdd := dtest.ReceiveSoon(t, nw.ConnectionChanges[0])
+		require.True(t, ccAdd.Adding)
+
+		// Now in contrast to the previous test,
+		// remove the accepter from the dialer.
+		nw.Nodes[0].Node.UpdateCAs(nil)
+
+		ccRemove := dtest.ReceiveSoon(t, nw.ConnectionChanges[0])
+		require.False(t, ccRemove.Adding)
+	})
+}
+
 func TestNode_forwardJoin(t *testing.T) {
 	t.Parallel()
 

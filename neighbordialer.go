@@ -105,7 +105,11 @@ func (d *neighborDialer) dialAndNeighbor(ctx context.Context, addr string) {
 
 		Chain: chain,
 
+		// TODO: why didn't this set AA, and why didn't it fail without AA?
+
 		AdmissionStream: res.Admission,
+
+		Removed: d.Dialer.CAPool.NotifyRemoval(chain.Root),
 
 		Resp: pResp,
 	}

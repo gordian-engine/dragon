@@ -90,8 +90,6 @@ func (c NodeConfig) validate(log *slog.Logger) {
 	var panicErrs error
 
 	if !c.QUIC.EnableDatagrams {
-		// We aren't actually forcing this yet.
-		// It's possible this may only be an application-level concern.
 		panicErrs = errors.Join(
 			panicErrs,
 			errors.New("QUIC datagrams must be enabled; set NodeConfig.QUIC.EnableDatagrams=true"),
@@ -422,8 +420,6 @@ func (n *Node) acceptConnections(ctx context.Context) {
 
 		// TODO: this should have some early rate-limiting based on remote identity.
 
-		// TODO: update context to handle notify on certificate removal.
-
 		chain, err := dcert.NewChainFromTLSConnectionState(qc.TLSConnectionState())
 		if err != nil {
 			n.log.Warn(
@@ -650,7 +646,11 @@ func (n *Node) handleIncomingJoin(
 
 		Chain: chain,
 
+		// TODO: why didn't this set AA, and why didn't it fail without AA?
+
 		AdmissionStream: qs,
+
+		Removed: n.caPool.NotifyRemoval(chain.Root),
 
 		Resp: pResp,
 	}
@@ -777,6 +777,8 @@ func (n *Node) handleIncomingNeighbor(
 
 		AdmissionStream: qs,
 
+		Removed: n.caPool.NotifyRemoval(chain.Root),
+
 		Resp: pResp,
 	}
 
@@ -890,6 +892,8 @@ func (n *Node) DialAndJoin(ctx context.Context, addr net.Addr) error {
 		AA:    res.AA,
 
 		AdmissionStream: res.AdmissionStream,
+
+		Removed: n.caPool.NotifyRemoval(chain.Root),
 
 		Resp: pResp,
 	}

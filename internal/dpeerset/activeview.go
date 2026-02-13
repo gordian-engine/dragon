@@ -317,6 +317,26 @@ func (a *ActiveView) handleAddRequest(ctx context.Context, req addRequest) {
 	}:
 		// Okay.
 	}
+
+	// Now that the connection is added,
+	// we have to ensure that it is removed if the peer's CA becomes untrusted.
+	a.processorWG.Add(1) // Should be okay to reuse this wait group?
+	go a.removePeerWhenUntrusted(ctx, PeerCertIDFromChain(req.IPeer.Chain), req.IPeer.Removed)
+}
+
+func (a *ActiveView) removePeerWhenUntrusted(
+	ctx context.Context,
+	pid PeerCertID,
+	removed <-chan struct{},
+) {
+	defer a.processorWG.Done()
+
+	select {
+	case <-ctx.Done():
+		return
+	case <-removed:
+		_ = a.Remove(ctx, pid)
+	}
 }
 
 // Remove removes the peer with the given ID from the active set.
@@ -388,7 +408,7 @@ func (a *ActiveView) handleRemoveRequest(ctx context.Context, req removeRequest)
 
 	select {
 	case <-ctx.Done():
-	// We are closing, so it's fine that we don't send the change.
+		// We are closing, so it's fine that we don't send the change.
 	case a.connectionChanges <- dconn.Change{
 		Conn:   dc,
 		Adding: false,

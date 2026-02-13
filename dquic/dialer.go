@@ -74,9 +74,25 @@ func (d Dialer) Dial(ctx context.Context, addr net.Addr) (DialResult, error) {
 		))
 	}
 
+	// For now, we have no external synchronization on this goroutine.
+	// The goroutine is coupled to the lifecycle of the connection,
+	// and it does not log or interact with anything other than the connection.
+	// If it turns out this causes any data races,
+	// then the Dialer will need an associated wait group.
+	go closeConnOnCARemoved(qc, notify)
+
 	return DialResult{
 		Conn: qc,
 
 		NotifyCARemoved: notify,
 	}, nil
+}
+
+func closeConnOnCARemoved(qc Conn, notify <-chan struct{}) {
+	select {
+	case <-qc.Context().Done():
+		return
+	case <-notify:
+		_ = qc.CloseWithError(CARemoved, CARemovedMessage)
+	}
 }

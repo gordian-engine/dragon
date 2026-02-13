@@ -12,6 +12,12 @@ import (
 // ApplicationErrorCode is used for [Conn.CloseWithError].
 type ApplicationErrorCode uint64
 
+const (
+	CARemoved ApplicationErrorCode = 0x0b18_1c9b_757d_05de // Decimal: 799420387874899422
+
+	CARemovedMessage = "CA removed from trusted pool"
+)
+
 // Conn is the interface representing a QUIC connection.
 //
 // This is mostly a subset of the methods on [*quic.Conn],

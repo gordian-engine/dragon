@@ -56,7 +56,7 @@ type NeighborDecisionRequest struct {
 //     That node we contacted, responded on the same connection
 //     with a Neighbor message, and we completed that handshake.
 //  2. Regardless of whether the node we contacted in 1 made a Neighbor request,
-//     it send a Forward Join message to its active view peers
+//     it sent a Forward Join message to its active view peers
 //     and one of them opened a connection to us,
 //     and sent us a Neighbor request.
 //  3. We were in another node's passive view,
@@ -70,6 +70,9 @@ type AddActivePeerRequest struct {
 	AA daddr.AddressAttestation
 
 	AdmissionStream dquic.Stream
+
+	// Necessary to clean up connection if CA is removed from trusted set.
+	Removed <-chan struct{}
 
 	Resp chan AddActivePeerResponse
 }

@@ -16,6 +16,8 @@ type Peer struct {
 	// as the read side happens in the peerInboundProcessor type,
 	// and we must not interfere with that work.
 	Admission dquic.Stream
+
+	Removed <-chan struct{}
 }
 
 func (p Peer) toInternal() iPeer {
@@ -29,6 +31,8 @@ func (p Peer) toInternal() iPeer {
 
 		CACertHandle:   p.Chain.RootHandle,
 		LeafCertHandle: p.Chain.LeafHandle,
+
+		Removed: p.Removed,
 	}
 }
 
@@ -44,6 +48,8 @@ type iPeer struct {
 
 	CACertHandle   dcert.CACertHandle
 	LeafCertHandle dcert.LeafCertHandle
+
+	Removed <-chan struct{}
 }
 
 func (ip iPeer) ToPeer() Peer {
@@ -54,6 +60,8 @@ func (ip iPeer) ToPeer() Peer {
 		AA:    ip.AA,
 
 		Admission: ip.Admission,
+
+		Removed: ip.Removed,
 	}
 }
 
