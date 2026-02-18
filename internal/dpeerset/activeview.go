@@ -66,6 +66,11 @@ type ActiveView struct {
 	// the APS will send on either seed or work channels.
 	seedChannels dfanout.SeedChannels
 	workChannels dfanout.WorkChannels
+
+	// The main loop needs a distinct finished signal,
+	// to avoid a possible race by other wait group use
+	// as the main loop handles a final signal.
+	mainLoopDone chan struct{}
 }
 
 type ActiveViewConfig struct {
@@ -145,9 +150,11 @@ func NewActiveView(ctx context.Context, log *slog.Logger, cfg ActiveViewConfig) 
 
 		seedChannels: dfanout.NewSeedChannels(2 * seeders),
 		workChannels: dfanout.NewWorkChannels(2 * workers),
+
+		mainLoopDone: make(chan struct{}),
 	}
 
-	a.wg.Add(1)
+	// No wait group; the main loop uses the mainLoopDone channel.
 	go a.mainLoop(ctx)
 
 	a.wg.Add(seeders + workers)
@@ -180,12 +187,13 @@ func NewActiveView(ctx context.Context, log *slog.Logger, cfg ActiveViewConfig) 
 }
 
 func (a *ActiveView) Wait() {
+	<-a.mainLoopDone
 	a.processorWG.Wait()
 	a.wg.Wait()
 }
 
 func (a *ActiveView) mainLoop(ctx context.Context) {
-	defer a.wg.Done()
+	defer close(a.mainLoopDone)
 
 	for {
 		select {
