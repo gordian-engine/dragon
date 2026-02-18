@@ -86,6 +86,10 @@ func RunOutgoingRelay(
 		// Have to calculate the ratio here to avoid a read-write data race
 		// from relayNewDatagrams writing to the bitset.
 		calculateRatio(cfg.InitialHavePackets),
+
+		cfg.Timing.OpenStreamTimeout,
+		cfg.Timing.SendHeaderTimeout,
+		cfg.Timing.ReceiveBitsetTimeout,
 	)
 	go receiveBitsetDeltas(
 		ctx,
@@ -137,6 +141,9 @@ func openOutgoingRelayStream(
 	ssCh chan<- dquic.SendStream,
 	initialPeerHas chan<- *bitset.BitSet,
 	haveRatio byte,
+	openStreamTimeout time.Duration,
+	sendHeaderTimeout time.Duration,
+	receiveBitsetTimeout time.Duration,
 ) {
 	defer cfg.WG.Done()
 
@@ -158,9 +165,8 @@ func openOutgoingRelayStream(
 	// already has the full data.
 
 	s, err := OpenStream(ctx, cfg.Conn, OpenStreamConfig{
-		// TODO: make these configurable.
-		OpenStreamTimeout: 20 * time.Millisecond,
-		SendHeaderTimeout: 20 * time.Millisecond,
+		OpenStreamTimeout: openStreamTimeout,
+		SendHeaderTimeout: sendHeaderTimeout,
 
 		ProtocolHeader: cfg.ProtocolHeader,
 		AppHeader:      cfg.AppHeader,
@@ -171,11 +177,11 @@ func openOutgoingRelayStream(
 		log.Info("Failed to open outgoing stream", "err", err)
 		return
 	}
+	log.Info("Opened outgoing relay stream", "ratio", haveRatio)
 
 	// We have to read the initial bitset from the peer
 	// before we can do anything else,
 	// so capture that here before signaling the other goroutines.
-	const receiveBitsetTimeout = 10 * time.Millisecond
 	peerHas := bitset.MustNew(uint(cfg.NData + cfg.NParity))
 
 	dec := new(dbitset.AdaptiveDecoder)

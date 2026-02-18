@@ -106,6 +106,14 @@ type ProtocolConfig struct {
 // ProtocolTiming is the set of configurable timing
 // for originating, relaying, and/or receiving a broadcast.
 type ProtocolTiming struct {
+	// How long to allow an open stream call to block
+	// before considering it a failure.
+	OpenStreamTimeout time.Duration
+
+	// How long to allow for sending the headers and handshake for an origination
+	// before the operation is considered a failure.
+	SendHeaderTimeout time.Duration
+
 	// How long to wait for recipient to send initial bitset,
 	// and how long to allow between each subsequent bitset.
 	ReceiveBitsetTimeout time.Duration
@@ -138,6 +146,8 @@ func DefaultProtocolTiming() ProtocolTiming {
 	o := bci.DefaultOriginationTiming()
 	a := bci.DefaultAcceptBroadcastTiming()
 	return ProtocolTiming{
+		OpenStreamTimeout:       o.OpenStreamTimeout,
+		SendHeaderTimeout:       o.SendHeaderTimeout,
 		ReceiveBitsetTimeout:    o.ReceiveBitsetTimeout,
 		OccasionalDatagramSleep: o.OccasionalDatagramSleep,
 		FinalBitsetWaitTimeout:  o.FinalBitsetWaitTimeout,
@@ -151,6 +161,8 @@ func DefaultProtocolTiming() ProtocolTiming {
 
 func (t ProtocolTiming) originationTiming() bci.OriginationTiming {
 	return bci.OriginationTiming{
+		OpenStreamTimeout:       t.OpenStreamTimeout,
+		SendHeaderTimeout:       t.SendHeaderTimeout,
 		ReceiveBitsetTimeout:    t.ReceiveBitsetTimeout,
 		OccasionalDatagramSleep: t.OccasionalDatagramSleep,
 		FinalBitsetWaitTimeout:  t.FinalBitsetWaitTimeout,
@@ -167,7 +179,9 @@ func (t ProtocolTiming) acceptTiming() bci.AcceptBroadcastTiming {
 }
 
 func NewProtocol(ctx context.Context, log *slog.Logger, cfg ProtocolConfig) *Protocol {
-	if cfg.Timing.ReceiveBitsetTimeout == 0 ||
+	if cfg.Timing.OpenStreamTimeout == 0 ||
+		cfg.Timing.SendHeaderTimeout == 0 ||
+		cfg.Timing.ReceiveBitsetTimeout == 0 ||
 		cfg.Timing.OccasionalDatagramSleep == 0 ||
 		cfg.Timing.FinalBitsetWaitTimeout == 0 ||
 		cfg.Timing.SendSyncPacketTimeout == 0 ||
@@ -317,7 +331,7 @@ func (p *Protocol) NewOrigination(
 		totalDataSize: cfg.TotalDataSize,
 		chunkSize:     cfg.ChunkSize,
 
-		origTiming: p.timing.originationTiming(),
+		origTiming:   p.timing.originationTiming(),
 		acceptTiming: p.timing.acceptTiming(),
 
 		dataReady: make(chan struct{}),
@@ -472,7 +486,7 @@ func (p *Protocol) NewIncomingBroadcast(
 		hashSize:       cfg.HashSize,
 		rootProofCount: len(cfg.RootProofs),
 
-		origTiming: p.timing.originationTiming(),
+		origTiming:   p.timing.originationTiming(),
 		acceptTiming: p.timing.acceptTiming(),
 
 		dataReady: make(chan struct{}),

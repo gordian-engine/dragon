@@ -40,6 +40,14 @@ type OriginationConfig struct {
 // OriginationTiming is a copy of breathcast.OriginationTiming.
 // We could use an alias but for a small struct that just hurts readability.
 type OriginationTiming struct {
+	// How long to allow the open stream call to block
+	// before considering it a failure.
+	OpenStreamTimeout time.Duration
+
+	// How long to allow for sending the headers and handshake for an origination
+	// before the operation is considered a failure.
+	SendHeaderTimeout time.Duration
+
 	// How long to wait for recipient to send initial bitset,
 	// and how long to allow between each subsequent bitset.
 	ReceiveBitsetTimeout time.Duration
@@ -61,7 +69,9 @@ type OriginationTiming struct {
 
 // IsZero reports whether t has all zero duration values.
 func (t OriginationTiming) IsZero() bool {
-	return t.ReceiveBitsetTimeout == 0 &&
+	return t.OpenStreamTimeout == 0 &&
+		t.SendHeaderTimeout == 0 &&
+		t.ReceiveBitsetTimeout == 0 &&
 		t.OccasionalDatagramSleep == 0 &&
 		t.FinalBitsetWaitTimeout == 0 &&
 		t.SendSyncPacketTimeout == 0
@@ -69,6 +79,8 @@ func (t OriginationTiming) IsZero() bool {
 
 func DefaultOriginationTiming() OriginationTiming {
 	return OriginationTiming{
+		OpenStreamTimeout:    50 * time.Millisecond,
+		SendHeaderTimeout:    100 * time.Millisecond,
 		ReceiveBitsetTimeout: 50 * time.Millisecond,
 
 		OccasionalDatagramSleep: 75 * time.Microsecond, // Yes, sub-millisecond.
