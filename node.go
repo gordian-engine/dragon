@@ -352,6 +352,7 @@ func (n *Node) startListener() error {
 	if err != nil {
 		return fmt.Errorf("failed to set up QUIC listener: %w", err)
 	}
+	n.log.Info("Node listening", "addr", ql.Addr().String())
 
 	n.quicListener = ql
 	return nil
