@@ -189,6 +189,14 @@ func calculateRatio(bs *bitset.BitSet) byte {
 }
 
 // SendSyncPacket writes the packet over the given stream.
+//
+// In contrast to [SendSyncMissedDatagram],
+// there is no additional data sent with each packet.
+// This format is used when the sender
+// (an originator or a relayer promoted to originator)
+// has the full data and has indicated to the receiving peer
+// that all remaining data on the stream will be packets
+// that the sender believes the receiver does not have.
 func SendSyncPacket(
 	s dquic.SendStream,
 	sendTimeout time.Duration,
@@ -211,6 +219,10 @@ func SendSyncPacket(
 
 // SendSyncMissedDatagram sends an individual missed datagram
 // as a synchronous packet over the given stream.
+//
+// In contrast to [SendSyncPacket], there is a header byte on each message.
+// This is used for synchronizing missed datagrams from a relaying peer,
+// before that peer has the full data itself.
 func SendSyncMissedDatagram(
 	s dquic.SendStream,
 	sendTimeout time.Duration,

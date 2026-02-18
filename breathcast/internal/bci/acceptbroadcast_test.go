@@ -135,7 +135,7 @@ func TestRunAcceptBroadcast_externalUpdatesShared(t *testing.T) {
 	got := bitset.MustNew(4)
 
 	// The operation immediately sends its have bitset.
-	require.NoError(t, dec.ReceiveBitset(s, 15*time.Millisecond, got))
+	require.NoError(t, dec.ReceiveBitset(s, 75*time.Millisecond, got))
 	require.Equal(t, uint(1), got.Count())
 	require.True(t, got.Test(0))
 

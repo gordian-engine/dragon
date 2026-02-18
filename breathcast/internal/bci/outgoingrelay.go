@@ -130,6 +130,7 @@ func RunOutgoingRelay(
 		ssEndCh,
 		cfg.Packets,
 		syncRequests, syncReturns,
+		cfg.Timing.SendSyncPacketTimeout,
 	)
 }
 
@@ -435,6 +436,7 @@ func sendMissedPackets(
 	packets [][]byte,
 	syncRequestsCh <-chan *bitset.BitSet,
 	syncReturnsCh chan<- *bitset.BitSet,
+	sendSyncPacketTimeout time.Duration,
 ) {
 	defer wg.Done()
 	defer close(ssOutCh)
@@ -464,8 +466,7 @@ func sendMissedPackets(
 			}
 
 			for sb := range dbitset.RandomSetBitIterator(req) {
-				const timeout = 3 * time.Millisecond // TODO: make configurable.
-				SendSyncMissedDatagram(s, timeout, packets[sb.Idx])
+				SendSyncMissedDatagram(s, sendSyncPacketTimeout, packets[sb.Idx])
 			}
 
 			// We sent all the synchronous packets,
