@@ -95,7 +95,7 @@ func RunOutgoingRelay(
 		ctx,
 		cfg.WG,
 		uint(len(cfg.Packets)),
-		10*time.Millisecond, // TODO: make configurable
+		cfg.Timing.ReceiveBitsetTimeout,
 		func(string, error) {
 			// TODO: cancel the whole stream here, I think.
 		},
