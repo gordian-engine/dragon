@@ -441,7 +441,8 @@ func (n *Node) acceptConnections(ctx context.Context) {
 		}
 
 		p := dbsinbound.Protocol{
-			Log:  n.log.With("protocol", "incoming_bootstrap"),
+			Log: n.log.With("protocol", "incoming_bootstrap"),
+
 			Conn: qc,
 
 			PeerCert: chain.Leaf,

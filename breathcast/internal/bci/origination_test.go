@@ -17,6 +17,7 @@ import (
 	"github.com/gordian-engine/dragon/internal/dbitset"
 	"github.com/gordian-engine/dragon/internal/dtest"
 	"github.com/stretchr/testify/require"
+	otpnoop "go.opentelemetry.io/otel/trace/noop"
 )
 
 func TestRunOrigination_handshake(t *testing.T) {
@@ -218,6 +219,8 @@ func NewOriginationFixture(
 	t.Helper()
 
 	cfg := bci.OriginationConfig{
+		Tracer: otpnoop.NewTracerProvider().Tracer("NewOutgoingRelayFixture"),
+
 		WG: new(sync.WaitGroup),
 
 		// Conn injected in Run call.

@@ -14,6 +14,8 @@ import (
 	"github.com/gordian-engine/dragon/dpubsub"
 	"github.com/gordian-engine/dragon/wingspan/internal/wsi"
 	"github.com/gordian-engine/dragon/wingspan/wspacket"
+	otrace "go.opentelemetry.io/otel/trace"
+	otpnoop "go.opentelemetry.io/otel/trace/noop"
 )
 
 // Protocol controls all the operations of the "wingspan" protocol.
@@ -26,6 +28,8 @@ type Protocol[
 	DeltaIn, DeltaOut any,
 ] struct {
 	log *slog.Logger
+
+	tracer otrace.Tracer
 
 	// Pubsub stream for connection changes,
 	// so that broadcast operations can observe it directly.
@@ -65,6 +69,8 @@ type sessionRequest[
 
 // ProtocolConfig is the configuration passed to [NewProtocol].
 type ProtocolConfig struct {
+	TracerProvider otrace.TracerProvider
+
 	// The initial connections to use.
 	// The protocol will own this slice,
 	// so the caller must not retain any references to it.
@@ -90,6 +96,11 @@ func NewProtocol[
 	log *slog.Logger,
 	cfg ProtocolConfig,
 ) *Protocol[PktIn, PktOut, DeltaIn, DeltaOut] {
+	otp := cfg.TracerProvider
+	if otp == nil {
+		otp = otpnoop.NewTracerProvider()
+	}
+
 	if cfg.SessionIDLength == 0 {
 		// It's plausible that there would be a use case
 		// for saving the space required for session IDs,
@@ -101,6 +112,8 @@ func NewProtocol[
 
 	p := &Protocol[PktIn, PktOut, DeltaIn, DeltaOut]{
 		log: log,
+
+		tracer: otp.Tracer("dragon/wingspan"),
 
 		connChanges: cfg.ConnectionChanges,
 
@@ -128,6 +141,9 @@ func (p *Protocol[PktIn, PktOut, DeltaIn, DeltaOut]) mainLoop(
 ) {
 	defer close(p.mainLoopDone)
 
+	ctx, span := p.tracer.Start(ctx, "protocol main loop")
+	defer span.End()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -138,6 +154,7 @@ func (p *Protocol[PktIn, PktOut, DeltaIn, DeltaOut]) mainLoop(
 			return
 
 		case req := <-p.startSessionRequests:
+			span.AddEvent("handle start session request")
 			p.handleStartSessionRequest(ctx, req, conns)
 
 		case <-p.connChanges.Ready:
@@ -145,8 +162,10 @@ func (p *Protocol[PktIn, PktOut, DeltaIn, DeltaOut]) mainLoop(
 			p.connChanges = p.connChanges.Next
 			if cc.Adding {
 				conns[cc.Conn.Chain.LeafHandle] = cc.Conn
+				span.AddEvent("handle added connection")
 			} else {
 				delete(conns, cc.Conn.Chain.LeafHandle)
+				span.AddEvent("handle removed connection")
 			}
 		}
 	}
@@ -166,7 +185,7 @@ func (p *Protocol[PktIn, PktOut, DeltaIn, DeltaOut]) handleStartSessionRequest(
 
 	p.wg.Add(1)
 	go req.Session.Run(
-		ctx, &p.wg,
+		ctx, p.tracer, &p.wg,
 		maps.Clone(conns),
 		p.connChanges,
 	)

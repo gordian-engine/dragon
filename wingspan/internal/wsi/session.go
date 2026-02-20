@@ -14,6 +14,8 @@ import (
 	"github.com/gordian-engine/dragon/dpubsub"
 	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/wingspan/wspacket"
+	"go.opentelemetry.io/otel/attribute"
+	otrace "go.opentelemetry.io/otel/trace"
 )
 
 // Session is the internal representation of a session.
@@ -26,6 +28,11 @@ type Session[
 	// We store the full header only once on the session
 	// and then reuse it for every outbound worker.
 	header []byte
+
+	// The session ID is a subslice into header,
+	// and it should be treated as read-only.
+	// This is only used for logging and tracing.
+	sessionID []byte
 
 	state  wspacket.CentralState[PktIn, PktOut, DeltaIn, DeltaOut]
 	deltas *dpubsub.Stream[DeltaOut]
@@ -105,7 +112,8 @@ func NewSession[
 	return &Session[PktIn, PktOut, DeltaIn, DeltaOut]{
 		log: log,
 
-		header: h,
+		header:    h,
+		sessionID: h[1 : 1+len(sessionID)],
 
 		state:  state,
 		deltas: deltas,
@@ -118,11 +126,21 @@ func NewSession[
 
 func (s *Session[PktIn, PktOut, DeltaIn, DeltaOut]) Run(
 	ctx context.Context,
+	tracer otrace.Tracer,
 	parentWG *sync.WaitGroup,
 	conns map[dcert.LeafCertHandle]dconn.Conn,
 	connChanges *dpubsub.Stream[dconn.Change],
 ) {
 	defer parentWG.Done()
+
+	ctx, span := tracer.Start(
+		ctx,
+		"wingspan session main loop",
+		otrace.WithAttributes(
+			attribute.String("wingspan.session.id", fmt.Sprintf("%x", s.sessionID)),
+		),
+	)
+	defer span.End()
 
 	var wg sync.WaitGroup
 	defer wg.Wait()
@@ -186,6 +204,12 @@ func (s *Session[PktIn, PktOut, DeltaIn, DeltaOut]) Run(
 				State:  is,
 				Deltas: m,
 			}
+			span.AddEvent(
+				"created inbound stream",
+				otrace.WithAttributes(
+					attribute.Stringer("remote", req.Conn.QUIC.RemoteAddr()),
+				),
+			)
 
 			close(req.Resp)
 
@@ -199,14 +223,22 @@ func (s *Session[PktIn, PktOut, DeltaIn, DeltaOut]) Run(
 			switch {
 			case err == nil:
 				res = inboundDeltaApply
+				span.AddEvent("Going to apply update from peer")
 			case errors.Is(err, wspacket.ErrRedundantUpdate):
 				res = inboundDeltaDrop
+				span.AddEvent("Going to drop redundant update from peer")
 			default:
 				s.log.Info(
 					"Failed to apply update from remote",
 					"err", err,
 				)
 				res = inboundDeltaReject
+				span.AddEvent(
+					"Going to reject failed update from peer",
+					otrace.WithAttributes(
+						attribute.String("err", err.Error()),
+					),
+				)
 			}
 
 			// Response channel assumed to be buffered.
@@ -291,7 +323,7 @@ func (s *Session[PktIn, PktOut, DeltaIn, DeltaOut]) addRemoteState(
 	ctx, cancel := context.WithCancelCause(ctx)
 
 	wg.Add(2)
-	const headerTimeout = 5 * time.Millisecond
+	const headerTimeout = 5 * time.Millisecond // TODO: make configurable
 	go ow.Run(ctx, wg, conn.QUIC, headerTimeout, peerReceivedCh)
 
 	inboundStreamCh := make(chan InboundStream[PktIn, DeltaIn, DeltaOut], 1)

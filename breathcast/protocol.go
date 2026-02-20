@@ -19,6 +19,8 @@ import (
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/dpubsub"
 	"github.com/klauspost/reedsolomon"
+	otrace "go.opentelemetry.io/otel/trace"
+	otpnoop "go.opentelemetry.io/otel/trace/noop"
 )
 
 // Protocol controls all the operations of the "breathcast" broadcasting protocol.
@@ -46,6 +48,8 @@ import (
 // required to populate the [IncomingBroadcastConfig].
 type Protocol struct {
 	log *slog.Logger
+
+	tracer otrace.Tracer
 
 	// Pubsub stream for connection changes,
 	// so that broadcast operations can observe it directly.
@@ -82,6 +86,10 @@ type newBroadcastRequest struct {
 
 // ProtocolConfig is the configuration passed to [NewProtocol].
 type ProtocolConfig struct {
+	// The tracer provider for OpenTelemetry traces.
+	// If nil, a no-op tracer provider will be used.
+	TracerProvider otrace.TracerProvider
+
 	// The initial connections to use.
 	// The protocol will own this slice,
 	// so the caller must not retain any references to it.
@@ -100,11 +108,15 @@ type ProtocolConfig struct {
 	// and it consumes space in chunk packets.
 	BroadcastIDLength uint8
 
+	// Timing defines timeouts and other durations
+	// related to protocol operation.
 	Timing ProtocolTiming
 }
 
 // ProtocolTiming is the set of configurable timing
 // for originating, relaying, and/or receiving a broadcast.
+//
+// Use [DefaultProtocolTiming] for reasonable defaults.
 type ProtocolTiming struct {
 	// How long to allow an open stream call to block
 	// before considering it a failure.
@@ -200,8 +212,14 @@ func NewProtocol(ctx context.Context, log *slog.Logger, cfg ProtocolConfig) *Pro
 		)
 	}
 
+	otp := cfg.TracerProvider
+	if otp == nil {
+		otp = otpnoop.NewTracerProvider()
+	}
+
 	p := &Protocol{
-		log: log,
+		log:    log,
+		tracer: otp.Tracer("dragon/breathcast"),
 
 		connChanges: cfg.ConnectionChanges,
 
@@ -230,6 +248,9 @@ func NewProtocol(ctx context.Context, log *slog.Logger, cfg ProtocolConfig) *Pro
 func (p *Protocol) mainLoop(ctx context.Context, conns map[dcert.LeafCertHandle]dconn.Conn) {
 	defer close(p.mainLoopDone)
 
+	ctx, span := p.tracer.Start(ctx, "breathcast protocol main loop")
+	defer span.End()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -243,6 +264,7 @@ func (p *Protocol) mainLoop(ctx context.Context, conns map[dcert.LeafCertHandle]
 			return
 
 		case req := <-p.newBroadcastRequests:
+			span.AddEvent("handle new broadcast request")
 			p.handleNewBroadcastRequest(ctx, req, conns)
 
 		case <-p.connChanges.Ready:
@@ -252,8 +274,10 @@ func (p *Protocol) mainLoop(ctx context.Context, conns map[dcert.LeafCertHandle]
 			p.connChanges = p.connChanges.Next
 			if cc.Adding {
 				conns[cc.Conn.Chain.LeafHandle] = cc.Conn
+				span.AddEvent("handle added connection")
 			} else {
 				delete(conns, cc.Conn.Chain.LeafHandle)
+				span.AddEvent("handle removed connection")
 			}
 		}
 	}
@@ -320,6 +344,8 @@ func (p *Protocol) NewOrigination(
 			"op", "broadcast",
 			"bid", fmt.Sprintf("%x", cfg.BroadcastID), // TODO: dlog.Hex helper?
 		),
+
+		tracer: p.tracer,
 
 		protocolID:  p.protocolID,
 		broadcastID: cfg.BroadcastID,
@@ -469,6 +495,8 @@ func (p *Protocol) NewIncomingBroadcast(
 			"op", "broadcast",
 			"bid", fmt.Sprintf("%x", cfg.BroadcastID), // TODO: dlog.Hex helper?
 		),
+
+		tracer: p.tracer,
 
 		protocolID:  p.protocolID,
 		broadcastID: cfg.BroadcastID,

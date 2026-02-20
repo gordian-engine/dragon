@@ -13,12 +13,17 @@ import (
 	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dbitset"
 	"github.com/quic-go/quic-go"
+	"go.opentelemetry.io/otel/attribute"
+	ocodes "go.opentelemetry.io/otel/codes"
+	otrace "go.opentelemetry.io/otel/trace"
 )
 
 // OriginationConfig is the configuration for [RunOrigination].
 type OriginationConfig struct {
 	// The wait group lives outside the origination.
 	WG *sync.WaitGroup
+
+	Tracer otrace.Tracer
 
 	// The connection on which we will open the stream.
 	Conn dquic.Conn
@@ -109,6 +114,9 @@ func RunOrigination(
 	if cfg.NData == 0 {
 		panic(errors.New("BUG: OriginationConfig.NData must not be zero"))
 	}
+	if cfg.Tracer == nil {
+		panic(errors.New("BUG: OriginationConfig.Tracer must not be nil"))
+	}
 
 	// openOriginationStream sends on these two channels,
 	// allowing the other two goroutines to proceed from initial state.
@@ -124,6 +132,7 @@ func RunOrigination(
 	go openOriginationStream(
 		ctx,
 		log.With("step", "open_origination_stream"),
+		cfg.Tracer,
 		cfg.WG,
 		cfg.Conn,
 		cfg.ProtocolHeader,
@@ -136,6 +145,7 @@ func RunOrigination(
 	go sendOriginationPackets(
 		ctx,
 		log.With("step", "send_origination_packets"),
+		cfg.Tracer,
 		cfg.WG,
 		cfg.Conn,
 		cfg.Packets,
@@ -149,6 +159,7 @@ func RunOrigination(
 	)
 	go receiveBitsetDeltas(
 		ctx,
+		cfg.Tracer,
 		cfg.WG,
 		uint(len(cfg.Packets)),
 		cfg.Timing.ReceiveBitsetTimeout,
@@ -167,6 +178,7 @@ func RunOrigination(
 func openOriginationStream(
 	ctx context.Context,
 	log *slog.Logger,
+	tracer otrace.Tracer,
 	wg *sync.WaitGroup,
 	conn dquic.Conn,
 	pHeader ProtocolHeader,
@@ -180,6 +192,15 @@ func openOriginationStream(
 
 	defer close(iosCh)
 	defer close(bsdCh)
+
+	ctx, span := tracer.Start(
+		ctx,
+		"open origination stream",
+		otrace.WithAttributes(
+			attribute.Stringer("remote", conn.RemoteAddr()),
+		),
+	)
+	defer span.End()
 
 	s, err := OpenStream(ctx, conn, OpenStreamConfig{
 		// TODO: make these configurable.
@@ -197,6 +218,9 @@ func openOriginationStream(
 			"Failed to open origination stream",
 			"err", err,
 		)
+		if ctx.Err() == nil {
+			span.SetStatus(ocodes.Error, err.Error())
+		}
 		return
 	}
 
@@ -215,6 +239,9 @@ func openOriginationStream(
 			"Failed to receive initial bitset acknowledgement to origination stream",
 			"err", err,
 		)
+		if ctx.Err() == nil {
+			span.SetStatus(ocodes.Error, err.Error())
+		}
 		return
 	}
 
@@ -239,6 +266,7 @@ func openOriginationStream(
 func sendOriginationPackets(
 	ctx context.Context,
 	log *slog.Logger,
+	tracer otrace.Tracer,
 	wg *sync.WaitGroup,
 	conn dquic.Conn,
 	packets [][]byte,
@@ -252,6 +280,15 @@ func sendOriginationPackets(
 ) {
 	defer wg.Done()
 
+	ctx, span := tracer.Start(
+		ctx,
+		"send origination packets",
+		otrace.WithAttributes(
+			attribute.Stringer("remote", conn.RemoteAddr()),
+		),
+	)
+	defer span.End()
+
 	var peerHas *bitset.BitSet
 	var s dquic.SendStream
 	select {
@@ -259,6 +296,7 @@ func sendOriginationPackets(
 		return
 	case x, ok := <-initialStateCh:
 		if !ok {
+			span.AddEvent("initial state channel closed")
 			return
 		}
 		s = x.Stream
@@ -270,11 +308,11 @@ func sendOriginationPackets(
 	timer.Stop()
 
 	sendUnreliableDatagrams(
-		conn, packets, nil, peerHas, peerHasDeltaCh, timer, occasionalDatagramSleep,
+		ctx, tracer, conn, packets, nil, peerHas, peerHasDeltaCh, timer, occasionalDatagramSleep,
 	)
 
 	synchronizeMissedPackets(
-		ctx, log,
+		ctx, log, tracer,
 		s,
 		peerHas, peerHasDeltaCh,
 		packets, nData,
@@ -290,6 +328,7 @@ func sendOriginationPackets(
 func synchronizeMissedPackets(
 	ctx context.Context,
 	log *slog.Logger,
+	tracer otrace.Tracer,
 	s dquic.SendStream,
 	peerHas *bitset.BitSet,
 	peerBitsetUpdates <-chan *bitset.BitSet,
@@ -300,6 +339,9 @@ func synchronizeMissedPackets(
 	sendSyncPacketTimeout time.Duration,
 	clearDeltaTimeoutCh chan<- struct{},
 ) {
+	ctx, span := tracer.Start(ctx, "synchronize missed packets")
+	defer span.End()
+
 	// Indicate that we are done with the unreliable datagrams.
 	const sendCompletionTimeout = 20 * time.Millisecond // TODO: make configurable.
 	if err := s.SetWriteDeadline(time.Now().Add(sendCompletionTimeout)); err != nil {
@@ -307,6 +349,9 @@ func synchronizeMissedPackets(
 			"Failed to set write deadline for completion",
 			"err", err,
 		)
+		if ctx.Err() == nil {
+			span.SetStatus(ocodes.Error, err.Error())
+		}
 		return
 	}
 	if _, err := s.Write([]byte{datagramsFinishedMessageID}); err != nil {
@@ -317,9 +362,14 @@ func synchronizeMissedPackets(
 				"Failed to write completion indicator",
 				"err", err,
 			)
+			if ctx.Err() == nil {
+				span.SetStatus(ocodes.Error, err.Error())
+			}
 		}
 		return
 	}
+
+	span.AddEvent("wrote datagrams finished message ID")
 
 	// Now we have to wait for one more bitset update.
 	// It is possible that there are multiple bitset updates on the way,
@@ -403,6 +453,8 @@ func isCloseOfCanceledStreamError(e error) bool {
 //
 // sendUnreliableDatagrams ensures that the timer is stopped upon return.
 func sendUnreliableDatagrams(
+	ctx context.Context,
+	tracer otrace.Tracer,
 	conn dquic.Conn,
 	packets [][]byte,
 	alreadySent *bitset.BitSet,
@@ -412,6 +464,9 @@ func sendUnreliableDatagrams(
 	occasionalSleepDur time.Duration,
 ) {
 	defer delayTimer.Stop()
+
+	_, span := tracer.Start(ctx, "send unreliable datagrams")
+	defer span.End()
 
 	nSent := 0
 	it := alreadySent
