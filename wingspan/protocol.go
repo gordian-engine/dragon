@@ -13,6 +13,7 @@ import (
 	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/dpubsub"
+	"github.com/gordian-engine/dragon/internal/dtrace"
 	"github.com/gordian-engine/dragon/wingspan/internal/wsi"
 	"github.com/gordian-engine/dragon/wingspan/wspacket"
 )
@@ -27,6 +28,8 @@ type Protocol[
 	DeltaIn, DeltaOut any,
 ] struct {
 	log *slog.Logger
+
+	tracer dtrace.Tracer
 
 	// Pubsub stream for connection changes,
 	// so that broadcast operations can observe it directly.
@@ -68,6 +71,8 @@ type sessionRequest[
 
 // ProtocolConfig is the configuration passed to [NewProtocol].
 type ProtocolConfig struct {
+	TracerProvider dtrace.TracerProvider
+
 	// The initial connections to use.
 	// The protocol will own this slice,
 	// so the caller must not retain any references to it.
@@ -126,6 +131,11 @@ func NewProtocol[
 	log *slog.Logger,
 	cfg ProtocolConfig,
 ) *Protocol[PktIn, PktOut, DeltaIn, DeltaOut] {
+	otp := cfg.TracerProvider
+	if otp == nil {
+		otp = dtrace.NopTracerProvider()
+	}
+
 	if cfg.SessionIDLength == 0 {
 		// It's plausible that there would be a use case
 		// for saving the space required for session IDs,
@@ -144,6 +154,8 @@ func NewProtocol[
 
 	p := &Protocol[PktIn, PktOut, DeltaIn, DeltaOut]{
 		log: log,
+
+		tracer: otp.Tracer("dragon/wingspan"),
 
 		connChanges: cfg.ConnectionChanges,
 
@@ -173,6 +185,9 @@ func (p *Protocol[PktIn, PktOut, DeltaIn, DeltaOut]) mainLoop(
 ) {
 	defer close(p.mainLoopDone)
 
+	ctx, span := p.tracer.Start(ctx, "protocol main loop")
+	defer span.End()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -183,6 +198,7 @@ func (p *Protocol[PktIn, PktOut, DeltaIn, DeltaOut]) mainLoop(
 			return
 
 		case req := <-p.startSessionRequests:
+			span.AddEvent("handle start session request")
 			p.handleStartSessionRequest(ctx, req, conns)
 
 		case <-p.connChanges.Ready:
@@ -190,8 +206,10 @@ func (p *Protocol[PktIn, PktOut, DeltaIn, DeltaOut]) mainLoop(
 			p.connChanges = p.connChanges.Next
 			if cc.Adding {
 				conns[cc.Conn.Chain.LeafHandle] = cc.Conn
+				span.AddEvent("handle added connection")
 			} else {
 				delete(conns, cc.Conn.Chain.LeafHandle)
+				span.AddEvent("handle removed connection")
 			}
 		}
 	}
@@ -245,6 +263,7 @@ func (p *Protocol[PktIn, PktOut, DeltaIn, DeltaOut]) NewSession(
 
 	s := wsi.NewSession[PktIn, PktOut, DeltaIn, DeltaOut](
 		p.log.With("sid", fmt.Sprintf("%x", id)), // TODO: hex log helper.
+		p.tracer,
 		p.protocolID, id, appHeader,
 		state, deltas,
 		wsi.SessionTiming{

@@ -10,6 +10,7 @@ import (
 
 	"github.com/gordian-engine/dragon/dpubsub"
 	"github.com/gordian-engine/dragon/dquic"
+	"github.com/gordian-engine/dragon/internal/dtrace"
 	"github.com/gordian-engine/dragon/wingspan/wspacket"
 )
 
@@ -19,6 +20,8 @@ import (
 // belonging to the worker's owning [Session].
 type InboundWorker[PktIn, DeltaIn, DeltaOut any] struct {
 	log *slog.Logger
+
+	tracer dtrace.Tracer
 
 	// Channel owned by the session.
 	// Parsed packets go to the session to fan out to [OutboundWorker] instances.
@@ -32,10 +35,13 @@ type InboundWorker[PktIn, DeltaIn, DeltaOut any] struct {
 // NewInboundWorker returns a new InboundWorker.
 func NewInboundWorker[PktIn, DeltaIn, DeltaOut any](
 	log *slog.Logger,
+	tracer dtrace.Tracer,
 	inboundDeltaArrivals chan<- inboundDeltaArrival[DeltaIn],
 ) *InboundWorker[PktIn, DeltaIn, DeltaOut] {
 	return &InboundWorker[PktIn, DeltaIn, DeltaOut]{
 		log: log,
+
+		tracer: tracer,
 
 		inboundDeltaArrivals: inboundDeltaArrivals,
 	}
@@ -58,6 +64,9 @@ func (w *InboundWorker[PktIn, DeltaIn, DeltaOut]) Run(
 	peerReceivedCh chan<- DeltaIn,
 ) {
 	defer parentWG.Done()
+
+	ctx, span := w.tracer.Start(ctx, "inbound worker main loop")
+	defer span.End()
 
 	// Wait for the stream and initial state.
 	var s dquic.ReceiveStream
@@ -120,6 +129,9 @@ func (w *InboundWorker[PktIn, DeltaIn, DeltaOut]) readStream(
 ) {
 	defer close(done)
 
+	ctx, span := w.tracer.Start(ctx, "read inbound stream")
+	defer span.End()
+
 	for {
 		if err := rs.SetReadDeadline(time.Time{}); err != nil {
 			w.log.Info(
@@ -142,8 +154,11 @@ func (w *InboundWorker[PktIn, DeltaIn, DeltaOut]) readStream(
 				"Failed to parse packet",
 				"err", err,
 			)
+			dtrace.SpanError(span, err)
 			return
 		}
+
+		span.AddEvent("parsed inbound packet")
 
 		select {
 		case <-ctx.Done():

@@ -11,6 +11,7 @@ import (
 	"github.com/gordian-engine/dragon/dpubsub"
 	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dbitset"
+	"github.com/gordian-engine/dragon/internal/dtrace"
 	"github.com/quic-go/quic-go"
 )
 
@@ -20,6 +21,8 @@ type OutgoingRelayConfig struct {
 	// lives outside the outgoing relay operation,
 	// as we are typically unconcerned with a single instance.
 	WG *sync.WaitGroup
+
+	Tracer dtrace.Tracer
 
 	// The connection on which we will open the stream.
 	Conn dquic.Conn
@@ -60,6 +63,10 @@ func RunOutgoingRelay(
 	if cfg.Timing.IsZero() {
 		panic(errors.New("ILLEGAL: RunOutgoingRelay called with zero timeouts"))
 	}
+	if cfg.Tracer == nil {
+		panic(errors.New("BUG: RunOutgoingRelay.Tracer must not be nil"))
+	}
+
 	// Buffered so that writes in openOutgoingRelayStream don't block.
 	ssStartCh := make(chan dquic.SendStream, 1)
 	ssEndCh := make(chan dquic.SendStream, 1)
@@ -93,6 +100,7 @@ func RunOutgoingRelay(
 	)
 	go receiveBitsetDeltas(
 		ctx,
+		cfg.Tracer,
 		cfg.WG,
 		uint(len(cfg.Packets)),
 		cfg.Timing.ReceiveBitsetTimeout,
@@ -106,6 +114,7 @@ func RunOutgoingRelay(
 	go relayNewDatagrams(
 		ctx,
 		log.With("step", "forward_datagrams"),
+		cfg.Tracer,
 		cfg.WG,
 		initialPeerHas,
 		peerBitsetUpdates,
@@ -228,6 +237,7 @@ func openOutgoingRelayStream(
 func relayNewDatagrams(
 	ctx context.Context,
 	log *slog.Logger,
+	tracer dtrace.Tracer,
 	wg *sync.WaitGroup,
 	initialPeerHas <-chan *bitset.BitSet,
 	peerBitsetUpdates <-chan *bitset.BitSet,
@@ -315,6 +325,7 @@ AWAIT_PEER_HAS:
 			}
 			finishRelay(
 				ctx, log,
+				tracer,
 				conn,
 				ssEndCh,
 				peerHas, peerBitsetUpdates,
@@ -487,6 +498,7 @@ func sendMissedPackets(
 func finishRelay(
 	ctx context.Context,
 	log *slog.Logger,
+	tracer dtrace.Tracer,
 	conn dquic.Conn,
 	sCh <-chan dquic.SendStream,
 	peerHas *bitset.BitSet,
@@ -504,7 +516,7 @@ func finishRelay(
 	timer.Stop()
 
 	sendUnreliableDatagrams(
-		conn, packets, alreadySent, peerHas, peerBitsetUpdates, timer, occasionalDatagramSleep,
+		ctx, tracer, conn, packets, alreadySent, peerHas, peerBitsetUpdates, timer, occasionalDatagramSleep,
 	)
 
 	// Now that we've sent the datagrams that we haven't sent before,
@@ -540,7 +552,7 @@ AWAIT_STREAM_CONTROL:
 	}
 
 	synchronizeMissedPackets(
-		ctx, log,
+		ctx, log, tracer,
 		s,
 		peerHas, peerBitsetUpdates,
 		packets, nData,

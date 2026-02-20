@@ -9,6 +9,7 @@ import (
 
 	"github.com/gordian-engine/dragon/dpubsub"
 	"github.com/gordian-engine/dragon/dquic"
+	"github.com/gordian-engine/dragon/internal/dtrace"
 	"github.com/gordian-engine/dragon/wingspan/wspacket"
 )
 
@@ -19,6 +20,8 @@ type OutboundWorker[
 	DeltaIn, DeltaOut any,
 ] struct {
 	log *slog.Logger
+
+	tracer dtrace.Tracer
 
 	header []byte
 
@@ -32,12 +35,15 @@ func NewOutboundWorker[
 	DeltaIn, DeltaOut any,
 ](
 	log *slog.Logger,
+	tracer dtrace.Tracer,
 	header []byte,
 	state wspacket.OutboundRemoteState[PktIn, PktOut, DeltaIn, DeltaOut],
 	deltas *dpubsub.Stream[DeltaOut],
 ) *OutboundWorker[PktIn, PktOut, DeltaIn, DeltaOut] {
 	return &OutboundWorker[PktIn, PktOut, DeltaIn, DeltaOut]{
 		log: log,
+
+		tracer: tracer,
 
 		header: header,
 
@@ -59,6 +65,16 @@ func (w *OutboundWorker[PktIn, PktOut, DeltaIn, DeltaOut]) Run(
 ) {
 	defer parentWG.Done()
 
+	ctx, span := w.tracer.Start(
+		ctx,
+		"outbound worker main loop",
+		dtrace.WithAttributes(
+			dtrace.RemoteAddrAttr(conn),
+		),
+	)
+	defer span.End()
+
+	span.AddEvent("initialize outbound worker stream")
 	s, err := w.initializeStream(ctx, conn, openStreamTimeout, writeHeaderTimeout)
 	if err != nil {
 		w.log.Info(
@@ -74,11 +90,13 @@ func (w *OutboundWorker[PktIn, PktOut, DeltaIn, DeltaOut]) Run(
 	}()
 
 	// Send out whatever we have initially.
+	span.AddEvent("send initial outbound packets")
 	if err := w.sendPackets(ctx, s, sendPacketTimeout, peerReceivedCh); err != nil {
 		w.log.Info(
 			"Error while sending initial packets",
 			"err", err,
 		)
+		dtrace.SpanError(span, err)
 		return
 	}
 
@@ -89,11 +107,13 @@ func (w *OutboundWorker[PktIn, PktOut, DeltaIn, DeltaOut]) Run(
 			return
 
 		case <-w.deltas.Ready:
+			span.AddEvent("send updated outbound packets")
 			if err := w.sendPackets(ctx, s, sendPacketTimeout, peerReceivedCh); err != nil {
 				w.log.Info(
 					"Error while sending packets in main loop",
 					"err", err,
 				)
+				dtrace.SpanError(span, err)
 				return
 			}
 
@@ -139,6 +159,9 @@ func (w *OutboundWorker[PktIn, PktOut, DeltaIn, DeltaOut]) sendPackets(
 	sendPacketTimeout time.Duration,
 	peerReceivedCh <-chan DeltaIn,
 ) error {
+	ctx, span := w.tracer.Start(ctx, "send packets")
+	defer span.End()
+
 	// Make sure local packets are up to date.
 UPDATE_PACKET_SET:
 	for {
@@ -169,10 +192,12 @@ SEND_PACKETS:
 		}
 
 		if _, err := s.Write(p.Bytes()); err != nil {
+			dtrace.SpanError(span, err)
 			return fmt.Errorf(
 				"failed to write packet bytes: %w", err,
 			)
 		}
+		span.AddEvent("sent packet")
 
 		p.MarkSent()
 

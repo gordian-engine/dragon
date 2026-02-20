@@ -8,6 +8,7 @@ import (
 	"github.com/bits-and-blooms/bitset"
 	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dbitset"
+	"github.com/gordian-engine/dragon/internal/dtrace"
 )
 
 // bsdState is the initial bitset delta state
@@ -26,6 +27,7 @@ type bsdState struct {
 // as both of them require this behavior.
 func receiveBitsetDeltas(
 	ctx context.Context,
+	tracer dtrace.Tracer,
 	wg *sync.WaitGroup,
 
 	// Need to know the size of the bitset up front,
@@ -50,6 +52,9 @@ func receiveBitsetDeltas(
 ) {
 	defer wg.Done()
 
+	ctx, span := tracer.Start(ctx, "receive bitset deltas")
+	defer span.End()
+
 	// Block until the stream is ready.
 	var s dquic.ReceiveStream
 	var dec *dbitset.AdaptiveDecoder
@@ -64,6 +69,8 @@ func receiveBitsetDeltas(
 		s = x.Stream
 		dec = x.Dec
 	}
+
+	span.AddEvent("Ready to receive initial bitset")
 
 	// Now the peer is going to send deltas intermittently.
 	// First allocation a destination bitset.
@@ -83,6 +90,8 @@ func receiveBitsetDeltas(
 		return
 	}
 
+	span.AddEvent("Received initial bitset")
+
 	// Now the readable bitset is just a clone of the first update.
 	// Hand it off to the other goroutine.
 	// The channel is unbuffered so we know the other goroutine
@@ -98,9 +107,12 @@ func receiveBitsetDeltas(
 		// Okay.
 	}
 
+	span.AddEvent("Sent initial delta update to other goroutine")
+
 	// Now that the read and write bitsets are both initialized,
 	// we can handle alternating them as we receive updates.
 	for {
+		span.AddEvent("Awaiting next bitset")
 		if err := dec.ReceiveBitset(
 			s,
 			receiveTimeout,
@@ -116,6 +128,7 @@ func receiveBitsetDeltas(
 			return
 		}
 
+		span.AddEvent("Awaiting next bitset")
 		wbs, rbs = rbs, wbs
 		select {
 		case <-ctx.Done():

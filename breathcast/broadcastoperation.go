@@ -16,12 +16,15 @@ import (
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/dpubsub"
 	"github.com/gordian-engine/dragon/dquic"
+	"github.com/gordian-engine/dragon/internal/dtrace"
 )
 
 // BroadcastOperation is a specific operation within a [Protocol]
 // that is responsible for all the network transfer related to a broadcast.
 type BroadcastOperation struct {
 	log *slog.Logger
+
+	tracer dtrace.Tracer
 
 	protocolID  byte
 	broadcastID []byte
@@ -163,6 +166,15 @@ func (o *BroadcastOperation) mainLoop(
 	defer close(o.mainLoopDone)
 	defer wg.Done()
 
+	ctx, span := o.tracer.Start(
+		ctx,
+		"broadcast operation main loop",
+		dtrace.WithAttributes(
+			dtrace.LazyHexAttr("broadcast.id", o.broadcastID),
+		),
+	)
+	defer span.End()
+
 	protoHeader := bci.NewProtocolHeader(
 		o.protocolID,
 		o.broadcastID,
@@ -196,6 +208,9 @@ func (o *BroadcastOperation) originationMainLoop(
 	connChanges *dpubsub.Stream[dconn.Change],
 	protoHeader bci.ProtocolHeader,
 ) {
+	ctx, span := o.tracer.Start(ctx, "origination main loop")
+	defer span.End()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -226,6 +241,7 @@ func (o *BroadcastOperation) runOrigination(
 		log,
 		bci.OriginationConfig{
 			WG:             &o.wg,
+			Tracer:         o.tracer,
 			Conn:           conn,
 			ProtocolHeader: protoHeader,
 			AppHeader:      o.appHeader,
@@ -306,6 +322,9 @@ func (o *BroadcastOperation) relayMainLoop(
 	protoHeader bci.ProtocolHeader,
 	is *incomingState,
 ) {
+	ctx, span := o.tracer.Start(ctx, "relay main loop")
+	defer span.End()
+
 	// Before any other work, start relays for existing connections.
 	for _, conn := range conns {
 		o.runOutgoingRelay(ctx, conn.QUIC, protoHeader, is)
@@ -375,6 +394,7 @@ func (o *BroadcastOperation) runOutgoingRelay(
 		),
 		bci.OutgoingRelayConfig{
 			WG:                  &o.wg,
+			Tracer:              o.tracer,
 			Conn:                conn,
 			ProtocolHeader:      protoHeader,
 			AppHeader:           o.appHeader,

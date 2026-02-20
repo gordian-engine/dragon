@@ -13,6 +13,7 @@ import (
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/dpubsub"
 	"github.com/gordian-engine/dragon/dquic"
+	"github.com/gordian-engine/dragon/internal/dtrace"
 	"github.com/gordian-engine/dragon/wingspan/wspacket"
 )
 
@@ -23,9 +24,16 @@ type Session[
 ] struct {
 	log *slog.Logger
 
+	tracer dtrace.Tracer
+
 	// We store the full header only once on the session
 	// and then reuse it for every outbound worker.
 	header []byte
+
+	// The session ID is a subslice into header,
+	// and it should be treated as read-only.
+	// This is only used for logging and tracing.
+	sessionID []byte
 
 	state  wspacket.CentralState[PktIn, PktOut, DeltaIn, DeltaOut]
 	deltas *dpubsub.Stream[DeltaOut]
@@ -95,6 +103,7 @@ func NewSession[
 	DeltaIn, DeltaOut any,
 ](
 	log *slog.Logger,
+	tracer dtrace.Tracer,
 	protocolID byte,
 	sessionID, appHeader []byte,
 	state wspacket.CentralState[PktIn, PktOut, DeltaIn, DeltaOut],
@@ -125,7 +134,10 @@ func NewSession[
 	return &Session[PktIn, PktOut, DeltaIn, DeltaOut]{
 		log: log,
 
-		header: h,
+		tracer: tracer,
+
+		header:    h,
+		sessionID: h[1 : 1+len(sessionID)],
 
 		state:  state,
 		deltas: deltas,
@@ -147,6 +159,15 @@ func (s *Session[PktIn, PktOut, DeltaIn, DeltaOut]) Run(
 	connChanges *dpubsub.Stream[dconn.Change],
 ) {
 	defer parentWG.Done()
+
+	ctx, span := s.tracer.Start(
+		ctx,
+		"wingspan session main loop",
+		dtrace.WithAttributes(
+			dtrace.LazyHexAttr("wingspan.session.id", s.sessionID),
+		),
+	)
+	defer span.End()
 
 	var wg sync.WaitGroup
 	defer wg.Wait()
@@ -210,6 +231,12 @@ func (s *Session[PktIn, PktOut, DeltaIn, DeltaOut]) Run(
 				State:  is,
 				Deltas: m,
 			}
+			span.AddEvent(
+				"created inbound stream",
+				dtrace.WithAttributes(
+					dtrace.RemoteAddrAttr(req.Conn.QUIC),
+				),
+			)
 
 			close(req.Resp)
 
@@ -223,14 +250,22 @@ func (s *Session[PktIn, PktOut, DeltaIn, DeltaOut]) Run(
 			switch {
 			case err == nil:
 				res = inboundDeltaApply
+				span.AddEvent("Going to apply update from peer")
 			case errors.Is(err, wspacket.ErrRedundantUpdate):
 				res = inboundDeltaDrop
+				span.AddEvent("Going to drop redundant update from peer")
 			default:
 				s.log.Info(
 					"Failed to apply update from remote",
 					"err", err,
 				)
 				res = inboundDeltaReject
+				span.AddEvent(
+					"Going to reject failed update from peer",
+					dtrace.WithAttributes(
+						dtrace.ErrorAttr(err),
+					),
+				)
 			}
 
 			// Response channel assumed to be buffered.
@@ -301,12 +336,14 @@ func (s *Session[PktIn, PktOut, DeltaIn, DeltaOut]) addRemoteState(
 
 	ow := NewOutboundWorker[PktIn, PktOut, DeltaIn, DeltaOut](
 		log.With("worker", "outbound"),
+		s.tracer,
 		s.header,
 		rs,
 		m,
 	)
 	iw := NewInboundWorker[PktIn, DeltaIn, DeltaOut](
 		log.With("worker", "inbound"),
+		s.tracer,
 		s.inboundDeltaArrivals,
 	)
 
