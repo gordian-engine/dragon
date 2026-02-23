@@ -16,8 +16,7 @@ import (
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/dpubsub"
 	"github.com/gordian-engine/dragon/dquic"
-	"go.opentelemetry.io/otel/attribute"
-	otrace "go.opentelemetry.io/otel/trace"
+	"github.com/gordian-engine/dragon/internal/dtrace"
 )
 
 // BroadcastOperation is a specific operation within a [Protocol]
@@ -25,7 +24,7 @@ import (
 type BroadcastOperation struct {
 	log *slog.Logger
 
-	tracer otrace.Tracer
+	tracer dtrace.Tracer
 
 	protocolID  byte
 	broadcastID []byte
@@ -170,7 +169,9 @@ func (o *BroadcastOperation) mainLoop(
 	ctx, span := o.tracer.Start(
 		ctx,
 		"broadcast operation main loop",
-		otrace.WithAttributes(attribute.String("broadcast.id", fmt.Sprintf("%x", o.broadcastID))),
+		dtrace.WithAttributes(
+			dtrace.LazyHexAttr("broadcast.id", o.broadcastID),
+		),
 	)
 	defer span.End()
 

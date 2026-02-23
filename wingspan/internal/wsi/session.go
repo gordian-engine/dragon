@@ -13,9 +13,8 @@ import (
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/dpubsub"
 	"github.com/gordian-engine/dragon/dquic"
+	"github.com/gordian-engine/dragon/internal/dtrace"
 	"github.com/gordian-engine/dragon/wingspan/wspacket"
-	"go.opentelemetry.io/otel/attribute"
-	otrace "go.opentelemetry.io/otel/trace"
 )
 
 // Session is the internal representation of a session.
@@ -24,6 +23,8 @@ type Session[
 	DeltaIn, DeltaOut any,
 ] struct {
 	log *slog.Logger
+
+	tracer dtrace.Tracer
 
 	// We store the full header only once on the session
 	// and then reuse it for every outbound worker.
@@ -83,6 +84,7 @@ func NewSession[
 	DeltaIn, DeltaOut any,
 ](
 	log *slog.Logger,
+	tracer dtrace.Tracer,
 	protocolID byte,
 	sessionID, appHeader []byte,
 	state wspacket.CentralState[PktIn, PktOut, DeltaIn, DeltaOut],
@@ -112,6 +114,8 @@ func NewSession[
 	return &Session[PktIn, PktOut, DeltaIn, DeltaOut]{
 		log: log,
 
+		tracer: tracer,
+
 		header:    h,
 		sessionID: h[1 : 1+len(sessionID)],
 
@@ -126,18 +130,17 @@ func NewSession[
 
 func (s *Session[PktIn, PktOut, DeltaIn, DeltaOut]) Run(
 	ctx context.Context,
-	tracer otrace.Tracer,
 	parentWG *sync.WaitGroup,
 	conns map[dcert.LeafCertHandle]dconn.Conn,
 	connChanges *dpubsub.Stream[dconn.Change],
 ) {
 	defer parentWG.Done()
 
-	ctx, span := tracer.Start(
+	ctx, span := s.tracer.Start(
 		ctx,
 		"wingspan session main loop",
-		otrace.WithAttributes(
-			attribute.String("wingspan.session.id", fmt.Sprintf("%x", s.sessionID)),
+		dtrace.WithAttributes(
+			dtrace.LazyHexAttr("wingspan.session.id", s.sessionID),
 		),
 	)
 	defer span.End()
@@ -206,8 +209,8 @@ func (s *Session[PktIn, PktOut, DeltaIn, DeltaOut]) Run(
 			}
 			span.AddEvent(
 				"created inbound stream",
-				otrace.WithAttributes(
-					attribute.Stringer("remote", req.Conn.QUIC.RemoteAddr()),
+				dtrace.WithAttributes(
+					dtrace.RemoteAddrAttr(req.Conn.QUIC),
 				),
 			)
 
@@ -235,8 +238,8 @@ func (s *Session[PktIn, PktOut, DeltaIn, DeltaOut]) Run(
 				res = inboundDeltaReject
 				span.AddEvent(
 					"Going to reject failed update from peer",
-					otrace.WithAttributes(
-						attribute.String("err", err.Error()),
+					dtrace.WithAttributes(
+						dtrace.ErrorAttr(err),
 					),
 				)
 			}
@@ -309,12 +312,14 @@ func (s *Session[PktIn, PktOut, DeltaIn, DeltaOut]) addRemoteState(
 
 	ow := NewOutboundWorker[PktIn, PktOut, DeltaIn, DeltaOut](
 		log.With("worker", "outbound"),
+		s.tracer,
 		s.header,
 		rs,
 		m,
 	)
 	iw := NewInboundWorker[PktIn, DeltaIn, DeltaOut](
 		log.With("worker", "inbound"),
+		s.tracer,
 		s.inboundDeltaArrivals,
 	)
 

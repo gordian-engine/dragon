@@ -8,7 +8,7 @@ import (
 	"github.com/bits-and-blooms/bitset"
 	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dbitset"
-	otrace "go.opentelemetry.io/otel/trace"
+	"github.com/gordian-engine/dragon/internal/dtrace"
 )
 
 // bsdState is the initial bitset delta state
@@ -27,7 +27,7 @@ type bsdState struct {
 // as both of them require this behavior.
 func receiveBitsetDeltas(
 	ctx context.Context,
-	tracer otrace.Tracer,
+	tracer dtrace.Tracer,
 	wg *sync.WaitGroup,
 
 	// Need to know the size of the bitset up front,

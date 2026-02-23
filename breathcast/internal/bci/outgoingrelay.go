@@ -11,8 +11,8 @@ import (
 	"github.com/gordian-engine/dragon/dpubsub"
 	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dbitset"
+	"github.com/gordian-engine/dragon/internal/dtrace"
 	"github.com/quic-go/quic-go"
-	otrace "go.opentelemetry.io/otel/trace"
 )
 
 // OutgoingRelayConfig is the configuration for [RunOutgoingRelay].
@@ -22,7 +22,7 @@ type OutgoingRelayConfig struct {
 	// as we are typically unconcerned with a single instance.
 	WG *sync.WaitGroup
 
-	Tracer otrace.Tracer
+	Tracer dtrace.Tracer
 
 	// The connection on which we will open the stream.
 	Conn dquic.Conn
@@ -237,7 +237,7 @@ func openOutgoingRelayStream(
 func relayNewDatagrams(
 	ctx context.Context,
 	log *slog.Logger,
-	tracer otrace.Tracer,
+	tracer dtrace.Tracer,
 	wg *sync.WaitGroup,
 	initialPeerHas <-chan *bitset.BitSet,
 	peerBitsetUpdates <-chan *bitset.BitSet,
@@ -498,7 +498,7 @@ func sendMissedPackets(
 func finishRelay(
 	ctx context.Context,
 	log *slog.Logger,
-	tracer otrace.Tracer,
+	tracer dtrace.Tracer,
 	conn dquic.Conn,
 	sCh <-chan dquic.SendStream,
 	peerHas *bitset.BitSet,

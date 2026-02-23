@@ -12,10 +12,9 @@ import (
 	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/dpubsub"
+	"github.com/gordian-engine/dragon/internal/dtrace"
 	"github.com/gordian-engine/dragon/wingspan/internal/wsi"
 	"github.com/gordian-engine/dragon/wingspan/wspacket"
-	otrace "go.opentelemetry.io/otel/trace"
-	otpnoop "go.opentelemetry.io/otel/trace/noop"
 )
 
 // Protocol controls all the operations of the "wingspan" protocol.
@@ -29,7 +28,7 @@ type Protocol[
 ] struct {
 	log *slog.Logger
 
-	tracer otrace.Tracer
+	tracer dtrace.Tracer
 
 	// Pubsub stream for connection changes,
 	// so that broadcast operations can observe it directly.
@@ -69,7 +68,7 @@ type sessionRequest[
 
 // ProtocolConfig is the configuration passed to [NewProtocol].
 type ProtocolConfig struct {
-	TracerProvider otrace.TracerProvider
+	TracerProvider dtrace.TracerProvider
 
 	// The initial connections to use.
 	// The protocol will own this slice,
@@ -98,7 +97,7 @@ func NewProtocol[
 ) *Protocol[PktIn, PktOut, DeltaIn, DeltaOut] {
 	otp := cfg.TracerProvider
 	if otp == nil {
-		otp = otpnoop.NewTracerProvider()
+		otp = dtrace.NopTracerProvider()
 	}
 
 	if cfg.SessionIDLength == 0 {
@@ -185,7 +184,7 @@ func (p *Protocol[PktIn, PktOut, DeltaIn, DeltaOut]) handleStartSessionRequest(
 
 	p.wg.Add(1)
 	go req.Session.Run(
-		ctx, p.tracer, &p.wg,
+		ctx, &p.wg,
 		maps.Clone(conns),
 		p.connChanges,
 	)
@@ -219,6 +218,7 @@ func (p *Protocol[PktIn, PktOut, DeltaIn, DeltaOut]) NewSession(
 
 	s := wsi.NewSession[PktIn, PktOut, DeltaIn, DeltaOut](
 		p.log.With("sid", fmt.Sprintf("%x", id)), // TODO: hex log helper.
+		p.tracer,
 		p.protocolID, id, appHeader,
 		state, deltas,
 	)

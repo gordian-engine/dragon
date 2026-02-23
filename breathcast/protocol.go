@@ -18,9 +18,8 @@ import (
 	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dconn"
 	"github.com/gordian-engine/dragon/dpubsub"
+	"github.com/gordian-engine/dragon/internal/dtrace"
 	"github.com/klauspost/reedsolomon"
-	otrace "go.opentelemetry.io/otel/trace"
-	otpnoop "go.opentelemetry.io/otel/trace/noop"
 )
 
 // Protocol controls all the operations of the "breathcast" broadcasting protocol.
@@ -49,7 +48,7 @@ import (
 type Protocol struct {
 	log *slog.Logger
 
-	tracer otrace.Tracer
+	tracer dtrace.Tracer
 
 	// Pubsub stream for connection changes,
 	// so that broadcast operations can observe it directly.
@@ -88,7 +87,7 @@ type newBroadcastRequest struct {
 type ProtocolConfig struct {
 	// The tracer provider for OpenTelemetry traces.
 	// If nil, a no-op tracer provider will be used.
-	TracerProvider otrace.TracerProvider
+	TracerProvider dtrace.TracerProvider
 
 	// The initial connections to use.
 	// The protocol will own this slice,
@@ -214,7 +213,7 @@ func NewProtocol(ctx context.Context, log *slog.Logger, cfg ProtocolConfig) *Pro
 
 	otp := cfg.TracerProvider
 	if otp == nil {
-		otp = otpnoop.NewTracerProvider()
+		otp = dtrace.NopTracerProvider()
 	}
 
 	p := &Protocol{

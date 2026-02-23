@@ -12,10 +12,8 @@ import (
 	"github.com/bits-and-blooms/bitset"
 	"github.com/gordian-engine/dragon/dquic"
 	"github.com/gordian-engine/dragon/internal/dbitset"
+	"github.com/gordian-engine/dragon/internal/dtrace"
 	"github.com/quic-go/quic-go"
-	"go.opentelemetry.io/otel/attribute"
-	ocodes "go.opentelemetry.io/otel/codes"
-	otrace "go.opentelemetry.io/otel/trace"
 )
 
 // OriginationConfig is the configuration for [RunOrigination].
@@ -23,7 +21,7 @@ type OriginationConfig struct {
 	// The wait group lives outside the origination.
 	WG *sync.WaitGroup
 
-	Tracer otrace.Tracer
+	Tracer dtrace.Tracer
 
 	// The connection on which we will open the stream.
 	Conn dquic.Conn
@@ -178,7 +176,7 @@ func RunOrigination(
 func openOriginationStream(
 	ctx context.Context,
 	log *slog.Logger,
-	tracer otrace.Tracer,
+	tracer dtrace.Tracer,
 	wg *sync.WaitGroup,
 	conn dquic.Conn,
 	pHeader ProtocolHeader,
@@ -196,8 +194,8 @@ func openOriginationStream(
 	ctx, span := tracer.Start(
 		ctx,
 		"open origination stream",
-		otrace.WithAttributes(
-			attribute.Stringer("remote", conn.RemoteAddr()),
+		dtrace.WithAttributes(
+			dtrace.StringerAttr("remote", conn.RemoteAddr()),
 		),
 	)
 	defer span.End()
@@ -219,7 +217,7 @@ func openOriginationStream(
 			"err", err,
 		)
 		if ctx.Err() == nil {
-			span.SetStatus(ocodes.Error, err.Error())
+			dtrace.SpanError(span, err)
 		}
 		return
 	}
@@ -240,7 +238,7 @@ func openOriginationStream(
 			"err", err,
 		)
 		if ctx.Err() == nil {
-			span.SetStatus(ocodes.Error, err.Error())
+			dtrace.SpanError(span, err)
 		}
 		return
 	}
@@ -266,7 +264,7 @@ func openOriginationStream(
 func sendOriginationPackets(
 	ctx context.Context,
 	log *slog.Logger,
-	tracer otrace.Tracer,
+	tracer dtrace.Tracer,
 	wg *sync.WaitGroup,
 	conn dquic.Conn,
 	packets [][]byte,
@@ -283,8 +281,8 @@ func sendOriginationPackets(
 	ctx, span := tracer.Start(
 		ctx,
 		"send origination packets",
-		otrace.WithAttributes(
-			attribute.Stringer("remote", conn.RemoteAddr()),
+		dtrace.WithAttributes(
+			dtrace.StringerAttr("remote", conn.RemoteAddr()),
 		),
 	)
 	defer span.End()
@@ -328,7 +326,7 @@ func sendOriginationPackets(
 func synchronizeMissedPackets(
 	ctx context.Context,
 	log *slog.Logger,
-	tracer otrace.Tracer,
+	tracer dtrace.Tracer,
 	s dquic.SendStream,
 	peerHas *bitset.BitSet,
 	peerBitsetUpdates <-chan *bitset.BitSet,
@@ -350,7 +348,7 @@ func synchronizeMissedPackets(
 			"err", err,
 		)
 		if ctx.Err() == nil {
-			span.SetStatus(ocodes.Error, err.Error())
+			dtrace.SpanError(span, err)
 		}
 		return
 	}
@@ -363,7 +361,7 @@ func synchronizeMissedPackets(
 				"err", err,
 			)
 			if ctx.Err() == nil {
-				span.SetStatus(ocodes.Error, err.Error())
+				dtrace.SpanError(span, err)
 			}
 		}
 		return
@@ -387,6 +385,7 @@ func synchronizeMissedPackets(
 		return
 	case <-finalBitsetWaitTimer.C:
 		log.Info("Timed out waiting for final bitset update")
+		dtrace.SpanError(span, errors.New("timed out waiting for final bitset update"))
 		return
 	case u := <-peerBitsetUpdates:
 		finalBitsetWaitTimer.Stop()
@@ -399,7 +398,7 @@ func synchronizeMissedPackets(
 	close(clearDeltaTimeoutCh)
 
 	if err := sendSyncPackets(
-		s, packets, nData, peerHas, peerBitsetUpdates, sendSyncPacketTimeout,
+		ctx, tracer, s, packets, nData, peerHas, peerBitsetUpdates, sendSyncPacketTimeout,
 	); err != nil {
 		var streamErr *quic.StreamError
 		if errors.As(err, &streamErr) {
@@ -454,7 +453,7 @@ func isCloseOfCanceledStreamError(e error) bool {
 // sendUnreliableDatagrams ensures that the timer is stopped upon return.
 func sendUnreliableDatagrams(
 	ctx context.Context,
-	tracer otrace.Tracer,
+	tracer dtrace.Tracer,
 	conn dquic.Conn,
 	packets [][]byte,
 	alreadySent *bitset.BitSet,
@@ -511,6 +510,12 @@ func sendUnreliableDatagrams(
 		// We will just ignore errors here for now.
 		// Although we should probably at least respect connection closed errors.
 		if !skip {
+			span.AddEvent(
+				"sending datagram",
+				dtrace.WithAttributes(
+					dtrace.BreathcastPacketIndexAttr(uint16(cb.Idx)),
+				),
+			)
 			_ = conn.SendDatagram(packets[cb.Idx])
 		}
 
@@ -526,6 +531,8 @@ func sendUnreliableDatagrams(
 // Delta updates sent over the peerHasDeltaCh are checked
 // between individual sends.
 func sendSyncPackets(
+	ctx context.Context,
+	tracer dtrace.Tracer,
 	s dquic.SendStream,
 	packets [][]byte,
 	nData uint16,
@@ -533,6 +540,9 @@ func sendSyncPackets(
 	peerHasDeltaCh <-chan *bitset.BitSet,
 	sendSyncPacketTimeout time.Duration,
 ) error {
+	_, span := tracer.Start(ctx, "send sync packets")
+	defer span.End()
+
 	// Track how many packets the peer is missing
 	// to be able to reconstruct the data.
 	haveCount := peerHas.Count()
@@ -566,8 +576,17 @@ func sendSyncPackets(
 		if err := SendSyncPacket(
 			s, sendSyncPacketTimeout, packets[cb.Idx],
 		); err != nil {
-			return fmt.Errorf("failed to send synchronous packet: %w", err)
+			err := fmt.Errorf("failed to send synchronous packet: %w", err)
+			dtrace.SpanError(span, err)
+			return err
 		}
+
+		span.AddEvent(
+			"sent sync packet",
+			dtrace.WithAttributes(
+				dtrace.BreathcastPacketIndexAttr(uint16(cb.Idx)),
+			),
+		)
 
 		need--
 		if need == 0 {
