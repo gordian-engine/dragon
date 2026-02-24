@@ -55,6 +55,7 @@ func NewProtocolFixture[
 				ConnectionChanges: cc,
 				ProtocolID:        cfg.ProtocolID,
 				SessionIDLength:   cfg.SessionIDLength,
+				Timing:            wingspan.DefaultProtocolTiming(),
 			},
 		)
 		t.Cleanup(p.Wait)

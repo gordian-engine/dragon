@@ -11,9 +11,6 @@ import (
 
 // Session is a handle into a session object.
 // Sessions are created through [*Protocol.NewSession].
-//
-// The type parameter D is the delta type, just as in [Protocol].
-// The type parameter P is the packet type corresponding to a [PacketParser].
 type Session[
 	PktIn any, PktOut wspacket.OutboundPacket,
 	DeltaIn, DeltaOut any,

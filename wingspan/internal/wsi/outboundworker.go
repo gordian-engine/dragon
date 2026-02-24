@@ -52,12 +52,14 @@ func (w *OutboundWorker[PktIn, PktOut, DeltaIn, DeltaOut]) Run(
 	ctx context.Context,
 	parentWG *sync.WaitGroup,
 	conn dquic.Conn,
+	openStreamTimeout time.Duration,
 	writeHeaderTimeout time.Duration,
+	sendPacketTimeout time.Duration,
 	peerReceivedCh <-chan DeltaIn,
 ) {
 	defer parentWG.Done()
 
-	s, err := w.initializeStream(ctx, conn, writeHeaderTimeout)
+	s, err := w.initializeStream(ctx, conn, openStreamTimeout, writeHeaderTimeout)
 	if err != nil {
 		w.log.Info(
 			"Failed to initialize outbound session stream",
@@ -72,7 +74,7 @@ func (w *OutboundWorker[PktIn, PktOut, DeltaIn, DeltaOut]) Run(
 	}()
 
 	// Send out whatever we have initially.
-	if err := w.sendPackets(ctx, s, peerReceivedCh); err != nil {
+	if err := w.sendPackets(ctx, s, sendPacketTimeout, peerReceivedCh); err != nil {
 		w.log.Info(
 			"Error while sending initial packets",
 			"err", err,
@@ -87,7 +89,7 @@ func (w *OutboundWorker[PktIn, PktOut, DeltaIn, DeltaOut]) Run(
 			return
 
 		case <-w.deltas.Ready:
-			if err := w.sendPackets(ctx, s, peerReceivedCh); err != nil {
+			if err := w.sendPackets(ctx, s, sendPacketTimeout, peerReceivedCh); err != nil {
 				w.log.Info(
 					"Error while sending packets in main loop",
 					"err", err,
@@ -104,9 +106,12 @@ func (w *OutboundWorker[PktIn, PktOut, DeltaIn, DeltaOut]) Run(
 func (w *OutboundWorker[PktIn, PktOut, DeltaIn, DeltaOut]) initializeStream(
 	ctx context.Context,
 	conn dquic.Conn,
+	openStreamTimeout time.Duration,
 	writeHeaderTimeout time.Duration,
 ) (dquic.SendStream, error) {
-	s, err := conn.OpenUniStreamSync(ctx)
+	openCtx, cancel := context.WithTimeout(ctx, openStreamTimeout)
+	s, err := conn.OpenUniStreamSync(openCtx)
+	cancel() // Immediately cancel to free context resources.
 	if err != nil {
 		return nil, fmt.Errorf(
 			"failed to open outgoing stream: %w", err,
@@ -131,6 +136,7 @@ func (w *OutboundWorker[PktIn, PktOut, DeltaIn, DeltaOut]) initializeStream(
 func (w *OutboundWorker[PktIn, PktOut, DeltaIn, DeltaOut]) sendPackets(
 	ctx context.Context,
 	s dquic.SendStream,
+	sendPacketTimeout time.Duration,
 	peerReceivedCh <-chan DeltaIn,
 ) error {
 	// Make sure local packets are up to date.
@@ -150,8 +156,6 @@ UPDATE_PACKET_SET:
 			break UPDATE_PACKET_SET
 		}
 	}
-
-	const sendPacketTimeout = 4 * time.Millisecond // TODO: make configurable.
 
 	// Now that our packet set is up to date,
 	// send out what we have so far.

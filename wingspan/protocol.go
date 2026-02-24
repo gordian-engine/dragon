@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"maps"
 	"sync"
+	"time"
 
 	"github.com/gordian-engine/dragon/dcert"
 	"github.com/gordian-engine/dragon/dconn"
@@ -48,6 +49,8 @@ type Protocol[
 
 	// Tracks the sessions in progress.
 	wg sync.WaitGroup
+
+	timing ProtocolTiming
 }
 
 // sessionRequest contains the details necessary to run a session.
@@ -80,6 +83,39 @@ type ProtocolConfig struct {
 
 	// The fixed length of session identifiers.
 	SessionIDLength uint8
+
+	// Timing configuration details for the protocol.
+	Timing ProtocolTiming
+}
+
+// ProtocolTiming contains the timing details for a wingspan Protocol.
+type ProtocolTiming struct {
+	// How long to allow being blocked opening a session stream
+	// before the operation is considered a failure.
+	OpenStreamTimeout time.Duration
+
+	// The duration before sending the headers on a new outbound stream
+	// is considered a failure.
+	SendHeaderTimeout time.Duration
+
+	// The duration before sending a single outbound packet is considered a failure.
+	SendPacketTimeout time.Duration
+}
+
+func (t ProtocolTiming) anyMissing() bool {
+	return t.OpenStreamTimeout == 0 ||
+		t.SendHeaderTimeout == 0 ||
+		t.SendPacketTimeout == 0
+}
+
+// DefaultProtocolTiming returns a ProtocolTiming
+// with reasonable default values.
+func DefaultProtocolTiming() ProtocolTiming {
+	return ProtocolTiming{
+		OpenStreamTimeout: 50 * time.Millisecond,
+		SendHeaderTimeout: 100 * time.Millisecond,
+		SendPacketTimeout: 20 * time.Millisecond,
+	}
 }
 
 func NewProtocol[
@@ -99,6 +135,13 @@ func NewProtocol[
 		)
 	}
 
+	if cfg.Timing.anyMissing() {
+		panic(fmt.Errorf(
+			"BUG: all timing values must be provided and non-zero (got %#v)",
+			cfg.Timing,
+		))
+	}
+
 	p := &Protocol[PktIn, PktOut, DeltaIn, DeltaOut]{
 		log: log,
 
@@ -111,6 +154,8 @@ func NewProtocol[
 		sessionIDLength: cfg.SessionIDLength,
 
 		mainLoopDone: make(chan struct{}),
+
+		timing: cfg.Timing,
 	}
 
 	conns := make(map[dcert.LeafCertHandle]dconn.Conn, len(cfg.InitialConnections))
@@ -182,7 +227,7 @@ func (p *Protocol[PktIn, PktOut, DeltaIn, DeltaOut]) handleStartSessionRequest(
 // and application header, associating it with p.
 //
 // The parsePacketFn callback is used to read a packet
-// from the peer's network stream and convert it into a D value.
+// from the peer's network stream and convert it into a DeltaIn value.
 // The function will be called concurrently.
 func (p *Protocol[PktIn, PktOut, DeltaIn, DeltaOut]) NewSession(
 	ctx context.Context,
@@ -202,6 +247,11 @@ func (p *Protocol[PktIn, PktOut, DeltaIn, DeltaOut]) NewSession(
 		p.log.With("sid", fmt.Sprintf("%x", id)), // TODO: hex log helper.
 		p.protocolID, id, appHeader,
 		state, deltas,
+		wsi.SessionTiming{
+			OpenStreamTimeout: p.timing.OpenStreamTimeout,
+			SendHeaderTimeout: p.timing.SendHeaderTimeout,
+			SendPacketTimeout: p.timing.SendPacketTimeout,
+		},
 	)
 
 	resp := make(chan Session[PktIn, PktOut, DeltaIn, DeltaOut], 1)

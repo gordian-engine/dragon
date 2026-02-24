@@ -32,6 +32,25 @@ type Session[
 
 	acceptStreamRequests chan acceptStreamRequest
 	inboundDeltaArrivals chan inboundDeltaArrival[DeltaIn]
+
+	openStreamTimeout time.Duration
+	sendHeaderTimeout time.Duration
+	sendPacketTimeout time.Duration
+}
+
+// SessionTiming contains the timing details for the session.
+// It is a parameter to [NewSession].
+type SessionTiming struct {
+	// How long to allow being blocked opening a session stream
+	// before the operation is considered a failure.
+	OpenStreamTimeout time.Duration
+
+	// The duration before sending the headers on a new outbound stream
+	// is considered a failure.
+	SendHeaderTimeout time.Duration
+
+	// The duration before sending a single outbound packet is considered a failure.
+	SendPacketTimeout time.Duration
 }
 
 // acceptStreamRequest contains the details necessary
@@ -80,6 +99,7 @@ func NewSession[
 	sessionID, appHeader []byte,
 	state wspacket.CentralState[PktIn, PktOut, DeltaIn, DeltaOut],
 	deltas *dpubsub.Stream[DeltaOut],
+	timing SessionTiming,
 ) *Session[PktIn, PktOut, DeltaIn, DeltaOut] {
 	if len(appHeader) >= (1 << 16) {
 		panic(fmt.Errorf(
@@ -113,6 +133,10 @@ func NewSession[
 		// Unbuffered since caller blocks anyway.
 		acceptStreamRequests: make(chan acceptStreamRequest),
 		inboundDeltaArrivals: make(chan inboundDeltaArrival[DeltaIn]),
+
+		openStreamTimeout: timing.OpenStreamTimeout,
+		sendHeaderTimeout: timing.SendHeaderTimeout,
+		sendPacketTimeout: timing.SendPacketTimeout,
 	}
 }
 
@@ -291,8 +315,12 @@ func (s *Session[PktIn, PktOut, DeltaIn, DeltaOut]) addRemoteState(
 	ctx, cancel := context.WithCancelCause(ctx)
 
 	wg.Add(2)
-	const headerTimeout = 5 * time.Millisecond
-	go ow.Run(ctx, wg, conn.QUIC, headerTimeout, peerReceivedCh)
+	go ow.Run(
+		ctx, wg,
+		conn.QUIC,
+		s.openStreamTimeout, s.sendHeaderTimeout, s.sendPacketTimeout,
+		peerReceivedCh,
+	)
 
 	inboundStreamCh := make(chan InboundStream[PktIn, DeltaIn, DeltaOut], 1)
 	go iw.Run(ctx, wg, inboundStreamCh, peerReceivedCh)
