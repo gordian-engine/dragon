@@ -122,13 +122,11 @@ func (c NodeConfig) validate(log *slog.Logger) {
 			panicErrs,
 			errors.New("NodeConfig.ShuffleSignal may not be nil"),
 		)
-
-		if cap(c.ShuffleSignal) != 0 {
-			panicErrs = errors.Join(
-				panicErrs,
-				errors.New("NodeConfig.ShuffleSignal must be an unbuffered channel for correct behavior"),
-			)
-		}
+	} else if cap(c.ShuffleSignal) != 0 {
+		panicErrs = errors.Join(
+			panicErrs,
+			errors.New("NodeConfig.ShuffleSignal must be an unbuffered channel for correct behavior"),
+		)
 	}
 
 	// Although we customize the TLS config later in the initialization flow,
@@ -401,7 +399,7 @@ func (n *Node) acceptConnections(ctx context.Context) {
 	for {
 		rawQC, err := n.quicListener.Accept(ctx)
 		if err != nil {
-			if errors.Is(context.Cause(ctx), err) {
+			if ctx.Err() != nil {
 				n.log.Info(
 					"Accept loop quitting due to context cancellation when accepting connection",
 					"cause", context.Cause(ctx),
