@@ -22,6 +22,14 @@ type Session[
 	PktIn any, PktOut wspacket.OutboundPacket,
 	DeltaIn, DeltaOut any,
 ] struct {
+	// Due to the structure of the wingspan.Protocol,
+	// the Session is created on a separate goroutine
+	// before being sent to the Protocol's main loop.
+	// The context is passed the Session before sending the Session to the Protocol,
+	// and then this cancelable context is derived from that.
+	ctx    context.Context
+	cancel context.CancelCauseFunc
+
 	log *slog.Logger
 
 	tracer dtrace.Tracer
@@ -102,6 +110,7 @@ func NewSession[
 	PktIn any, PktOut wspacket.OutboundPacket,
 	DeltaIn, DeltaOut any,
 ](
+	ctx context.Context,
 	log *slog.Logger,
 	tracer dtrace.Tracer,
 	protocolID byte,
@@ -131,7 +140,12 @@ func NewSession[
 
 	_ = copy(h[1+len(sessionID)+2:], appHeader)
 
+	ctx, cancel := context.WithCancelCause(ctx)
+
 	return &Session[PktIn, PktOut, DeltaIn, DeltaOut]{
+		ctx:    ctx,
+		cancel: cancel,
+
 		log: log,
 
 		tracer: tracer,
@@ -153,7 +167,6 @@ func NewSession[
 }
 
 func (s *Session[PktIn, PktOut, DeltaIn, DeltaOut]) Run(
-	ctx context.Context,
 	parentWG *sync.WaitGroup,
 	conns map[dcert.LeafCertHandle]dconn.Conn,
 	connChanges *dpubsub.Stream[dconn.Change],
@@ -161,7 +174,7 @@ func (s *Session[PktIn, PktOut, DeltaIn, DeltaOut]) Run(
 	defer parentWG.Done()
 
 	ctx, span := s.tracer.Start(
-		ctx,
+		s.ctx,
 		"wingspan session main loop",
 		dtrace.WithAttributes(
 			dtrace.LazyHexAttr("wingspan.session.id", s.sessionID),
@@ -272,6 +285,10 @@ func (s *Session[PktIn, PktOut, DeltaIn, DeltaOut]) Run(
 			req.Resp <- res
 		}
 	}
+}
+
+func (s *Session[PktIn, PktOut, DeltaIn, DeltaOut]) Cancel(reason error) {
+	s.cancel(reason)
 }
 
 // remoteState is the centralized value used to track

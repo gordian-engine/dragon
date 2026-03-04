@@ -225,19 +225,16 @@ func (p *Protocol[PktIn, PktOut, DeltaIn, DeltaOut]) handleStartSessionRequest(
 	req sessionRequest[PktIn, PktOut, DeltaIn, DeltaOut],
 	conns map[dcert.LeafCertHandle]dconn.Conn,
 ) {
-	ctx, cancel := context.WithCancelCause(ctx)
-
 	p.wg.Add(1)
 	go req.Session.Run(
-		ctx, &p.wg,
+		&p.wg,
 		maps.Clone(conns),
 		p.connChanges,
 	)
 
 	// Response channel is buffered.
 	req.Resp <- Session[PktIn, PktOut, DeltaIn, DeltaOut]{
-		s:      req.Session,
-		cancel: cancel,
+		s: req.Session,
 	}
 }
 
@@ -262,6 +259,7 @@ func (p *Protocol[PktIn, PktOut, DeltaIn, DeltaOut]) NewSession(
 	}
 
 	s := wsi.NewSession[PktIn, PktOut, DeltaIn, DeltaOut](
+		ctx,
 		p.log.With("sid", fmt.Sprintf("%x", id)), // TODO: hex log helper.
 		p.tracer,
 		p.protocolID, id, appHeader,

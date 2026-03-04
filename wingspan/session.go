@@ -15,8 +15,7 @@ type Session[
 	PktIn any, PktOut wspacket.OutboundPacket,
 	DeltaIn, DeltaOut any,
 ] struct {
-	s      *wsi.Session[PktIn, PktOut, DeltaIn, DeltaOut]
-	cancel context.CancelCauseFunc
+	s *wsi.Session[PktIn, PktOut, DeltaIn, DeltaOut]
 }
 
 // AcceptStream adds the incoming stream to the session.
@@ -34,5 +33,5 @@ func (s Session[PktIn, PktOut, DeltaIn, DeltaOut]) AcceptStream(
 // canceling any active send or receive streams.
 func (s Session[PktIn, PktOut, DeltaIn, DeltaOut]) Cancel() {
 	// TODO: use a sentinel error here.
-	s.cancel(nil)
+	s.s.Cancel(nil)
 }
